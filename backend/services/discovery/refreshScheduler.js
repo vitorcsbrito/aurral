@@ -143,7 +143,7 @@ export function markDiscoveryRefreshDequeued() {
 export async function isDiscoveryRefreshConfigured() {
   const hasLastfm = !!getLastfmApiKey();
   if (hasLastfm) return true;
-  return getCanonicalArtistProjection({ page: 1, pageSize: 1 }).length > 0;
+  return (await getCanonicalArtistProjection({ page: 1, pageSize: 1 })).length > 0;
 }
 
 export function discoveryNeedsRefresh(cache = getDiscoveryCache()) {

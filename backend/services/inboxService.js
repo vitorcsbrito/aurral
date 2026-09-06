@@ -130,7 +130,7 @@ const upsertAll = async (items) => {
 async function buildReleaseItems(userId, now) {
   const cutoff = now - RELEASE_PAST_DAYS * DAY_MS;
   const horizon = now + RELEASE_FUTURE_DAYS * DAY_MS;
-  const rawAlbums = getCanonicalAlbumsByReleaseDate({
+  const rawAlbums = await getCanonicalAlbumsByReleaseDate({
     from: new Date(cutoff).toISOString().slice(0, 10),
     to: new Date(horizon).toISOString().slice(0, 10),
     limit: 1000,
@@ -351,7 +351,7 @@ export async function refreshInboxForUser(
     });
     const preferences = getInboxPreferences();
     const libraryArtists = preferences.shows
-      ? getCanonicalArtistKeys()
+      ? await getCanonicalArtistKeys()
       : [];
     const enabledNewsKinds = new Set(
       getEnabledKinds(preferences).filter((kind) =>

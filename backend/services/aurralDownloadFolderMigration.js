@@ -379,7 +379,7 @@ async function resolveIdentity(sourcePath, rootPath, playlistId, jobs, metadataR
 
 async function defaultIndexDestination({ rootPath, targetPath, metadataReader }) {
   await scanMusicRoot({ rootPath, source: "aurral", filePaths: [targetPath], metadataReader });
-  const media = getLibraryMediaFile({ source: "aurral", path: targetPath });
+  const media = await getLibraryMediaFile({ source: "aurral", path: targetPath });
   if (!media?.available) {
     throw new Error("Destination was not indexed as available Aurral media");
   }
@@ -395,7 +395,7 @@ async function defaultIndexDestinations({ rootPath, entries, metadataReader }) {
   });
   const indexed = new Map();
   for (const entry of entries) {
-    const media = getLibraryMediaFile({ source: "aurral", path: entry.targetPath });
+    const media = await getLibraryMediaFile({ source: "aurral", path: entry.targetPath });
     if (media?.available) indexed.set(entry.targetPath, media);
   }
   return indexed;

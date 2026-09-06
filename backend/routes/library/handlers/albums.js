@@ -21,7 +21,7 @@ export function registerAlbums(router) {
       }
 
       if (req.query.readPath === "canonical") {
-        const { albums } = getCanonicalLibraryReadModelForArtistReferences({
+        const { albums } = await getCanonicalLibraryReadModelForArtistReferences({
           source: req.query.source || "all",
           availableOnly: true,
           references: [artistId],

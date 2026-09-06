@@ -85,7 +85,7 @@ export const runQueuedDiscoverPlaylistBuild = async (payload = {}) => {
           recordDiscoverPlaylistBuildProgress("Building recommended playlists...");
         }
 
-        const allLibraryArtists = getCanonicalArtistKeys();
+        const allLibraryArtists = await getCanonicalArtistKeys();
         const existingArtistKeys = buildExistingArtistKeySet(allLibraryArtists);
         const { generateDiscoverPlaylists } =
           await import("./playlistBuilder.js");

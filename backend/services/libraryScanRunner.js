@@ -52,7 +52,7 @@ export async function runLibraryScanInWorker({
   while (activeScan) await activeScan.catch(() => {});
   activeScan = (async () => {
     const result = await spawnScan({ includeLidarr, musicRoot, artistIds, force, includeLocal });
-    if (result?.local?.changed || result?.lidarr?.changed) invalidateCanonicalLibraryCache();
+    if (result?.local?.changed || result?.lidarr?.changed) await invalidateCanonicalLibraryCache();
     return result;
   })();
   try {

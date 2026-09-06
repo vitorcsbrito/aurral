@@ -17,8 +17,6 @@ import {
 import { parseAurralIdentityComment } from "./playlistDownloadUtils.js";
 import { slimFileTags } from "./libraryMetadataProjection.js";
 
-// Each file is a handful of write statements; a yield every few files lets
-// the main thread take the write lock between them.
 const FILES_PER_YIELD = 20;
 
 const AUDIO_EXTENSIONS = new Set([
@@ -200,7 +198,7 @@ export async function scanMusicRoot({
       )
     : null;
   const result = { filesSeen: 0, filesIndexed: 0, filesFailed: 0 };
-  const unseenPaths = requestedFiles ? null : getAvailableLibraryMediaPaths(source);
+  const unseenPaths = requestedFiles ? null : await getAvailableLibraryMediaPaths(source);
   const scanResult = await withLibraryScan(source, resolvedRoot, (scanId) => {
     const run = async () => {
       const files = requestedFiles || walkAudioFiles(resolvedRoot);
@@ -218,14 +216,14 @@ export async function scanMusicRoot({
               : null,
           );
           const record = buildMetadataRecord(enrichedMetadata, filePath, resolvedRoot);
-          const artist = upsertLibraryArtist({
+          const artist = await upsertLibraryArtist({
             identityKey: record.artistKey,
             mbid: record.artistMbid,
             name: record.artistName,
             metadata: record.artistMetadata,
             syncSearch,
           });
-          const album = upsertLibraryAlbum({
+          const album = await upsertLibraryAlbum({
             identityKey: record.albumKey,
             mbid: record.albumMbid,
             releaseGroupMbid: record.releaseGroupMbid,
@@ -236,7 +234,7 @@ export async function scanMusicRoot({
             metadata: record.albumMetadata,
             syncSearch,
           });
-          const track = upsertLibraryTrack({
+          const track = await upsertLibraryTrack({
             identityKey: record.trackKey,
             mbid: record.trackMbid,
             title: record.title,
@@ -244,14 +242,14 @@ export async function scanMusicRoot({
             metadata: record.trackMetadata,
             syncSearch,
           });
-          linkLibraryAlbumTrack({
+          await linkLibraryAlbumTrack({
             albumId: album.id,
             trackId: track.id,
             discNumber: record.discNumber,
             trackNumber: record.trackNumber,
             syncSearch,
           });
-          upsertLibraryMediaFile({
+          await upsertLibraryMediaFile({
             trackId: track.id,
             albumId: album.id,
             source,
@@ -271,7 +269,7 @@ export async function scanMusicRoot({
         if (result.filesSeen % FILES_PER_YIELD === 0) await yieldWriteLock();
       }
       if (unseenPaths && result.filesFailed === 0) {
-        markLibraryMediaFilesUnavailable(source, unseenPaths);
+        await markLibraryMediaFilesUnavailable(source, unseenPaths);
       }
       return result;
     };

@@ -475,7 +475,7 @@ export class WeeklyFlowPlaylistSource {
     }
 
     const promise = (async () => {
-      const artists = getCanonicalArtistKeys();
+      const artists = await getCanonicalArtistKeys();
       return this._buildArtistKeySet(artists);
     })();
     this.libraryArtistKeysCache = { promise };
@@ -1981,7 +1981,7 @@ export class WeeklyFlowPlaylistSource {
       return cached.data;
     }
     const { albums, tracks } = buildCanonicalLibraryReadModel(
-      getCanonicalLibraryForArtistReferences({
+      await getCanonicalLibraryForArtistReferences({
         source: "all",
         availableOnly: false,
         references: [artistId],
@@ -2009,7 +2009,7 @@ export class WeeklyFlowPlaylistSource {
 
   async getLibraryTrackTitles(_libraryManager, artistId, _knownAlbums = null) {
     const { tracks } = buildCanonicalLibraryReadModel(
-      getCanonicalLibraryForArtistReferences({
+      await getCanonicalLibraryForArtistReferences({
         source: "all",
         availableOnly: false,
         references: [artistId],
@@ -2025,7 +2025,7 @@ export class WeeklyFlowPlaylistSource {
 
   async getLibraryAlbumNames(_libraryManager, artistId, _knownAlbums = null) {
     const { albums } = buildCanonicalLibraryReadModel(
-      getCanonicalLibraryForArtistReferences({
+      await getCanonicalLibraryForArtistReferences({
         source: "all",
         availableOnly: false,
         references: [artistId],
@@ -2042,7 +2042,7 @@ export class WeeklyFlowPlaylistSource {
   async getMixTracks(limit, options = {}) {
     const artists = Array.isArray(options?.libraryArtists)
       ? options.libraryArtists
-      : getCanonicalArtistKeys();
+      : await getCanonicalArtistKeys();
     if (artists.length === 0) {
       throw new Error("No artists in library. Add artists to enable Mix.");
     }
@@ -2126,7 +2126,7 @@ export class WeeklyFlowPlaylistSource {
     const set = new Set();
     try {
       for (let page = 1; ; page += 1) {
-        const result = getCanonicalLibraryPage({
+        const result = await getCanonicalLibraryPage({
           source: "all",
           availableOnly: false,
           kind: "albums",

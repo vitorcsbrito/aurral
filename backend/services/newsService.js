@@ -227,7 +227,7 @@ export async function getNewsForUser({
     if (cached) return cached;
   }
   const settings = getNewsSettings();
-  const libraryArtists = getCanonicalArtistKeys();
+  const libraryArtists = await getCanonicalArtistKeys();
   const recommendedArtists = userId
     ? ((await getUserDiscovery(userId, 50, 0))?.body?.recommendations || [])
     : [];

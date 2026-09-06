@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isMainThread } from "node:worker_threads";
 
 if (!process.env.AURRAL_DATA_DIR) {
   const dataDir = mkdtempSync(join(tmpdir(), `aurral-test-${process.pid}-`));
@@ -25,12 +26,15 @@ const { ensureDatabaseSchemaNamespace, dropDatabaseSchemaNamespace, closeDatabas
   await import("../backend/config/database.js");
 await ensureDatabaseSchemaNamespace();
 
+// --import preloads run in worker threads; only the owner drops the schema.
 let cleaned = false;
-process.on("beforeExit", () => {
-  if (cleaned) return;
-  cleaned = true;
-  dropDatabaseSchemaNamespace()
-    .catch(() => {})
-    .then(() => closeDatabase())
-    .catch(() => {});
-});
+if (isMainThread) {
+  process.on("beforeExit", () => {
+    if (cleaned) return;
+    cleaned = true;
+    dropDatabaseSchemaNamespace()
+      .catch(() => {})
+      .then(() => closeDatabase())
+      .catch(() => {});
+  });
+}

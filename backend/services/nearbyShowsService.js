@@ -458,9 +458,9 @@ export const getNearbyShows = async ({
   }
 
   const events = await fetchTicketmasterEvents({ location, radiusMiles });
-  const libraryArtistMap = buildArtistMap(resolveArtists(libraryArtists), "library");
-  const recommendedArtistMap = buildArtistMap(resolveArtists(recommendedArtists), "recommended");
-  const trendingArtistMap = buildArtistMap(resolveArtists(trendingArtists), "trending");
+  const libraryArtistMap = buildArtistMap(await resolveArtists(libraryArtists), "library");
+  const recommendedArtistMap = buildArtistMap(await resolveArtists(recommendedArtists), "recommended");
+  const trendingArtistMap = buildArtistMap(await resolveArtists(trendingArtists), "trending");
   const libraryShows = [];
   const recommendedShows = [];
   const seen = new Set();

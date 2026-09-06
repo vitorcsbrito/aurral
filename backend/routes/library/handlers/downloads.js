@@ -365,7 +365,7 @@ export function registerDownloads(router) {
     }
 
     try {
-      const alreadyOwned = getCanonicalTrackOwnership({
+      const alreadyOwned = await getCanonicalTrackOwnership({
         trackMbid: track.trackMbid,
         artistName: track.artistName,
         trackName: track.trackName,

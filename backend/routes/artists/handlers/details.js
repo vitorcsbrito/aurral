@@ -13,8 +13,8 @@ import { getArtistByMbid } from "../../../services/providers/brainzmashProvider.
 import { getArtistTagPayload, buildArtistBase } from "../shared/transform.js";
 import { getCanonicalArtistProjection } from "../../../services/libraryQueryService.js";
 
-export function getCanonicalLidarrArtist(reference) {
-  const artist = getCanonicalArtistProjection({ reference })[0] || null;
+export async function getCanonicalLidarrArtist(reference) {
+  const artist = (await getCanonicalArtistProjection({ reference }))[0] || null;
   if (!artist?.lidarrManaged) return null;
   return {
     id: artist.providerId || artist.id,
@@ -163,8 +163,8 @@ export function registerDetails(router) {
       const resolvedMbid = override?.musicbrainzId || mbid;
 
       const lidarrArtist =
-        getCanonicalLidarrArtist(resolvedMbid) ||
-        (resolvedMbid === mbid ? null : getCanonicalLidarrArtist(mbid));
+        (await getCanonicalLidarrArtist(resolvedMbid)) ||
+        (resolvedMbid === mbid ? null : await getCanonicalLidarrArtist(mbid));
 
       if (lidarrArtist) {
         const artistMbid = override?.musicbrainzId || mbid;

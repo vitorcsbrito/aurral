@@ -443,7 +443,7 @@ export const updateDiscoveryCache = async (options = {}) => {
 
   try {
     recordDiscoveryUpdateProgress("loading_sources", "Loading library artists", 12);
-    const allLibraryArtists = getCanonicalArtistKeys();
+    const allLibraryArtists = await getCanonicalArtistKeys();
     const recentLibraryArtists = allLibraryArtists.slice(0, 40);
     const libraryArtists =
       recentLibraryArtists.length > 0
@@ -896,7 +896,7 @@ export const updateUserDiscoveryCache = async (
   }
 
   try {
-    const existingArtistKeys = buildExistingArtistKeySet(getCanonicalArtistKeys());
+    const existingArtistKeys = buildExistingArtistKeySet(await getCanonicalArtistKeys());
 
     const lastfmHealth = { success: 0, failure: 0 };
     const discoveryPeriod = getLastfmDiscoveryPeriod();

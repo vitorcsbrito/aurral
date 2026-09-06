@@ -387,7 +387,7 @@ function findMatchingTrack(tracks, track, strictAlbum = false) {
 async function findLidarrSource(track, options = {}) {
   const strictAlbum = options.targetPlaylistType === "library";
   const { artists, albums, tracks } = buildCanonicalLibraryReadModel(
-    getCanonicalLibraryForArtistReferences({
+    await getCanonicalLibraryForArtistReferences({
       source: "lidarr",
       availableOnly: false,
       references: [track?.artistMbid, track?.artistName],

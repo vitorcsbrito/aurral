@@ -235,6 +235,7 @@ export const dbHelpers = {
 };
 
 export async function pingDatabase() {
+  await ensureDatabaseSchemaNamespace();
   const row = await db.get("SELECT current_database() AS database, version() AS version");
   return row;
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dbOps } from "../db/helpers/index.js";
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import {
   getCanonicalAlbumPage,
   getCanonicalArtistPage,
@@ -333,14 +333,15 @@ const flowJobs = (flow, { includePending = false } = {}) =>
 
 const playlistCoverArt = (kind, playlistId) => idFor(kind, playlistId);
 
-export function listArtists() {
-  return getCanonicalArtistPage({ source: "all", availableOnly: false }).artists.map(toArtistSummary);
+export async function listArtists() {
+  const page = await getCanonicalArtistPage({ source: "all", availableOnly: false });
+  return page.artists.map(toArtistSummary);
 }
 
-export function getArtist(value) {
+export async function getArtist(value) {
   const parsed = parseId(value);
   if (parsed?.kind !== "artist") return null;
-  const library = indexFocusedLibrary(getCanonicalLibraryForArtistReferences({
+  const library = indexFocusedLibrary(await getCanonicalLibraryForArtistReferences({
     source: "all",
     availableOnly: false,
     references: [parsed.key],
@@ -349,10 +350,10 @@ export function getArtist(value) {
   return artist?.identityKey ? toArtist(library, artist) : null;
 }
 
-export function getAlbum(value) {
+export async function getAlbum(value) {
   const parsed = parseId(value);
   if (parsed?.kind !== "album") return null;
-  const library = indexFocusedLibrary(getCanonicalLibraryForAlbumReferences({
+  const library = indexFocusedLibrary(await getCanonicalLibraryForAlbumReferences({
     source: "all",
     availableOnly: false,
     references: [parsed.key],
@@ -361,13 +362,13 @@ export function getAlbum(value) {
   return album?.identityKey ? toAlbum(library, album) : null;
 }
 
-export function getSong(value, user) {
+export async function getSong(value, user) {
   const playlistEntry = playlistJobFromId(user, value);
   if (playlistEntry) return toPlaylistSong(playlistEntry.playlist, playlistEntry.kind, playlistEntry.job);
 
   const parsed = parseId(value);
   if (parsed?.kind !== "song") return null;
-  const library = indexFocusedLibrary(getCanonicalTrack({
+  const library = indexFocusedLibrary(await getCanonicalTrack({
     trackId: parsed.key,
     source: "all",
     availableOnly: false,
@@ -376,13 +377,13 @@ export function getSong(value, user) {
   return track?.identityKey ? toSong(library, track) : null;
 }
 
-export function getMusicDirectory(value) {
+export async function getMusicDirectory(value) {
   if (value === "root" || value === "1") {
     const rootId = value === "1" ? "1" : "root";
     return {
       id: rootId,
       name: "Aurral",
-      child: listArtists().map((artist) => ({
+      child: (await listArtists()).map((artist) => ({
         id: artist.id,
         parent: rootId,
         isDir: true,
@@ -393,19 +394,19 @@ export function getMusicDirectory(value) {
   }
   const parsed = parseId(value);
   if (parsed?.kind === "artist") {
-    const artist = getArtist(value);
+    const artist = await getArtist(value);
     return artist ? { id: artist.id, name: artist.name, child: artist.album || [] } : null;
   }
   if (parsed?.kind === "album") {
-    const album = getAlbum(value);
+    const album = await getAlbum(value);
     return album ? { id: album.id, name: album.name, child: album.song || [] } : null;
   }
   return null;
 }
 
-export function searchLibrary(query, options = {}) {
+export async function searchLibrary(query, options = {}) {
   const needle = String(query || "").trim().toLocaleLowerCase();
-  const result = getCanonicalSearchPage({
+  const result = await getCanonicalSearchPage({
     source: "all",
     availableOnly: false,
     query: needle,
@@ -426,10 +427,10 @@ export function searchLibrary(query, options = {}) {
   };
 }
 
-export function getAlbumList(options = {}) {
+export async function getAlbumList(options = {}) {
   const type = String(options.type || "alphabeticalByName");
   if (type === "starred") return [];
-  const library = indexFocusedLibrary(getCanonicalAlbumPage({
+  const library = indexFocusedLibrary(await getCanonicalAlbumPage({
     source: "all",
     availableOnly: false,
     type,
@@ -442,10 +443,10 @@ export function getAlbumList(options = {}) {
   return library.albums.map((album) => toAlbumSummary(library, album));
 }
 
-export function getSongsByGenre(genre, options = {}) {
+export async function getSongsByGenre(genre, options = {}) {
   const target = String(genre || "").trim().toLocaleLowerCase();
   if (!target) return [];
-  const library = indexFocusedLibrary(getCanonicalTrackPage({
+  const library = indexFocusedLibrary(await getCanonicalTrackPage({
     source: "all",
     availableOnly: false,
     genre: target,
@@ -459,15 +460,12 @@ export function getGenres() {
   return getCanonicalGenres({ source: "all", availableOnly: false });
 }
 
-const getStarsStmt = db.prepare(
-  "SELECT entity_kind, entity_key FROM subsonic_stars WHERE user_id = ? ORDER BY created_at, entity_kind, entity_key",
-);
-const addStarStmt = db.prepare(
-  "INSERT OR IGNORE INTO subsonic_stars (user_id, entity_kind, entity_key, created_at) VALUES (?, ?, ?, ?)",
-);
-const removeStarStmt = db.prepare(
-  "DELETE FROM subsonic_stars WHERE user_id = ? AND entity_kind = ? AND entity_key = ?",
-);
+const SELECT_STARS_SQL =
+  "SELECT entity_kind, entity_key FROM subsonic_stars WHERE user_id = ? ORDER BY created_at, entity_kind, entity_key";
+const ADD_STAR_SQL =
+  "INSERT INTO subsonic_stars (user_id, entity_kind, entity_key, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING";
+const REMOVE_STAR_SQL =
+  "DELETE FROM subsonic_stars WHERE user_id = ? AND entity_kind = ? AND entity_key = ?";
 
 const isSameTrack = (left, right) => tracksShareMembership(left, right);
 
@@ -515,12 +513,12 @@ const resolvePlaylistSong = (user, value) => {
   return track ? { kind, playlist, job, track } : null;
 };
 
-const resolveSubsonicTrack = (user, value) => {
+const resolveSubsonicTrack = async (user, value) => {
   const playlistSong = resolvePlaylistSong(user, value);
   if (playlistSong) return playlistSong;
   const parsed = parseId(value);
   if (parsed?.kind !== "song") return null;
-  const library = indexFocusedLibrary(getCanonicalTrack({
+  const library = indexFocusedLibrary(await getCanonicalTrack({
     trackId: parsed.key,
     source: "all",
     availableOnly: false,
@@ -554,14 +552,14 @@ const findReusableLibrarySource = (track) =>
       isSameTrack(job, track),
   );
 
-const findAvailableCanonicalFile = (track) => {
+const findAvailableCanonicalFile = async (track) => {
   let library = indexFocusedLibrary(track?.trackMbid
-    ? getCanonicalTrack({
+    ? await getCanonicalTrack({
         trackId: track.trackMbid,
         source: "all",
         availableOnly: true,
       })
-    : getCanonicalTrackPage({
+    : await getCanonicalTrackPage({
         source: "all",
         availableOnly: true,
         query: track?.trackName,
@@ -570,7 +568,7 @@ const findAvailableCanonicalFile = (track) => {
       }));
   let candidate = library.tracks.find((entry) => isSameTrack(track, trackFromCanonical(library, entry)));
   if (!candidate && track?.trackMbid) {
-    library = indexFocusedLibrary(getCanonicalTrackPage({
+    library = indexFocusedLibrary(await getCanonicalTrackPage({
       source: "all",
       availableOnly: true,
       query: track.trackName,
@@ -585,16 +583,17 @@ const findAvailableCanonicalFile = (track) => {
     : null;
 };
 
-const canonicalStarRow = (user, row) => {
+const canonicalStarRow = async (user, row) => {
   if (!["flow-song", "shared-song"].includes(row?.entity_kind)) return row;
   const playlistSong = resolvePlaylistSong(user, idFor(row.entity_kind, row.entity_key));
-  const canonical = playlistSong ? findAvailableCanonicalFile(playlistSong.track)?.track : null;
+  const owned = playlistSong ? await findAvailableCanonicalFile(playlistSong.track) : null;
+  const canonical = owned?.track || null;
   return canonical
     ? { ...row, entity_kind: "song", entity_key: canonical.identityKey }
     : row;
 };
 
-const ensureLibraryJob = (track, createdJobIds = null) => {
+const ensureLibraryJob = async (track, createdJobIds = null) => {
   const existing = findLibraryJob(track);
   if (existing) {
     if (existing.status === "failed") {
@@ -609,7 +608,7 @@ const ensureLibraryJob = (track, createdJobIds = null) => {
   const jobId = downloadTracker.addJob(track, "library");
   if (!jobId) return null;
   if (createdJobIds) createdJobIds.push(jobId);
-  const owned = findAvailableCanonicalFile(track);
+  const owned = await findAvailableCanonicalFile(track);
   if (owned) {
     downloadTracker.setDone(jobId, owned.file.path, owned.albumName || track.albumName || null);
     return jobId;
@@ -654,7 +653,7 @@ const normalizeSharedPlaylistId = (value) => {
   return parsed?.kind === "shared" ? parsed.key : String(value || "").trim();
 };
 
-const canonicalizePlaylistTracks = (tracks, createdJobIds = null) => {
+const canonicalizePlaylistTracks = async (tracks, createdJobIds = null) => {
   const normalized = [];
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const candidate = normalizeSharedTrack(track);
@@ -664,17 +663,17 @@ const canonicalizePlaylistTracks = (tracks, createdJobIds = null) => {
       : null;
     const jobId = existingJob && isSameTrack(existingJob, candidate)
       ? existingJob.id
-      : ensureLibraryJob(candidate, createdJobIds);
+      : await ensureLibraryJob(candidate, createdJobIds);
     if (!jobId) return null;
     normalized.push(toCanonicalPlaylistTrack(candidate, jobId));
   }
   return normalized;
 };
 
-const replaceSubsonicPlaylistTracks = (user, playlist, tracks, updates = {}) => {
+const replaceSubsonicPlaylistTracks = async (user, playlist, tracks, updates = {}) => {
   if (!playlist || !flowPlaylistConfig.canUserAccessSharedPlaylist(user, playlist)) return null;
   const createdJobIds = [];
-  const canonicalTracks = canonicalizePlaylistTracks(tracks, createdJobIds);
+  const canonicalTracks = await canonicalizePlaylistTracks(tracks, createdJobIds);
   if (!canonicalTracks) {
     for (const jobId of createdJobIds) downloadTracker.removeJob(jobId);
     return null;
@@ -692,11 +691,12 @@ const replaceSubsonicPlaylistTracks = (user, playlist, tracks, updates = {}) => 
   return updated;
 };
 
-export function createSubsonicPlaylist(user, { name, songIds = [] } = {}) {
+export async function createSubsonicPlaylist(user, { name, songIds = [] } = {}) {
   if (!hasPermission(user, "accessFlow")) return null;
   const safeName = String(name || "").trim();
   if (!safeName) return null;
-  const resolved = songIds.map((id) => resolveSubsonicTrack(user, id));
+  const resolved = [];
+  for (const id of songIds) resolved.push(await resolveSubsonicTrack(user, id));
   if (resolved.some((entry) => !entry)) return null;
   const playlist = flowPlaylistConfig.createSharedPlaylist({
     id: randomUUID(),
@@ -704,7 +704,7 @@ export function createSubsonicPlaylist(user, { name, songIds = [] } = {}) {
     ownerUserId: user.id,
     tracks: [],
   });
-  const updated = replaceSubsonicPlaylistTracks(
+  const updated = await replaceSubsonicPlaylistTracks(
     user,
     playlist,
     resolved.map((entry) => entry.track),
@@ -713,7 +713,7 @@ export function createSubsonicPlaylist(user, { name, songIds = [] } = {}) {
   return updated;
 }
 
-export function updateSubsonicPlaylist(
+export async function updateSubsonicPlaylist(
   user,
   { playlistId, name, comment, songIdsToAdd = [], songIndexesToRemove = [] } = {},
 ) {
@@ -722,7 +722,8 @@ export function updateSubsonicPlaylist(
     normalizeSharedPlaylistId(playlistId),
   );
   if (!playlist || !hasPermission(user, "accessFlow")) return null;
-  const resolvedAdds = songIdsToAdd.map((id) => resolveSubsonicTrack(user, id));
+  const resolvedAdds = [];
+  for (const id of songIdsToAdd) resolvedAdds.push(await resolveSubsonicTrack(user, id));
   if (resolvedAdds.some((entry) => !entry)) return null;
   const removals = new Set(songIndexesToRemove);
   const currentTracks = playlist.tracks.filter((_track, index) => !removals.has(index));
@@ -762,7 +763,7 @@ export function star(user, value) {
   return starMany(user, [value]);
 }
 
-export function starMany(user, values, { skipCanonicalValidation = false } = {}) {
+export async function starMany(user, values, { skipCanonicalValidation = false } = {}) {
   const parsed = values.map(starTarget);
   if (!parsed.length || parsed.some((target) => !target) || !user?.id) return false;
   const canonicalTargets = parsed
@@ -775,7 +776,7 @@ export function starMany(user, values, { skipCanonicalValidation = false } = {})
   );
   const canonicalTargetKeys = skipCanonicalValidation
     ? null
-    : getCanonicalFavoriteTargetKeys(canonicalTargets);
+    : await getCanonicalFavoriteTargetKeys(canonicalTargets);
   if (canonicalTargetKeys && canonicalTargets.some((target) => !canonicalTargetKeys.has(target))) {
     return false;
   }
@@ -787,16 +788,18 @@ export function starMany(user, values, { skipCanonicalValidation = false } = {})
   if (favoriteAutoKeepEnabled()) {
     const createdJobIds = [];
     for (const entry of playlistSongs.filter(Boolean)) {
-      if (!ensureLibraryJob(entry.track, createdJobIds)) {
+      if (!(await ensureLibraryJob(entry.track, createdJobIds))) {
         for (const jobId of createdJobIds) downloadTracker.removeJob(jobId);
         return false;
       }
     }
   }
-  const addStars = db.transaction(() => {
-    for (const target of parsed) addStarStmt.run(user.id, target.kind, target.key, Date.now());
+  const createdAt = Date.now();
+  await db.transaction(async () => {
+    for (const target of parsed) {
+      await db.run(ADD_STAR_SQL, [user.id, target.kind, target.key, createdAt]);
+    }
   });
-  addStars();
   return true;
 }
 
@@ -804,36 +807,48 @@ export function unstar(user, value) {
   return unstarMany(user, [value]);
 }
 
-export function unstarMany(user, values) {
+export async function unstarMany(user, values) {
   const parsed = values.map(starTarget);
   if (!parsed.length || parsed.some((target) => !target) || !user?.id) return false;
-  const targetKeys = new Set(parsed.flatMap((target) => {
+  const targetKeys = new Set();
+  for (const target of parsed) {
     const row = { entity_kind: target.kind, entity_key: target.key };
-    const canonical = canonicalStarRow(user, row);
-    return [row, canonical].map((entry) => `${entry.entity_kind}:${entry.entity_key}`);
-  }));
-  const removeStars = db.transaction(() => {
-    for (const row of starredRows(user)) {
-      const canonical = canonicalStarRow(user, row);
-      if (
-        targetKeys.has(`${row.entity_kind}:${row.entity_key}`) ||
-        targetKeys.has(`${canonical.entity_kind}:${canonical.entity_key}`)
-      ) {
-        removeStarStmt.run(user.id, row.entity_kind, row.entity_key);
-      }
+    const canonical = await canonicalStarRow(user, row);
+    for (const entry of [row, canonical]) {
+      targetKeys.add(`${entry.entity_kind}:${entry.entity_key}`);
     }
-  });
-  removeStars();
+  }
+  // Every canonical lookup happens before the transaction opens.
+  const removals = [];
+  for (const row of await starredRows(user)) {
+    const canonical = await canonicalStarRow(user, row);
+    if (
+      targetKeys.has(`${row.entity_kind}:${row.entity_key}`) ||
+      targetKeys.has(`${canonical.entity_kind}:${canonical.entity_key}`)
+    ) {
+      removals.push(row);
+    }
+  }
+  if (removals.length) {
+    await db.transaction(async () => {
+      for (const row of removals) {
+        await db.run(REMOVE_STAR_SQL, [user.id, row.entity_kind, row.entity_key]);
+      }
+    });
+  }
   return true;
 }
 
-const starredRows = (user) => (user?.id ? getStarsStmt.all(user.id) : []);
+const starredRows = async (user) =>
+  (user?.id ? db.all(SELECT_STARS_SQL, [user.id]) : []);
 
-export function getStarredIdentityKeys(user) {
-  return new Set(starredRows(user).map((row) => {
-    const canonical = canonicalStarRow(user, row);
-    return `${canonical.entity_kind}:${canonical.entity_key}`;
-  }));
+export async function getStarredIdentityKeys(user) {
+  const keys = new Set();
+  for (const row of await starredRows(user)) {
+    const canonical = await canonicalStarRow(user, row);
+    keys.add(`${canonical.entity_kind}:${canonical.entity_key}`);
+  }
+  return keys;
 }
 
 const buildStarred = (library, rows, user) => {
@@ -861,27 +876,28 @@ const buildStarred = (library, rows, user) => {
   return starred;
 };
 
-export function getStarredWithLibrary(user) {
-  const rows = starredRows(user).map((row) => canonicalStarRow(user, row));
+export async function getStarredWithLibrary(user) {
+  const rows = [];
+  for (const row of await starredRows(user)) rows.push(await canonicalStarRow(user, row));
   const canonicalRows = rows.filter((row) => ["artist", "album", "song"].includes(row.entity_kind));
-  const library = getCanonicalLibrary({
+  const library = await getCanonicalLibrary({
     favoriteKeys: canonicalRows.map((row) => ({ kind: row.entity_kind, key: row.entity_key })),
   });
   return { starred: buildStarred(indexFocusedLibrary(library), rows, user), library };
 }
 
-export function getStarred(user) {
-  return getStarredWithLibrary(user).starred;
+export async function getStarred(user) {
+  return (await getStarredWithLibrary(user)).starred;
 }
 
-export function getArtistInfo(value) {
-  return getArtist(value) ? { similarArtist: [] } : null;
+export async function getArtistInfo(value) {
+  return (await getArtist(value)) ? { similarArtist: [] } : null;
 }
 
-export function getTopSongs(artist, options = {}) {
+export async function getTopSongs(artist, options = {}) {
   const target = String(artist || "").trim();
   if (!target) return [];
-  const library = indexFocusedLibrary(getCanonicalTopTracks({
+  const library = indexFocusedLibrary(await getCanonicalTopTracks({
     source: "all",
     availableOnly: false,
     artist: target,
@@ -944,7 +960,7 @@ export function getFlowPlaylist(value, user) {
   };
 }
 
-export function resolveStreamPath(value, user) {
+export async function resolveStreamPath(value, user) {
   const playlistEntry = playlistJobFromId(user, value);
   if (playlistEntry) {
     return playlistEntry.job.status === "done" && playlistEntry.job.finalPath
@@ -954,7 +970,7 @@ export function resolveStreamPath(value, user) {
 
   const parsed = parseId(value);
   if (parsed?.kind !== "song") return null;
-  const library = indexFocusedLibrary(getCanonicalTrack({
+  const library = indexFocusedLibrary(await getCanonicalTrack({
     trackId: parsed.key,
     source: "all",
     availableOnly: false,
@@ -989,18 +1005,18 @@ export async function resolveArtworkUrl(value) {
   }
 
   const library = indexFocusedLibrary(parsed.kind === "artist"
-    ? getCanonicalLibraryForArtistReferences({
+    ? await getCanonicalLibraryForArtistReferences({
         source: "all",
         availableOnly: false,
         references: [parsed.key],
       })
     : parsed.kind === "album"
-      ? getCanonicalLibraryForAlbumReferences({
+      ? await getCanonicalLibraryForAlbumReferences({
           source: "all",
           availableOnly: false,
           references: [parsed.key],
         })
-      : getCanonicalTrack({
+      : await getCanonicalTrack({
           trackId: parsed.key,
           source: "all",
           availableOnly: false,

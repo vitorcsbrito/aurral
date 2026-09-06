@@ -72,7 +72,7 @@ const toLibraryAlbum = (album) => ({
 });
 
 export async function getArtistLibraryLookup(mbid) {
-  const { artists, albums } = getCanonicalLibraryReadModelForArtists({
+  const { artists, albums } = await getCanonicalLibraryReadModelForArtists({
     source: "all",
     availableOnly: false,
     mbids: [mbid],
@@ -105,7 +105,7 @@ export async function getArtistLibraryLookup(mbid) {
   if (lidarrArtist && lidarrAlbums) {
     return {
       exists: true,
-      artist: toLibraryArtist(libraryManager.mapLidarrArtist(lidarrArtist)),
+      artist: toLibraryArtist(await libraryManager.mapLidarrArtist(lidarrArtist)),
       albums: lidarrAlbums,
       canonical: true,
     };
@@ -174,7 +174,7 @@ export function registerMisc(router) {
         });
       }
 
-      const existingArtistIds = getCanonicalArtistMbids({
+      const existingArtistIds = await getCanonicalArtistMbids({
         source: "all",
         availableOnly: false,
         mbids: wanted,
@@ -211,7 +211,7 @@ export function registerMisc(router) {
       }
 
       const { albums: canonicalAlbums, tracks: canonicalTracks } =
-        getCanonicalLibraryReadModelForAlbumReferences({
+        await getCanonicalLibraryReadModelForAlbumReferences({
           source: "all",
           availableOnly: false,
           references: wanted,
@@ -308,7 +308,7 @@ export function registerMisc(router) {
 
   router.get("/recent", async (req, res) => {
     try {
-      const artists = getCanonicalArtistKeys();
+      const artists = await getCanonicalArtistKeys();
       const addedTime = (artist) => new Date(artist.addedAt || artist.added || 0).getTime() || 0;
       const recent = [...artists]
         .sort((a, b) => addedTime(b) - addedTime(a))

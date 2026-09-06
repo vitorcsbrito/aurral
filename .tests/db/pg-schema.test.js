@@ -17,7 +17,7 @@ test("placeholder rewriting skips quoted strings and comments", () => {
 });
 
 test("migrations apply once and the schema round-trips library rows", async () => {
-  await db.exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+  // The per-process schema starts empty; public is shared, never dropped.
   const first = await migrateDatabase(db, { logger: {} });
   assert.ok(first.includes("0001_initial_tables"));
   const second = await migrateDatabase(db, { logger: {} });

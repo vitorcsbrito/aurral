@@ -49,17 +49,17 @@ export async function getRecentMissingReleases(limit = 24, options = {}) {
 
   if (!artists && !albums) {
     canonicalAlbums = true;
-    albums = getCanonicalAlbumsByReleaseDate({
+    albums = await getCanonicalAlbumsByReleaseDate({
       from: new Date(recentCutoff).toISOString().slice(0, 10),
       to: includeFuture ? null : new Date(today).toISOString().slice(0, 10),
       limit: normalizedLimit,
       missingOnly: true,
     });
   } else if (!artists) {
-    artists = getCanonicalArtistKeys();
+    artists = await getCanonicalArtistKeys();
   } else if (!albums) {
     canonicalAlbums = true;
-    albums = getCanonicalAlbumsByReleaseDate({
+    albums = await getCanonicalAlbumsByReleaseDate({
       from: new Date(recentCutoff).toISOString().slice(0, 10),
       to: includeFuture ? null : new Date(today).toISOString().slice(0, 10),
       limit: normalizedLimit,
@@ -75,14 +75,16 @@ export async function getRecentMissingReleases(limit = 24, options = {}) {
   const artistsById = new Map();
   if (Array.isArray(artists)) {
     if (!canonicalAlbums) await libraryManager.backfillLidarrArtistMappings(artists);
-    artists.forEach((artist) => {
+    for (const artist of artists) {
       if (artist?.id != null) {
-        const mappedArtist = canonicalAlbums ? artist : libraryManager.mapLidarrArtist(artist);
+        const mappedArtist = canonicalAlbums
+          ? artist
+          : await libraryManager.mapLidarrArtist(artist);
         mappedArtist.artistName = mappedArtist.artistName || artist.name || null;
         artistsById.set(artist.id, mappedArtist);
         artistsById.set(String(artist.id), mappedArtist);
       }
-    });
+    }
   }
 
   if (canonicalAlbums) {

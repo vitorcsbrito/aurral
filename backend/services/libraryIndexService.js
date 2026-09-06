@@ -1,5 +1,5 @@
 import path from "node:path";
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { resolvePlaylistRoot } from "./playlistPaths.js";
 import { scanMusicRoot } from "./libraryFileScanner.js";
 import {
@@ -18,16 +18,14 @@ import { dbOps } from "../db/helpers/index.js";
 const SEARCH_REPAIR_PENDING_KEY = "librarySearchRepairPending";
 import { musicbrainzGetArtistNameByMbid } from "./apiClients/index.js";
 
-function getAurralJobMetadataByPath() {
-  const rows = db
-    .prepare(
-      `SELECT final_path, artist_name, album_name, track_name,
-        artist_mbid, album_mbid, track_mbid, release_year, track_number
-       FROM playlist_download_jobs
-       WHERE status = 'done' AND final_path IS NOT NULL
-       ORDER BY completed_at DESC, created_at DESC`,
-    )
-    .all();
+async function getAurralJobMetadataByPath() {
+  const rows = await db.all(
+    `SELECT final_path, artist_name, album_name, track_name,
+      artist_mbid, album_mbid, track_mbid, release_year, track_number
+     FROM playlist_download_jobs
+     WHERE status = 'done' AND final_path IS NOT NULL
+     ORDER BY completed_at DESC, created_at DESC`,
+  );
   const byPath = new Map();
   for (const row of rows) {
     const filePath = String(row.final_path || "").trim();
@@ -56,11 +54,11 @@ async function canonicalizeAurralArtistNames(jobMetadataByPath) {
   }
 
   for (const artistMbid of candidates.keys()) {
-    const existing = db.prepare("SELECT id FROM library_artists WHERE mbid = ?").get(artistMbid);
+    const existing = await db.get("SELECT id FROM library_artists WHERE mbid = ?", [artistMbid]);
     if (!existing) continue;
     const artistName = await musicbrainzGetArtistNameByMbid(artistMbid).catch(() => null);
     if (!artistName) continue;
-    upsertLibraryArtist({
+    await upsertLibraryArtist({
       identityKey: `mbid:${artistMbid}`,
       mbid: artistMbid,
       name: artistName,
@@ -76,8 +74,9 @@ async function canonicalizeAurralArtistNames(jobMetadataByPath) {
 // repair compares whole tables, so it runs in the scan worker only; the main
 // thread closes the runs at startup and leaves a marker for the next scan.
 export async function repairInterruptedLibraryScans() {
-  const closed = failInterruptedLibraryScans();
-  const pending = closed > 0 || dbOps.getJSONSetting(SEARCH_REPAIR_PENDING_KEY) === true;
+  const closed = await failInterruptedLibraryScans();
+  // Main thread wrote the marker; read past the mirror.
+  const pending = closed > 0 || (await dbOps.readJSONSetting(SEARCH_REPAIR_PENDING_KEY)) === true;
   if (pending) {
     await repairLibrarySearchDocuments();
     await dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, false);
@@ -86,7 +85,7 @@ export async function repairInterruptedLibraryScans() {
 }
 
 export async function closeInterruptedLibraryScans() {
-  const closed = failInterruptedLibraryScans();
+  const closed = await failInterruptedLibraryScans();
   if (closed > 0) await dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, true);
   return closed;
 }
@@ -94,10 +93,10 @@ export async function closeInterruptedLibraryScans() {
 // withLibraryScan records failures that happen inside the indexed phase; a
 // failure while the indexer is still pulling the Lidarr lists (the common
 // case for a timeout) has no run row yet, so one is written here.
-function recordFailedLidarrScan(source, rootPath, error) {
+async function recordFailedLidarrScan(source, rootPath, error) {
   try {
-    const scanId = beginLibraryScan({ source, rootPath });
-    finishLibraryScan(scanId, { status: "failed", error: error?.message || String(error) });
+    const scanId = await beginLibraryScan({ source, rootPath });
+    await finishLibraryScan(scanId, { status: "failed", error: error?.message || String(error) });
   } catch (storeError) {
     logger.warn("library", "Could not record failed Lidarr scan", {
       error: storeError?.message || String(storeError),
@@ -115,7 +114,7 @@ export async function scanConfiguredLibrary({
 } = {}) {
   const scoped = Array.isArray(artistIds) && artistIds.length > 0;
   const scanLocal = !scoped || includeLocal === true;
-  const jobMetadataByPath = scanLocal ? getAurralJobMetadataByPath() : new Map();
+  const jobMetadataByPath = scanLocal ? await getAurralJobMetadataByPath() : new Map();
   // Each scan syncs the search documents of the rows it changed when it ends
   // (see withLibraryScan), and the cache invalidation it triggers schedules
   // the background genre snapshot refresh. A scan that fails part-way gets a
@@ -155,7 +154,7 @@ export async function scanConfiguredLibrary({
           scope,
           error: error?.message || String(error),
         });
-        recordFailedLidarrScan(scoped ? "lidarr-artist" : "lidarr", scope, error);
+        await recordFailedLidarrScan(scoped ? "lidarr-artist" : "lidarr", scope, error);
         throw new Error(`Lidarr library scan failed: ${error?.message || error}`, { cause: error });
       }
     }
@@ -165,8 +164,5 @@ export async function scanConfiguredLibrary({
   } finally {
     if (scanFailed) await repairLibrarySearchDocuments();
   }
-  // A completed scan is the point where table shapes change the most, so
-  // refresh the planner statistics here (cheap: only stale tables are analysed).
-  db.pragma("optimize");
   return { local, lidarr };
 }

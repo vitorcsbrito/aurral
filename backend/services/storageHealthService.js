@@ -823,7 +823,7 @@ async function checkNavidromeSection() {
 }
 
 async function checkNativePlaybackSection() {
-  const trackCount = getCanonicalTrackCount({ availableOnly: true });
+  const trackCount = await getCanonicalTrackCount({ availableOnly: true });
   if (trackCount === 0) {
     return buildSection("native-playback", "Aurral-native playback", [
       healthStep("indexed", "warn", "Canonical media is ready for native playback", {
@@ -832,10 +832,10 @@ async function checkNativePlaybackSection() {
     ]);
   }
 
-  const sample = getCanonicalTrackSample({
+  const sample = (await getCanonicalTrackSample({
     availableOnly: true,
     limit: MEDIA_HEALTH_SAMPLE_LIMIT,
-  }).tracks;
+  })).tracks;
   const missing = [];
   for (const track of sample) {
     let readable = false;

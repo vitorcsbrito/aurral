@@ -608,16 +608,17 @@ export const MIGRATIONS = [
 ];
 
 export async function migrateDatabase(db, { logger = console } = {}) {
-  await db.exec(EXTENSIONS);
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id TEXT PRIMARY KEY,
-      applied_at BIGINT NOT NULL
-    )
-  `);
   // Serializes concurrent starters (main thread plus workers) on one lock.
+  // Extension and bookkeeping DDL race too, so they run inside it.
   return db.transaction(async () => {
     await db.exec("SELECT pg_advisory_xact_lock(725401)");
+    await db.exec(EXTENSIONS);
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at BIGINT NOT NULL
+      )
+    `);
     const applied = new Set(
       (await db.all("SELECT id FROM schema_migrations")).map((row) => row.id),
     );

@@ -14,7 +14,7 @@ export function registerArtists(router) {
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10000, 1), 10000);
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
       if (req.query.readPath === "canonical") {
-        const { artists } = getCanonicalLibraryReadModelForArtistPage({
+        const { artists } = await getCanonicalLibraryReadModelForArtistPage({
           source: req.query.source || "all",
           limit,
           offset,
@@ -24,7 +24,7 @@ export function registerArtists(router) {
           added: artist.addedAt,
         })));
       }
-      const artists = getCanonicalArtistProjection({ pageSize: limit, offset });
+      const artists = await getCanonicalArtistProjection({ pageSize: limit, offset });
       const formatted = artists.map((artist) => ({
         ...artist,
         foreignArtistId: artist.foreignArtistId || artist.mbid,

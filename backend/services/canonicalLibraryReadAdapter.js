@@ -152,13 +152,13 @@ export function buildCanonicalLibraryReadModel(library) {
   return { artists: readArtists, albums: readAlbums, tracks: readTracks };
 }
 
-export function getCanonicalLibraryReadModelForArtistPage({
+export async function getCanonicalLibraryReadModelForArtistPage({
   source = "lidarr",
   availableOnly = true,
   limit = 10000,
   offset = 0,
 } = {}) {
-  const library = getCanonicalArtistPage({ source, availableOnly, limit, offset, includeStats: true });
+  const library = await getCanonicalArtistPage({ source, availableOnly, limit, offset, includeStats: true });
   return {
     artists: library.artists.map((artist) => buildArtist(artist, new Map())),
     albums: [],
@@ -166,42 +166,42 @@ export function getCanonicalLibraryReadModelForArtistPage({
   };
 }
 
-export function getCanonicalLibraryReadModelForArtists({
+export async function getCanonicalLibraryReadModelForArtists({
   source = "lidarr",
   availableOnly = true,
   mbids = [],
 } = {}) {
   return buildCanonicalLibraryReadModel(
-    getCanonicalLibraryForArtists({ source, availableOnly, mbids }),
+    await getCanonicalLibraryForArtists({ source, availableOnly, mbids }),
   );
 }
 
-export function getCanonicalLibraryReadModelForArtistReferences({
+export async function getCanonicalLibraryReadModelForArtistReferences({
   source = "all",
   availableOnly = false,
   references = [],
 } = {}) {
   return buildCanonicalLibraryReadModel(
-    getCanonicalLibraryForArtistReferences({ source, availableOnly, references }),
+    await getCanonicalLibraryForArtistReferences({ source, availableOnly, references }),
   );
 }
 
-export function getCanonicalLibraryReadModelForAlbumIds({
+export async function getCanonicalLibraryReadModelForAlbumIds({
   source = "lidarr",
   availableOnly = true,
   ids = [],
 } = {}) {
   return buildCanonicalLibraryReadModel(
-    getCanonicalLibraryForAlbumIds({ source, availableOnly, ids }),
+    await getCanonicalLibraryForAlbumIds({ source, availableOnly, ids }),
   );
 }
-export function getCanonicalLibraryReadModelForAlbumReferences({
+export async function getCanonicalLibraryReadModelForAlbumReferences({
   source = "lidarr",
   availableOnly = true,
   references = [],
 } = {}) {
   return buildCanonicalLibraryReadModel(
-    getCanonicalLibraryForAlbumReferences({ source, availableOnly, references }),
+    await getCanonicalLibraryForAlbumReferences({ source, availableOnly, references }),
   );
 }
 

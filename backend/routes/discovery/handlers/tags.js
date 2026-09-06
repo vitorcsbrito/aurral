@@ -124,7 +124,7 @@ export function registerTags(router) {
             offset: offsetInt,
             existingArtistKeys: includeLibraryFlag
               ? new Set()
-              : buildArtistKeySet(getCanonicalArtistKeys()),
+              : buildArtistKeySet(await getCanonicalArtistKeys()),
           });
           if (fallbackResult) {
             return res.json({
