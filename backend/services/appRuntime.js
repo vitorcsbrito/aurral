@@ -92,9 +92,7 @@ function checkQueuedBackgroundWork() {
       }
     } catch (error) {
       console.warn(
-        `[AppRuntime] Failed to inspect ${worker.queue} queue:`,
-        error?.message || error,
-      );
+        `[AppRuntime] Failed to inspect ${worker.queue} queue:`, { error: error?.message || String(error) });
     }
   }
   scheduleSupervisorWake(nextClaimAt);
@@ -181,14 +179,11 @@ export function startBackgroundWorkers({ logger = console } = {}) {
     .then(({ clearStaleHonkerJobs }) => clearStaleHonkerJobs())
     .then((result) => {
       if (Number(result?.cleared || 0) > 0) {
-        logger.info?.(`[AppRuntime] Cleared ${result.cleared} stuck background job(s) on startup`);
+        logger.info?.("system", `[AppRuntime] Cleared ${result.cleared} stuck background job(s) on startup`);
       }
     })
     .catch((error) => {
-      logger.warn?.(
-        "[AppRuntime] Failed to clear stuck background jobs on startup:",
-        error?.message || error,
-      );
+      logger.warn?.("system", "[AppRuntime] Failed to clear stuck background jobs on startup:", { error: error?.message || String(error) });
     });
   // Closing the runs is one short UPDATE; the document repair they owe runs
   // in the scan worker, never on this thread.
@@ -196,32 +191,23 @@ export function startBackgroundWorkers({ logger = console } = {}) {
     .then(({ closeInterruptedLibraryScans }) => closeInterruptedLibraryScans())
     .then((closed) => {
       if (Number(closed || 0) > 0) {
-        logger.info?.(`[AppRuntime] Closed ${closed} interrupted library scan(s) on startup`);
+        logger.info?.("system", `[AppRuntime] Closed ${closed} interrupted library scan(s) on startup`);
         scheduleLibraryScan({ includeLidarr: false });
       }
     })
     .catch((error) => {
-      logger.warn?.(
-        "[AppRuntime] Failed to close interrupted library scans on startup:",
-        error?.message || error,
-      );
+      logger.warn?.("system", "[AppRuntime] Failed to close interrupted library scans on startup:", { error: error?.message || String(error) });
     });
   startMemoryWatchdog();
   import("./aurralHistoryService.js")
     .then(({ syncProcessingActivityHistory }) => syncProcessingActivityHistory())
     .catch((error) => {
-      logger.warn?.(
-        "[AppRuntime] Failed to reconcile stuck activity history on startup:",
-        error?.message || error,
-      );
+      logger.warn?.("system", "[AppRuntime] Failed to reconcile stuck activity history on startup:", { error: error?.message || String(error) });
     });
   enqueueHonkerStartupTasks();
   startWorkerSupervisor();
   void startLibraryFileWatcher({ logger }).catch((error) => {
-    logger.warn?.(
-      "[AppRuntime] Failed to start library file watcher:",
-      error?.message || error,
-    );
+    logger.warn?.("system", "[AppRuntime] Failed to start library file watcher:", { error: error?.message || String(error) });
   });
   return true;
 }

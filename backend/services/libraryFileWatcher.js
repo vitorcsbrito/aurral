@@ -246,7 +246,7 @@ function applyWatcherPlan(plan, { logger, now, fullScanIntervalMs }) {
   }
   if (plan.deferFull && !deferredFullScanTimer) {
     const delay = Math.max(0, fullScanIntervalMs - (now - lastFullScanAt));
-    logger.info?.(`[Library] Full Lidarr re-index deferred ${Math.round(delay / 1000)}s by the watcher rate limit`);
+    logger.info?.("library", `[Library] Full Lidarr re-index deferred ${Math.round(delay / 1000)}s by the watcher rate limit`);
     deferredFullScanTimer = setTimeout(() => {
       deferredFullScanTimer = null;
       lastFullScanAt = Date.now();
@@ -271,7 +271,7 @@ export async function refreshLibraryFileWatcher({
       try {
         lidarrArtistFolders = loadLidarrArtistFolders();
       } catch (error) {
-        logger.warn?.("[Library] Could not load Lidarr artist folders:", error?.message || error);
+        logger.warn?.("library", "[Library] Could not load Lidarr artist folders:", { error: error?.message || String(error) });
       }
       const plan = planWatcherScan({
         changedRoots,
@@ -286,7 +286,7 @@ export async function refreshLibraryFileWatcher({
       applyWatcherPlan(plan, { logger, now, fullScanIntervalMs });
     },
     onError: (error, root) => {
-      logger.warn?.(`[Library] Failed to watch ${root}:`, error?.message || error);
+      logger.warn?.("library", `[Library] Failed to watch ${root}:`, { error: error?.message || String(error) });
     },
   });
   return true;
