@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { db, dbHelpers } from "../config/db-sqlite.js";
+import { runWithSqliteRetry } from "../config/sqlite-retry.js";
 import { invalidateCanonicalLibraryCache } from "./libraryQueryService.js";
 import {
   findLibrarySearchDocumentGaps,
@@ -55,6 +56,13 @@ let libraryScanDepth = 0;
 let libraryCacheInvalidationPending = false;
 const libraryScanContext = new AsyncLocalStorage();
 const SEARCH_SYNC_BATCH_SIZE = 500;
+// A scan worker running write transactions back to back re-takes the lock the
+// instant it commits, and the main thread's busy handler (which sleeps the
+// event loop) keeps losing the race. Sleeping between transactions hands the
+// lock to whoever is waiting. setImmediate is not enough: it yields the JS
+// loop but not the lock.
+const WRITE_YIELD_MS = 10;
+export const yieldWriteLock = () => new Promise((resolve) => setTimeout(resolve, WRITE_YIELD_MS));
 
 const invalidateLibraryCache = () => {
   const scan = libraryScanContext.getStore();
@@ -126,11 +134,13 @@ export async function syncLibrarySearchEntities(search) {
     const list = [...ids];
     for (let index = 0; index < list.length; index += SEARCH_SYNC_BATCH_SIZE) {
       const batch = list.slice(index, index + SEARCH_SYNC_BATCH_SIZE);
-      db.transaction(() => {
-        for (const id of batch) run(id);
-      })();
+      await runWithSqliteRetry(
+        db.transaction(() => {
+          for (const id of batch) run(id);
+        }),
+      );
       synced += batch.length;
-      await new Promise((resolve) => setImmediate(resolve));
+      await yieldWriteLock();
     }
   };
   await runBatches(search.artist, (id) => {

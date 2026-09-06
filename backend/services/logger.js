@@ -9,6 +9,8 @@ const DEFAULT_VISIBLE_MESSAGES = [
   /Uncaught Exception:/,
   /Unhandled Rejection:/,
   /Server error:/,
+  /Library scan (started|completed|failed)/,
+  /Event loop (was blocked|stalled)/,
 ];
 
 const messageText = (args) =>
@@ -27,15 +29,22 @@ export const shouldEmitDefaultConsoleMessage = (method, args = []) => {
   );
 };
 
+export const timestamp = () => new Date().toISOString();
+
+// A leading format string must stay first for %s substitution to work.
+const withTimestamp = (args) =>
+  typeof args[0] === "string" ? [`${timestamp()} ${args[0]}`, ...args.slice(1)] : [timestamp(), ...args];
+
 function patchDefaultConsole() {
-  if (verboseEnabled || !/(?:^|[\\/])server\.js$/.test(String(process.argv[1] || ""))) return;
+  if (!/(?:^|[\\/])server\.js$/.test(String(process.argv[1] || ""))) return;
   if (globalThis.__aurralDefaultConsolePatched) return;
   globalThis.__aurralDefaultConsolePatched = true;
 
-  for (const method of ["log", "info", "debug"]) {
+  for (const method of ["log", "info", "debug", "warn", "error"]) {
     const original = console[method].bind(console);
     console[method] = (...args) => {
-      if (shouldEmitDefaultConsoleMessage(method, args)) original(...args);
+      if (!verboseEnabled && !shouldEmitDefaultConsoleMessage(method, args)) return;
+      original(...withTimestamp(args));
     };
   }
 }

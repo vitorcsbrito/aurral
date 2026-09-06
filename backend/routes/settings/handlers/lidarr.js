@@ -175,9 +175,16 @@ export function registerLidarr(router) {
             },
           },
         });
+        const errorCount = Array.isArray(results?.errors) ? results.errors.length : 0;
+        if (errorCount > 0) {
+          logger.warn("settings", "Community guide applied with errors", { errors: results.errors });
+        }
         res.json({
           success: true,
-          message: "Community guide settings applied successfully",
+          message:
+            errorCount > 0
+              ? `Community guide settings applied with ${errorCount} warning(s): ${results.errors.join("; ")}`
+              : "Community guide settings applied successfully",
           results,
         });
       } catch (error) {
