@@ -259,6 +259,19 @@ after startup.
 
 Causes, from the production database copy and the code:
 
+- **The file watcher walked the Lidarr root synchronously.** The fix pass
+  put `fs.watch({ recursive: true })` on the Lidarr root folders. On Linux
+  Node implements that in JavaScript (`lib/internal/fs/recursive_watch.js`):
+  `readdirSync` per folder, `statSync` per file, and one inotify watch per
+  file, all on the calling thread. For 80k files that is minutes of blocked
+  event loop at every boot (idle CPU, since it is I/O), ~100k watch handles,
+  and a steadily growing RSS. This was the primary cause of the frozen UI;
+  the lock contention below made it worse once the walk was done. Replaced
+  by `directoryTreeWatcher.js`: one inotify watch per directory, an
+  asynchronous walk that yields every 25 directories, excluded folders
+  skipped, a cap (`maxDirectories`, 100k) and an ENOSPC guard that stop the
+  walk and log instead of failing. macOS and Windows keep the native
+  recursive watcher.
 - **Main thread sleeping in SQLite lock waits.** better-sqlite3 is
   synchronous, so a main-thread write waiting for the lock (queue claims,
   settings, the honker heartbeat) sleeps the whole event loop for up to
@@ -283,6 +296,7 @@ Causes, from the production database copy and the code:
 
 Fixes:
 
+- File watcher: per-directory watches with an asynchronous walk (above).
 - Main connection `busy_timeout` 5000 ms to 500 ms: a lost lock race costs a
   request an error, not the whole app a freeze. Worker connections wait
   30 s. `analysis_limit = 400` bounds `PRAGMA optimize`, which now runs only

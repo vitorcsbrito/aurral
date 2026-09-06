@@ -7,6 +7,7 @@ import { AUDIO_EXTENSIONS, isLibraryScanExcludedDirectory } from "./libraryFileS
 import { lidarrClient } from "./lidarrClient.js";
 import { scheduleLibraryScan } from "./libraryScanWorker.js";
 import { getPathMappings, resolveLocalPath } from "./pathMappings.js";
+import { watchDirectoryTree } from "./directoryTreeWatcher.js";
 
 // Lidarr writes album folders in bursts (files, artwork, nfo, temp names), so
 // a change only schedules a scan once the roots have been quiet for a while.
@@ -61,7 +62,7 @@ export function createLibraryFileWatcher({
   roots = [],
   debounceMs = DEFAULT_DEBOUNCE_MS,
   maxWaitMs = DEFAULT_MAX_WAIT_MS,
-  watchImpl = fs.watch,
+  watchImpl = watchDirectoryTree,
   onChange = () => scheduleLibraryScan(),
   onError = () => {},
 } = {}) {
@@ -108,9 +109,18 @@ export function createLibraryFileWatcher({
   for (const root of uniqueRoots) {
     if (!fs.existsSync(root)) continue;
     try {
-      const watcher = watchImpl(root, { recursive: true }, (_eventType, filename) => {
-        if (!isIgnoredChange(root, filename)) scheduleChange(root, filename);
-      });
+      const watcher = watchImpl(
+        root,
+        {
+          recursive: true,
+          onError: (error) => onError(error, root),
+          skipDirectory: (_directory, relative) =>
+            relative.split(path.sep).some((segment) => isLibraryScanExcludedDirectory(segment)),
+        },
+        (_eventType, filename) => {
+          if (!isIgnoredChange(root, filename)) scheduleChange(root, filename);
+        },
+      );
       watchers.push(watcher);
     } catch (error) {
       onError(error, root);
