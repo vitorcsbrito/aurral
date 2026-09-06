@@ -73,7 +73,8 @@ export async function cleanupIsolatedState(paths) {
     const honkerDb = await importFromRepo("backend/services/honkerDb.js");
     honkerDb.closeHonkerDb();
   } catch {}
-  await rm(paths.baseDir, { recursive: true, force: true });
+  // Workers may still write here; retry ENOTEMPTY/EBUSY briefly.
+  await rm(paths.baseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 export async function importFromRepo(relativePath) {
