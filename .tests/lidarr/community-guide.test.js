@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { applyLidarrCommunityGuide } from "../../backend/services/lidarrCommunityGuide.js";
 
 function createFakeClient({ existingFormats = [], createFormat }) {
-  const calls = { qualityProfiles: [] };
+  const calls = { qualityProfiles: [], customFormats: [] };
   let nextId = 100;
   return {
     calls,
@@ -14,6 +14,7 @@ function createFakeClient({ existingFormats = [], createFormat }) {
     updateQualityDefinition: async (_id, payload) => payload,
     getCustomFormats: async () => existingFormats,
     createCustomFormat: async (format) => {
+      calls.customFormats.push(format);
       if (createFormat) return createFormat(format);
       return { id: nextId++, name: format.name };
     },
@@ -44,6 +45,13 @@ test("community guide requires a positive format score when positive formats exi
   assert.equal(profile.minFormatScore, 1);
   assert.equal(profile.formatItems.length, 5);
   assert.equal(results.errors.length, 0);
+  for (const format of client.calls.customFormats) {
+    for (const specification of format.specifications) {
+      assert.ok(Array.isArray(specification.fields), `${format.name}: fields must be an array`);
+      assert.equal(specification.fields[0].name, "value");
+      assert.equal(typeof specification.fields[0].value, "string");
+    }
+  }
 });
 
 test("community guide never asks for an unsatisfiable minimum format score", async () => {

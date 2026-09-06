@@ -314,7 +314,8 @@ const sameTrackText = (left, right) => {
 };
 
 const TOP_ARTIST_TRACK_LIMIT = 10;
-const LIBRARY_REFRESH_TIMEOUT_MS = 120000;
+// Full Lidarr refresh of 80k tracks runs several minutes.
+const LIBRARY_REFRESH_TIMEOUT_MS = 15 * 60 * 1000;
 
 const wait = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
@@ -488,7 +489,7 @@ function LibraryPage() {
       }
       await wait(750);
     }
-    throw new Error("Library refresh timed out");
+    throw new Error("Library refresh is still running in the background; the library will update when it finishes");
   }, [completeLibraryRefresh, showSuccess]);
 
   useEffect(() => {
