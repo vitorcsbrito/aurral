@@ -1,19 +1,6 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
+import { createJsonSettingStore } from "../../db/helpers/jsonSettingStore.js";
 
-const SETTINGS_KEY = "jellyfinPlaylistPointers";
-const getSettingStmt = db.prepare("SELECT value FROM settings WHERE key = ?");
-const upsertSettingStmt = db.prepare(
-  "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-);
-
-const readStore = () => {
-  const parsed = dbHelpers.parseJSON(getSettingStmt.get(SETTINGS_KEY)?.value);
-  return parsed && typeof parsed === "object" ? parsed : {};
-};
-
-const writeStore = (store) => {
-  upsertSettingStmt.run(SETTINGS_KEY, dbHelpers.stringifyJSON(store));
-};
+const store = createJsonSettingStore("jellyfinPlaylistPointers");
 
 const normalizePointer = (raw) => {
   if (!raw || typeof raw !== "object") return null;
@@ -28,28 +15,29 @@ const normalizePointer = (raw) => {
 };
 
 export const jellyfinPlaylistPointerStore = {
-  getPointer(entityId, targetKey) {
-    return normalizePointer(readStore()[entityId]?.[targetKey] || null);
+  async getPointer(entityId, targetKey) {
+    const pointers = await store.read();
+    return normalizePointer(pointers[entityId]?.[targetKey] || null);
   },
 
-  setPointer(entityId, targetKey, { playlistId, title, serverUrl }) {
-    const store = readStore();
-    if (!store[entityId]) store[entityId] = {};
-    store[entityId][targetKey] = {
+  async setPointer(entityId, targetKey, { playlistId, title, serverUrl }) {
+    const pointers = await store.read();
+    if (!pointers[entityId]) pointers[entityId] = {};
+    pointers[entityId][targetKey] = {
       playlistId: String(playlistId),
       title: String(title || ""),
       serverUrl: String(serverUrl || ""),
       updatedAt: Date.now(),
     };
-    writeStore(store);
+    await store.write(pointers);
   },
 
-  deletePointer(entityId, targetKey) {
-    const store = readStore();
-    if (!store[entityId]?.[targetKey]) return false;
-    delete store[entityId][targetKey];
-    if (!Object.keys(store[entityId]).length) delete store[entityId];
-    writeStore(store);
+  async deletePointer(entityId, targetKey) {
+    const pointers = await store.read();
+    if (!pointers[entityId]?.[targetKey]) return false;
+    delete pointers[entityId][targetKey];
+    if (!Object.keys(pointers[entityId]).length) delete pointers[entityId];
+    await store.write(pointers);
     return true;
   },
 };

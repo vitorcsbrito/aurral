@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs/promises";
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { getDownloadClient } from "./download/downloadClientSettings.js";
 import { logger } from "./logger.js";
 import { enqueuePipelineJob } from "./honkerDb.js";
@@ -49,14 +49,17 @@ const slskdClient = getDownloadClient("slskd");
 
 export { commitImportToPlaylistLibrary };
 
-const updateSlskdMetaStmt = db.prepare(`
+const UPDATE_SLSKD_META_SQL = `
   UPDATE playlist_download_jobs
   SET slskd_search_id = COALESCE(?, slskd_search_id),
       slskd_batch_id = COALESCE(?, slskd_batch_id),
       remote_username = COALESCE(?, remote_username),
       remote_filename = COALESCE(?, remote_filename)
   WHERE id = ?
-`);
+`;
+
+const updateSlskdMeta = (searchId, batchId, remoteUsername, remoteFilename, jobId) =>
+  db.run(UPDATE_SLSKD_META_SQL, [searchId, batchId, remoteUsername, remoteFilename, jobId]);
 
 const MIN_SEARCH_CANDIDATES = 3;
 const MAX_DOWNLOAD_CANDIDATES = 7;
@@ -91,7 +94,7 @@ async function getWorkerSearchOptions() {
   return {
     preferredFormat: getQualityTier(firstEnabled)?.family || "flac",
     strictFormat: false,
-    ...buildSlskdRankingHistoryOptions(),
+    ...(await buildSlskdRankingHistoryOptions()),
   };
 }
 
@@ -634,8 +637,9 @@ async function cleanupEmptyAncestors(dir, rootBoundary) {
   }
 }
 
+// History is advisory; a failed write must not fail the pipeline step.
 function recordPayloadOutcome(job, payload, status, reason, details = {}) {
-  recordSlskdTransferOutcome({
+  return recordSlskdTransferOutcome({
     job,
     candidate: details.candidate || getPayloadCandidate(payload),
     status,
@@ -647,6 +651,13 @@ function recordPayloadOutcome(job, payload, status, reason, details = {}) {
     sourcePath: details.sourcePath || null,
     finalPath: details.finalPath || null,
     validation: details.validation || null,
+  }).catch((error) => {
+    logger.warn("slskd", "Failed to record slskd transfer outcome", {
+      jobId: job?.id || null,
+      status,
+      error: error?.message || String(error),
+    });
+    return null;
   });
 }
 
@@ -766,7 +777,7 @@ async function handleSearch(payload) {
     }
   }
   if (searchIdRef.value) {
-    updateSlskdMetaStmt.run(searchIdRef.value, null, null, null, job.id);
+    await updateSlskdMeta(searchIdRef.value, null, null, null, job.id);
     job.slskdSearchId = searchIdRef.value;
   }
   const ranked = rankFlowSearchResults(aggregated, resolvedTrack, searchOptions);
@@ -846,7 +857,7 @@ async function handleDownload(payload) {
     return failOrTryNextSource(payload, job, "No download candidate available");
   }
   const searchId = payload.searchId || null;
-  updateSlskdMetaStmt.run(searchId, null, candidate.raw.user, candidate.raw.file, job.id);
+  await updateSlskdMeta(searchId, null, candidate.raw.user, candidate.raw.file, job.id);
   downloadTracker.updateDownloadMetadata(job.id, {
     downloadSource: "slskd",
     downloadClient: "slskd",
@@ -889,7 +900,7 @@ async function handleDownload(payload) {
     }
     return failOrTryNextSource(payload, job, message);
   }
-  updateSlskdMetaStmt.run(null, result.batchId || null, null, null, job.id);
+  await updateSlskdMeta(null, result.batchId || null, null, null, job.id);
   job.slskdBatchId = result.batchId || null;
   const eventOffset =
     payload.eventOffset != null ? payload.eventOffset : await readCurrentEventOffset();

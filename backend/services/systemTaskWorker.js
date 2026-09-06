@@ -62,7 +62,7 @@ export async function processSystemTask(payload = {}, job = null) {
       const { hasCompletedLibraryScan, scheduleLibraryScan } = await import(
         "./libraryScanWorker.js"
       );
-      if (!hasCompletedLibraryScan()) scheduleLibraryScan();
+      if (!(await hasCompletedLibraryScan())) scheduleLibraryScan();
       return;
     }
     case "weekly-flow-startup-check": {

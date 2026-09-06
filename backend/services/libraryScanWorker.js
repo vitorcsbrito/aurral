@@ -1,5 +1,5 @@
 import createHonkerWorker from "./honkerWorkerFactory.js";
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { dbOps } from "../db/helpers/index.js";
 import { enqueueLibraryScanJob, getLibraryScanQueue } from "./honkerDb.js";
 import { isHonkerDatabaseClosedError } from "./honkerWorkerRuntime.js";
@@ -37,14 +37,11 @@ export function getScheduledLibraryScanJobId() {
   return normalizeJobId(getScanRegistry().jobId);
 }
 
-export function hasCompletedLibraryScan() {
-  return Boolean(
-    db
-      .prepare(
-        "SELECT 1 FROM library_scan_runs WHERE status = 'complete' AND source != 'lidarr-artist' LIMIT 1",
-      )
-      .get(),
+export async function hasCompletedLibraryScan() {
+  const row = await db.get(
+    "SELECT 1 FROM library_scan_runs WHERE status = 'complete' AND source != 'lidarr-artist' LIMIT 1",
   );
+  return Boolean(row);
 }
 
 export function clearScheduledLibraryScan(jobId = null) {
@@ -161,7 +158,7 @@ export function onLibraryScanFinalFailure(job) {
   clearScheduledLibraryScan(job.id);
 }
 
-export function getLibraryScanStatus(jobId) {
+export async function getLibraryScanStatus(jobId) {
   const normalizedJobId = Number(jobId);
   if (!Number.isSafeInteger(normalizedJobId) || normalizedJobId <= 0) return null;
 
@@ -174,15 +171,14 @@ export function getLibraryScanStatus(jobId) {
     };
   }
 
-  const run = db
-    .prepare(
-      `SELECT status, error
-       FROM honker_task_runs
-       WHERE queue = 'library-scan' AND job_id = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-    )
-    .get(normalizedJobId);
+  const run = await db.get(
+    `SELECT status, error
+     FROM honker_task_runs
+     WHERE queue = 'library-scan' AND job_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [normalizedJobId],
+  );
   if (!run) return { jobId: normalizedJobId, status: "unknown", error: null };
   return {
     jobId: normalizedJobId,

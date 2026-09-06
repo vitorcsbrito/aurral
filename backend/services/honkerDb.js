@@ -23,10 +23,11 @@ export const HONKER_QUEUE_NAMES = [
   "_outbox:play-events",
 ];
 
-function resolveHonkerDbPath() {
-  return process.env.AURRAL_DB_PATH
-    ? path.resolve(process.env.AURRAL_DB_PATH)
-    : path.join(resolveAurralDataDir(), "aurral.db");
+// Honker keeps its own SQLite file; library data lives in Postgres.
+export function resolveHonkerDbPath() {
+  return process.env.AURRAL_HONKER_DB_PATH
+    ? path.resolve(process.env.AURRAL_HONKER_DB_PATH)
+    : path.join(resolveAurralDataDir(), "honker.db");
 }
 
 let honkerDb = null;

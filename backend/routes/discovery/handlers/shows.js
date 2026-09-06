@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { requireAuth } from "../../../middleware/requirePermission.js";
-import { db } from "../../../config/db-sqlite.js";
+import { db } from "../../../config/database.js";
 import { dbOps, userOps } from "../../../db/helpers/index.js";
 import { getTicketmasterApiKey, getLastfmApiKey } from "../../../services/apiClients/index.js";
 import { getCanonicalArtistKeys } from "../../../services/libraryQueryService.js";
@@ -16,9 +16,7 @@ import {
 } from "../../../services/listeningHistory.js";
 import { getNearbyShows } from "../../../services/nearbyShowsService.js";
 
-const libraryArtistNamesStmt = db.prepare(
-  "SELECT name FROM library_artists ORDER BY id",
-);
+const LIBRARY_ARTIST_NAMES_SQL = "SELECT name FROM library_artists ORDER BY id";
 
 const fingerprintArtists = (artists) => {
   const names = [
@@ -87,7 +85,7 @@ export function registerShows(router) {
             feedback,
           }).slice(0, 18)
         : [];
-      const libraryArtistNames = libraryArtistNamesStmt.all();
+      const libraryArtistNames = await db.all(LIBRARY_ARTIST_NAMES_SQL);
       const nearbyShows = await getNearbyShows({
         req,
         zipCode,

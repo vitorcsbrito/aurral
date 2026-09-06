@@ -1,37 +1,18 @@
 import crypto from "node:crypto";
-import { db, dbHelpers } from "../config/db-sqlite.js";
 import { decryptWithKey, encryptWithKey } from "../config/encryption.js";
+import { createJsonSettingStore } from "../db/helpers/jsonSettingStore.js";
+import { getSettingsEncryptionKey } from "../db/helpers/settings.js";
 
-const SETTINGS_KEY = "scrobbleConnections";
 const PROVIDERS = new Set(["lastfm", "listenbrainz", "koito"]);
-const getSettingStmt = db.prepare("SELECT value FROM settings WHERE key = ?");
-const insertSettingStmt = db.prepare(
-  "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-);
-const upsertSettingStmt = db.prepare(
-  "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-);
-const ensureEncryptionKey = db.transaction(() => {
-  const stored = getSettingStmt.get("_encryptionKey")?.value;
-  if (!stored) {
-    insertSettingStmt.run("_encryptionKey", crypto.randomBytes(32).toString("base64"));
-  }
-  const persisted = getSettingStmt.get("_encryptionKey")?.value;
-  if (!persisted) throw new Error("Scrobble encryption key could not be initialized");
-  return Buffer.from(persisted, "base64");
-});
+const store = createJsonSettingStore("scrobbleConnections");
+
+// Same `_encryptionKey` row the settings mirror initializes at startup.
 const getEncryptionKey = () => {
-  const key = ensureEncryptionKey();
+  const key = getSettingsEncryptionKey();
   if (key.length !== 32) throw new Error("Scrobble encryption key is invalid");
   return key;
 };
 
-const readStore = () => {
-  const parsed = dbHelpers.parseJSON(getSettingStmt.get(SETTINGS_KEY)?.value);
-  return parsed && typeof parsed === "object" ? parsed : {};
-};
-
-const writeStore = (store) => upsertSettingStmt.run(SETTINGS_KEY, dbHelpers.stringifyJSON(store));
 const userKey = (userId) => String(Math.trunc(Number(userId)));
 const encryptToken = (token) => encryptWithKey(String(token || ""), getEncryptionKey());
 const decryptToken = (token) => decryptWithKey(token, getEncryptionKey());
@@ -53,54 +34,64 @@ const normalize = (provider, raw) => {
 };
 
 export const scrobbleConnectionStore = {
-  getConnection(userId, provider) {
-    const connection = normalize(provider, readStore()[userKey(userId)]?.[provider]);
-    return connection;
+  async getConnection(userId, provider) {
+    const connections = await store.read();
+    return normalize(provider, connections[userKey(userId)]?.[provider]);
   },
 
-  getConnections(userId) {
-    const raw = readStore()[userKey(userId)] || {};
-    return Object.fromEntries([...PROVIDERS].map((provider) => {
-      const connection = normalize(provider, raw[provider]);
-      return connection ? [provider, connection] : null;
-    }).filter(Boolean));
+  async getConnections(userId) {
+    const connections = await store.read();
+    const raw = connections[userKey(userId)] || {};
+    return Object.fromEntries(
+      [...PROVIDERS]
+        .map((provider) => {
+          const connection = normalize(provider, raw[provider]);
+          return connection ? [provider, connection] : null;
+        })
+        .filter(Boolean),
+    );
   },
 
-  getPublicStatus(userId) {
-    const connections = this.getConnections(userId);
-    return Object.fromEntries([...PROVIDERS].map((provider) => {
-      const connection = connections[provider];
-      return [provider, connection
-        ? { connected: true, displayName: connection.displayName, connectedAt: connection.connectedAt }
-        : { connected: false, displayName: null, connectedAt: null }];
-    }));
+  async getPublicStatus(userId) {
+    const connections = await this.getConnections(userId);
+    return Object.fromEntries(
+      [...PROVIDERS].map((provider) => {
+        const connection = connections[provider];
+        return [
+          provider,
+          connection
+            ? { connected: true, displayName: connection.displayName, connectedAt: connection.connectedAt }
+            : { connected: false, displayName: null, connectedAt: null },
+        ];
+      }),
+    );
   },
 
-  saveConnection(userId, provider, { token, displayName = null, baseUrl = null } = {}) {
+  async saveConnection(userId, provider, { token, displayName = null, baseUrl = null } = {}) {
     if (!PROVIDERS.has(provider)) throw new Error("Unsupported scrobble provider");
     const safeToken = String(token || "").trim();
     if (!safeToken) throw new Error("Scrobble token is required");
-    const store = readStore();
+    const connections = await store.read();
     const key = userKey(userId);
-    store[key] = store[key] || {};
-    store[key][provider] = {
+    connections[key] = connections[key] || {};
+    connections[key][provider] = {
       token: encryptToken(safeToken),
       connectionRevision: crypto.randomUUID(),
       displayName: String(displayName || "").trim() || null,
       baseUrl: String(baseUrl || "").trim() || null,
       connectedAt: Date.now(),
     };
-    writeStore(store);
+    await store.write(connections);
     return this.getConnection(userId, provider);
   },
 
-  deleteConnection(userId, provider) {
-    const store = readStore();
+  async deleteConnection(userId, provider) {
+    const connections = await store.read();
     const key = userKey(userId);
-    if (!store[key]?.[provider]) return false;
-    delete store[key][provider];
-    if (Object.keys(store[key]).length === 0) delete store[key];
-    writeStore(store);
+    if (!connections[key]?.[provider]) return false;
+    delete connections[key][provider];
+    if (Object.keys(connections[key]).length === 0) delete connections[key];
+    await store.write(connections);
     return true;
   },
 };

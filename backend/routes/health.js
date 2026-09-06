@@ -28,7 +28,7 @@ import { logger } from "../services/logger.js";
 import { resolvePlaylistRoot } from "../services/playlistPaths.js";
 import { getFilesystemBrowseRoots } from "../services/downloadFolderConfig.js";
 import { dbOps } from "../db/helpers/index.js";
-import { db } from "../config/db-sqlite.js";
+import { pingDatabase, resolveDatabaseConfig } from "../config/database.js";
 import { resolveAurralDataDir } from "../config/data-dir.js";
 import { websocketService } from "../services/websocketService.js";
 import { noCache } from "../middleware/cache.js";
@@ -59,13 +59,6 @@ async function isRunningInDocker() {
   } catch {
     return false;
   }
-}
-
-function resolveDatabasePath() {
-  const dataDir = resolveAurralDataDir();
-  return process.env.AURRAL_DB_PATH
-    ? path.resolve(process.env.AURRAL_DB_PATH)
-    : path.join(dataDir, "aurral.db");
 }
 
 async function resolveExistingFilesystemPath(targetPath) {
@@ -146,11 +139,9 @@ async function buildDiskSpacePayload(settings) {
 
 async function computeDiskSpacePayload(settings) {
   const dataDir = resolveAurralDataDir();
-  const dbPath = resolveDatabasePath();
   const downloadRoot = resolvePlaylistRoot();
   const candidates = [
     { location: dataDir, role: "App data" },
-    { location: path.dirname(dbPath), role: "Database" },
     { location: downloadRoot, role: "Downloads" },
     ...getFilesystemBrowseRoots().map((location) => ({
       location,
@@ -185,9 +176,21 @@ async function computeDiskSpacePayload(settings) {
   ).filter(Boolean);
 }
 
-function readSqliteVersion() {
+async function readDatabaseInfo() {
   try {
-    return db.prepare("SELECT sqlite_version() AS version").get()?.version || null;
+    const row = await pingDatabase();
+    const match = /PostgreSQL\s+([\d.]+)/.exec(String(row?.version || ""));
+    return { version: match ? match[1] : row?.version || null, database: row?.database || null };
+  } catch {
+    return { version: null, database: null };
+  }
+}
+
+// Host/port/database only; credentials never leave the process.
+function describeDatabaseTarget() {
+  try {
+    const url = new URL(resolveDatabaseConfig().connectionString);
+    return `${url.hostname}${url.port ? `:${url.port}` : ""}${url.pathname}`;
   } catch {
     return null;
   }
@@ -195,8 +198,7 @@ function readSqliteVersion() {
 
 async function buildSystemPayload(settings) {
   const dataDir = resolveAurralDataDir();
-  const dbPath = resolveDatabasePath();
-  const sqliteVersion = readSqliteVersion();
+  const databaseInfo = await readDatabaseInfo();
   return {
     startedAt: new Date(STARTED_AT).toISOString(),
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - STARTED_AT) / 1000)),
@@ -207,13 +209,14 @@ async function buildSystemPayload(settings) {
     mode: formatRuntimeMode(),
     docker: await isRunningInDocker(),
     dataDir,
-    databasePath: dbPath,
+    databasePath: describeDatabaseTarget(),
     startupDirectory: process.cwd(),
     hostname: os.hostname(),
     database: {
-      engine: "SQLite",
-      version: sqliteVersion,
-      label: sqliteVersion ? `SQLite ${sqliteVersion}` : "SQLite",
+      engine: "PostgreSQL",
+      version: databaseInfo.version,
+      label: databaseInfo.version ? `PostgreSQL ${databaseInfo.version}` : "PostgreSQL",
+      name: databaseInfo.database,
     },
     diskSpace: await buildDiskSpacePayload(settings),
     links: [

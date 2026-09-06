@@ -931,7 +931,7 @@ export const updateUserDiscoveryCache = async (
 
     if (options.feedbackUserId) {
       historyArtists.push(
-        ...getTopPlayedArtists(options.feedbackUserId, { limit: 50 }).map((artist) => ({
+        ...(await getTopPlayedArtists(options.feedbackUserId, { limit: 50 })).map((artist) => ({
           ...artist,
           source: "local",
         })),

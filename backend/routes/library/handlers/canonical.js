@@ -81,29 +81,41 @@ export function toPublicLibraryPage(page, favoriteKeys = null) {
 }
 
 export function registerCanonical(router) {
-  router.post("/refresh", requireAuth, (_req, res) => {
-    const jobId = scheduleLibraryScan({ force: true });
-    res.status(202).json({
-      queued: true,
-      jobId,
-      status: getLibraryScanStatus(jobId),
-    });
-  });
-
-  router.get("/refresh", requireAuth, noCache, (_req, res) => {
-    const jobId = getScheduledLibraryScanJobId();
-    return res.json({
-      jobId,
-      status: jobId == null ? null : getLibraryScanStatus(jobId),
-    });
-  });
-
-  router.get("/refresh/:jobId", requireAuth, noCache, (req, res) => {
-    const status = getLibraryScanStatus(req.params.jobId);
-    if (!status || status.status === "unknown") {
-      return res.status(404).json({ error: "Library scan not found" });
+  router.post("/refresh", requireAuth, async (_req, res, next) => {
+    try {
+      const jobId = scheduleLibraryScan({ force: true });
+      res.status(202).json({
+        queued: true,
+        jobId,
+        status: await getLibraryScanStatus(jobId),
+      });
+    } catch (error) {
+      next(error);
     }
-    return res.json(status);
+  });
+
+  router.get("/refresh", requireAuth, noCache, async (_req, res, next) => {
+    try {
+      const jobId = getScheduledLibraryScanJobId();
+      return res.json({
+        jobId,
+        status: jobId == null ? null : await getLibraryScanStatus(jobId),
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get("/refresh/:jobId", requireAuth, noCache, async (req, res, next) => {
+    try {
+      const status = await getLibraryScanStatus(req.params.jobId);
+      if (!status || status.status === "unknown") {
+        return res.status(404).json({ error: "Library scan not found" });
+      }
+      return res.json(status);
+    } catch (error) {
+      return next(error);
+    }
   });
 
   router.get("/canonical", noCache, (req, res) => {

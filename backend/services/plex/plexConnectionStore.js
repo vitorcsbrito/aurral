@@ -1,21 +1,8 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
 import { decryptWithKey, encryptWithKey } from "../../config/encryption.js";
+import { createJsonSettingStore } from "../../db/helpers/jsonSettingStore.js";
 import { getSettingsEncryptionKey } from "../../db/helpers/settings.js";
 
-const SETTINGS_KEY = "plexConnections";
-const getSettingStmt = db.prepare("SELECT value FROM settings WHERE key = ?");
-const upsertSettingStmt = db.prepare(
-  "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-);
-
-const readStore = () => {
-  const parsed = dbHelpers.parseJSON(getSettingStmt.get(SETTINGS_KEY)?.value);
-  return parsed && typeof parsed === "object" ? parsed : {};
-};
-
-const writeStore = (store) => {
-  upsertSettingStmt.run(SETTINGS_KEY, dbHelpers.stringifyJSON(store));
-};
+const store = createJsonSettingStore("plexConnections");
 
 const userKey = (userId) => String(Math.trunc(Number(userId)));
 
@@ -61,13 +48,13 @@ const normalizeConnection = (raw) => {
 };
 
 export const plexConnectionStore = {
-  getConnection(userId) {
-    const store = readStore();
-    return normalizeConnection(store[userKey(userId)] || null);
+  async getConnection(userId) {
+    const connections = await store.read();
+    return normalizeConnection(connections[userKey(userId)] || null);
   },
 
-  getPublicStatus(userId) {
-    const connection = this.getConnection(userId);
+  async getPublicStatus(userId) {
+    const connection = await this.getConnection(userId);
     if (!connection) {
       return { connected: false, linkType: null, plexUsername: null, connectedAt: null, lastError: null };
     }
@@ -80,7 +67,7 @@ export const plexConnectionStore = {
     };
   },
 
-  saveConnection(
+  async saveConnection(
     userId,
     {
       linkType,
@@ -100,8 +87,8 @@ export const plexConnectionStore = {
     if (linkType !== "managed" && linkType !== "self") {
       throw new Error('linkType must be "managed" or "self"');
     }
-    const store = readStore();
-    store[userKey(userId)] = {
+    const connections = await store.read();
+    connections[userKey(userId)] = {
       linkType,
       token: encryptToken(safeToken),
       clientId: safeClientId,
@@ -115,45 +102,45 @@ export const plexConnectionStore = {
       connectedAt: Date.now(),
       lastError: null,
     };
-    writeStore(store);
+    await store.write(connections);
     return this.getConnection(userId);
   },
 
-  updateToken(userId, { token, clientId } = {}) {
-    const current = readStore();
+  async updateToken(userId, { token, clientId } = {}) {
+    const connections = await store.read();
     const key = userKey(userId);
-    const existing = current[key];
+    const existing = connections[key];
     if (!existing) return null;
     existing.token = encryptToken(token || decryptToken(existing.token));
     if (clientId) existing.clientId = clientId;
     existing.lastError = null;
-    writeStore(current);
+    await store.write(connections);
     return this.getConnection(userId);
   },
 
-  setLastError(userId, message) {
-    const store = readStore();
+  async setLastError(userId, message) {
+    const connections = await store.read();
     const key = userKey(userId);
-    const existing = store[key];
+    const existing = connections[key];
     if (!existing) return null;
     existing.lastError = { message: String(message || "Unknown error"), at: Date.now() };
-    writeStore(store);
+    await store.write(connections);
     return this.getConnection(userId);
   },
 
-  clearConnection(userId) {
-    const store = readStore();
+  async clearConnection(userId) {
+    const connections = await store.read();
     const key = userKey(userId);
-    if (!store[key]) return false;
-    delete store[key];
-    writeStore(store);
+    if (!connections[key]) return false;
+    delete connections[key];
+    await store.write(connections);
     return true;
   },
 
-  getAllLinkedPlexAccountIds() {
-    const store = readStore();
+  async getAllLinkedPlexAccountIds() {
+    const connections = await store.read();
     const ids = new Set();
-    for (const entry of Object.values(store)) {
+    for (const entry of Object.values(connections)) {
       if (entry?.plexAccountId != null) ids.add(String(entry.plexAccountId));
     }
     return ids;

@@ -1,4 +1,4 @@
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { dbOps, userOps } from "../db/helpers/index.js";
 import { getTicketmasterApiKey } from "./apiClients/index.js";
 import {
@@ -71,15 +71,12 @@ const getStoredRefreshStatus = (userId) =>
     jobId: null,
   };
 
-const setStoredRefreshStatus = (userId, status) => {
-  db.transaction(() => {
-    dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
-      ...getStoredRefreshStatus(userId),
-      ...status,
-      updatedAt: Date.now(),
-    });
-  })();
-};
+const setStoredRefreshStatus = (userId, status) =>
+  dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
+    ...getStoredRefreshStatus(userId),
+    ...status,
+    updatedAt: Date.now(),
+  });
 
 export function getInboxRefreshStatus(userId) {
   const normalizedUserId = normalizeUserId(userId);
@@ -126,8 +123,8 @@ export function getInboxRefreshStatus(userId) {
   return stored;
 }
 
-const upsertAll = (items) => {
-  for (const item of items) dbOps.upsertInboxItem(item);
+const upsertAll = async (items) => {
+  for (const item of items) await dbOps.upsertInboxItem(item);
 };
 
 async function buildReleaseItems(userId, now) {
@@ -299,21 +296,22 @@ async function buildNewsItems(userId, now, enabledKinds) {
   });
 }
 
-const dismissBlockedNewsItems = (userId) => {
+const dismissBlockedNewsItems = async (userId) => {
   const blocked = new Set(
     getNewsPreferences(userId).blockedPublishers.map((publisher) => publisher.toLowerCase()),
   );
   if (blocked.size === 0) return;
-  for (const item of dbOps.getInboxItems(userId, {
+  const items = await dbOps.getInboxItems(userId, {
     kinds: ["news", "recommendedNews"],
     limit: 50,
-  })) {
+  });
+  for (const item of items) {
     const articles = Array.isArray(item.metadata?.articles) ? item.metadata.articles : [];
     if (
       articles.length > 0 &&
       articles.every((article) => blocked.has(String(article?.source || "").trim().toLowerCase()))
     ) {
-      dbOps.updateInboxItem(userId, item.id, { isDismissed: true });
+      await dbOps.updateInboxItem(userId, item.id, { isDismissed: true });
     }
   }
 };
@@ -345,7 +343,7 @@ export async function refreshInboxForUser(
 
   const promise = (async () => {
     const now = Date.now();
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: "running",
       stale: false,
       error: null,
@@ -381,10 +379,10 @@ export async function refreshInboxForUser(
     const items = results
       .filter((result) => result.status === "fulfilled")
       .flatMap((result) => result.value);
-    db.transaction(() => {
-      upsertAll(items);
-      dismissBlockedNewsItems(normalizedUserId);
-    })();
+    await db.transaction(async () => {
+      await upsertAll(items);
+      await dismissBlockedNewsItems(normalizedUserId);
+    });
     refreshState.set(normalizedUserId, { at: now, hadLocationRequest: hasLocationRequest });
     const refreshStatus = failures.length === 0
       ? "complete"
@@ -394,7 +392,7 @@ export async function refreshInboxForUser(
     const errorMessage = failures.length > 0
       ? failures.map(({ result, source }) => `${source}: ${result.reason?.message || "failed"}`).join("; ")
       : null;
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: refreshStatus,
       stale: failures.length > 0,
       error: errorMessage,
@@ -407,11 +405,11 @@ export async function refreshInboxForUser(
       throw error;
     }
     return failures.length === 0;
-  })().catch((error) => {
+  })().catch(async (error) => {
     logger.warn("inbox", "Inbox refresh failed", { userId: normalizedUserId, error: error.message });
     refreshState.set(normalizedUserId, { at: Date.now(), hadLocationRequest: hasLocationRequest });
     if (!error.inboxStatusWritten) {
-      setStoredRefreshStatus(normalizedUserId, {
+      await setStoredRefreshStatus(normalizedUserId, {
         status: "failed",
         stale: true,
         error: error.message,
@@ -456,7 +454,7 @@ export async function enqueueInboxRefreshForUser(
       zipCode: String(zipCode || "").trim(),
       ipAddress: String(ipAddress || "").trim(),
     }, { priority: reason === "manual" ? 5 : 0 });
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: "queued",
       stale: false,
       error: null,
@@ -469,7 +467,7 @@ export async function enqueueInboxRefreshForUser(
 
 export async function enqueueInboxRefreshForAllUsers(options = {}) {
   const jobs = [];
-  for (const user of userOps.getAllUsers()) {
+  for (const user of await userOps.getAllUsers()) {
     jobs.push(await enqueueInboxRefreshForUser(user.id, options));
   }
   return jobs;

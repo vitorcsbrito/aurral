@@ -230,10 +230,10 @@ async function handleSubsonicRequest(req, res) {
     const times = getParameters(req, ["time"]);
     const submission = !["false", "0", "no"].includes(getParameter(req, "submission").toLowerCase());
     if (submission) {
-      ids.forEach((id, index) => {
-        const song = getSong(id, user);
-        if (!song) return;
-        recordPlayEvent(user.id, {
+      for (const [index, id] of ids.entries()) {
+        const song = await getSong(id, user);
+        if (!song) continue;
+        await recordPlayEvent(user.id, {
           trackId: song.id,
           title: song.title,
           artist: song.artist,
@@ -242,7 +242,7 @@ async function handleSubsonicRequest(req, res) {
           playedAt: times[index] || undefined,
           source: "subsonic",
         });
-      });
+      }
     }
     return sendResponse(res, format);
   }
