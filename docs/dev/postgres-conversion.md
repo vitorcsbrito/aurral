@@ -1,9 +1,10 @@
 # Converting a module from SQLite to Postgres
 
-Aurral is moving from better-sqlite3 (synchronous) to Postgres via
-`backend/config/database.js` (asynchronous). Every module that touched the
-database is converted with the rules below. Do the whole module: leave no
-`better-sqlite3`, `db.prepare`, or `db-sqlite.js` reference behind.
+Aurral moved from better-sqlite3 (synchronous) to Postgres via
+`backend/config/database.js` (asynchronous). New code follows the rules
+below. Only `backend/scripts/migrateSqliteToPostgres.js` may import
+`better-sqlite3`; the Honker job queue keeps its own SQLite file through
+`backend/services/honkerDb.js`.
 
 ## The client
 
@@ -91,6 +92,19 @@ update the mirror after the database commits. Use
 `await dbOps.readJSONSetting(key)` when a key may have been written by
 another process or thread (scan worker, migration script).
 
+Two more mirrors follow the same pattern and are loaded by
+`initializeDataLayer()` in `backend/services/appRuntime.js` before the HTTP
+server listens:
+
+- the discovery cache (`dbOps.getDiscoveryCacheSync(namespace)`, refreshed
+  after every `updateDiscoveryCache`);
+- the weekly-flow download tracker, whose in-memory job map is authoritative
+  and persists through an ordered write-behind queue
+  (`flushDownloadTrackerWrites()` awaits it).
+
+Every other read goes through `await`. Do not add new mirrors; make the
+caller async instead.
+
 ## Tests
 
 Tests run against a real Postgres. `.tests/setup-env.js` points
@@ -103,8 +117,16 @@ docker run -d --name aurral-test-pg -e POSTGRES_USER=aurral -e POSTGRES_PASSWORD
   -e POSTGRES_DB=aurral_test -p 5433:5432 postgres:18-alpine
 ```
 
-Tests that need tables call `await migrateDatabase(db)` (from
-`backend/db/pg/schema.js`) or import `../../backend/services/appRuntime.js`
-which does it during initialization. Convert `test("...", () => {...})`
-bodies to `async` and `await` the helpers; replace assertions on
-`lastInsertRowid` with the returned id.
+`setupIsolatedBackend()` from `.tests/helpers/backendTestHarness.js` migrates
+the schema and loads the mirrors before importing the modules under test;
+`await resetDatabase()` truncates every table and reloads the mirrors between
+cases. Convert `test("...", () => {...})` bodies to `async` and `await` the
+helpers; replace assertions on `lastInsertRowid` with the returned id.
+Library scan worker threads inherit `AURRAL_PG_SCHEMA`, so their writes land
+in the same schema as the test that spawned them.
+
+Run a subset with:
+
+```
+node --test --import ./.tests/setup-env.js --test-timeout=60000 .tests/db/*.test.js
+```
