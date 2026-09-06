@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { db, dbHelpers } from "../config/db-sqlite.js";
+import { runWithSqliteRetry } from "../config/sqlite-retry.js";
 import { invalidateCanonicalLibraryCache } from "./libraryQueryService.js";
 import {
   findLibrarySearchDocumentGaps,
@@ -133,9 +134,11 @@ export async function syncLibrarySearchEntities(search) {
     const list = [...ids];
     for (let index = 0; index < list.length; index += SEARCH_SYNC_BATCH_SIZE) {
       const batch = list.slice(index, index + SEARCH_SYNC_BATCH_SIZE);
-      db.transaction(() => {
-        for (const id of batch) run(id);
-      })();
+      await runWithSqliteRetry(
+        db.transaction(() => {
+          for (const id of batch) run(id);
+        }),
+      );
       synced += batch.length;
       await yieldWriteLock();
     }

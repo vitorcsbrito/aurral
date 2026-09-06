@@ -1,6 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import { db } from "../config/db-sqlite.js";
+import { runWithSqliteRetry } from "../config/sqlite-retry.js";
+import { logger } from "./logger.js";
 import {
   buildFallbackIdentityKey,
   buildIdentityKey,
@@ -22,6 +24,13 @@ import { mapWithConcurrency } from "./discovery/helpers.js";
 // Batch sizes for the write loops; each batch is one short transaction.
 const ARTIST_UPSERT_BATCH_SIZE = 100;
 const ALBUMS_PER_YIELD = 20;
+
+const logLockRetry = (scope) => (error, attempt) =>
+  logger.warn("library", "Lidarr index write retried after SQLite lock error", {
+    scope,
+    code: error?.code || null,
+    attempt,
+  });
 
 const text = (value) => String(value || "").trim();
 
@@ -386,7 +395,8 @@ export async function indexLidarrLibrary({
       }
     });
     for (let index = 0; index < artistList.length; index += ARTIST_UPSERT_BATCH_SIZE) {
-      upsertArtistBatch(artistList.slice(index, index + ARTIST_UPSERT_BATCH_SIZE));
+      const batch = artistList.slice(index, index + ARTIST_UPSERT_BATCH_SIZE);
+      await runWithSqliteRetry(() => upsertArtistBatch(batch), { onRetry: logLockRetry("artists") });
       await yieldWriteLock();
     }
     if (scopedArtistIds) {
@@ -404,7 +414,7 @@ export async function indexLidarrLibrary({
         failedArtistIds.add(String(album?.artistId));
         continue;
       }
-      const batch = db.transaction(() => {
+      const batch = await runWithSqliteRetry(db.transaction(() => {
         const seenPaths = [];
         let filesIndexed = 0;
         const artistName = text(artist.artistName || artist.name) || "Unknown Artist";
@@ -471,7 +481,7 @@ export async function indexLidarrLibrary({
           filesIndexed += 1;
         }
         return { filesIndexed, seenPaths };
-      })();
+      }), { onRetry: logLockRetry(`album ${album.id}`) });
       result.filesIndexed += batch.filesIndexed;
       indexedByArtist.set(
         String(artist.id),
@@ -520,7 +530,7 @@ export async function indexLidarrLibrary({
     const stampFingerprint = db.prepare(
       "UPDATE library_artists SET lidarr_fingerprint = ? WHERE id = ? AND lidarr_fingerprint IS NOT ?",
     );
-    db.transaction(() => {
+    await runWithSqliteRetry(db.transaction(() => {
       for (const artist of artistById.values()) {
         const lidarrArtistId = String(artist.id);
         if (unchangedArtists.has(lidarrArtistId) || failedArtistIds.has(lidarrArtistId)) continue;
@@ -529,7 +539,7 @@ export async function indexLidarrLibrary({
         const fingerprint = artistFingerprint(artist);
         stampFingerprint.run(fingerprint, record.id, fingerprint);
       }
-    })();
+    }), { onRetry: logLockRetry("fingerprints") });
     return result;
   });
 }
