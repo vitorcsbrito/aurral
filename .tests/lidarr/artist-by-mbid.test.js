@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { dbOps } from "../../backend/db/helpers/index.js";
 import { LidarrClient } from "../../backend/services/lidarrClient.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 const MBID = "9c9f1380-2516-4fc9-a3e6-f9f61941d090";
 const OTHER_MBID = "cc197bad-dc9c-440d-a5b5-d52ba2e14234";
@@ -65,7 +69,7 @@ test("getArtistByMbid dedupes concurrent lookups for the same id", async (t) => 
 
 test("getArtistByMbid falls back to the full list for provider-mapped ids", async (t) => {
   const providerId = "705@deezer";
-  dbOps.setLidarrArtistIdMap(MBID, providerId);
+  await dbOps.setLidarrArtistIdMap(MBID, providerId);
   t.after(() => dbOps.deleteLidarrArtistIdMap(MBID));
   const mapped = { ...muse, foreignArtistId: providerId };
   const { client, requests } = createClient(t, (endpoint) => {
