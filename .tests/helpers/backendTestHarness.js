@@ -4,6 +4,8 @@ import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
 import http from "http";
+import { db } from "../../backend/config/database.js";
+import { migrateDatabase } from "../../backend/db/pg/schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
@@ -42,18 +44,16 @@ export async function createIsolatedStateDir(
     join(tmpdir(), `aurral-${String(name || "test")}-`),
   );
   const dataDir = join(baseDir, dataDirRelativePath);
-  const dbPath = join(dataDir, "aurral.test.db");
   await mkdir(dataDir, { recursive: true });
   return {
     baseDir,
     dataDir,
-    dbPath,
   };
 }
 
 export function applyIsolatedBackendEnv(paths) {
   process.env.AURRAL_DATA_DIR = paths.dataDir;
-  process.env.AURRAL_DB_PATH = paths.dbPath;
+  process.env.AURRAL_HONKER_DB_PATH = join(paths.dataDir, "honker.db");
   process.env.WEEKLY_FLOW_FOLDER = join(paths.baseDir, "weekly-flow");
   process.env.DOWNLOAD_FOLDER = join(paths.baseDir, "downloads");
   process.env.NODE_ENV = "test";
@@ -83,14 +83,32 @@ export async function importFromRepo(relativePath) {
 export async function setupIsolatedBackend(name, ...modulePaths) {
   const paths = await createIsolatedStateDir(name);
   applyIsolatedBackendEnv(paths);
+  await ensureTestDatabase();
+  await reloadMirrors();
   const modules = await Promise.all(modulePaths.map(importFromRepo));
   return [paths, ...modules];
 }
 
-export function resetDatabase(db) {
-  for (const table of RESET_TABLES) {
-    db.prepare(`DELETE FROM ${table}`).run();
-  }
+let schemaReady = null;
+
+// Applies the Postgres schema once per test process (schema from setup-env).
+export function ensureTestDatabase() {
+  if (!schemaReady) schemaReady = migrateDatabase(db, { logger: { info() {} } });
+  return schemaReady;
+}
+
+// Reloads the sync mirrors so callers see the reset state immediately.
+export async function reloadMirrors() {
+  const settings = await importFromRepo("backend/db/helpers/settings.js");
+  await settings.loadSettingsCache();
+  const helpers = await importFromRepo("backend/db/helpers/index.js");
+  await helpers.dbOps.loadDiscoveryCacheMirror();
+}
+
+export async function resetDatabase() {
+  await ensureTestDatabase();
+  await db.exec(`TRUNCATE ${RESET_TABLES.join(", ")} CASCADE`);
+  await reloadMirrors();
 }
 
 export function createMockHttpServer(handler) {
