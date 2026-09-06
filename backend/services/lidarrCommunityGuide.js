@@ -361,8 +361,21 @@ export async function applyLidarrCommunityGuide(lidarrClient) {
     };
   });
 
+  // Lidarr rejects a profile whose minimum score exceeds the sum of positive
+  // format scores ("Minimum Custom Format Score can never be satisfied"), so
+  // only require a positive score when a positive-scoring format exists.
+  const positiveFormatScore = formatItems.reduce(
+    (sum, item) => sum + Math.max(0, item.score),
+    0,
+  );
+  const minFormatScore = positiveFormatScore > 0 ? 1 : 0;
+
   if (formatItems.length === 0) {
     results.errors.push("No custom formats were created; quality profile minFormatScore set to 0.");
+  } else if (minFormatScore === 0) {
+    results.errors.push(
+      "No positive-scoring custom formats are available; quality profile minFormatScore set to 0.",
+    );
   }
 
   const profileData = {
@@ -371,7 +384,7 @@ export async function applyLidarrCommunityGuide(lidarrClient) {
     upgradeAllowed: true,
     cutoff: flacQualityId ?? baseProfile.cutoff,
     items: profileItems,
-    minFormatScore: formatItems.length > 0 ? 1 : 0,
+    minFormatScore,
     cutoffFormatScore: 0,
     formatItems,
   };
