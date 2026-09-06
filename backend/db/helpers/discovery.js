@@ -1,11 +1,10 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
+import { db, dbHelpers } from "../../config/database.js";
 
-const getDiscoveryCacheStmt = db.prepare(
-  "SELECT value, last_updated FROM discovery_cache WHERE key = ?"
-);
-const upsertDiscoveryCacheStmt = db.prepare(
-  "INSERT OR REPLACE INTO discovery_cache (key, value, last_updated) VALUES (?, ?, ?)"
-);
+const GET_DISCOVERY_CACHE_SQL = "SELECT value, last_updated FROM discovery_cache WHERE key = ?";
+const UPSERT_DISCOVERY_CACHE_SQL =
+  "INSERT INTO discovery_cache (key, value, last_updated) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, last_updated = EXCLUDED.last_updated";
+const DELETE_DISCOVERY_CACHE_BY_PREFIX_SQL = "DELETE FROM discovery_cache WHERE key LIKE ?";
+
 const DISCOVERY_METADATA_FIELDS = [
   "recommendationQuality",
   "isEnriching",
@@ -28,7 +27,7 @@ function pruneDiscoveryUserCache() {
 }
 
 export default function register(dbOps) {
-  dbOps.getDiscoveryCache = function (cacheNamespace = null) {
+  dbOps.getDiscoveryCache = async function (cacheNamespace = null) {
     const prefix = cacheNamespace ? `${cacheNamespace}:` : "";
 
     if (cacheNamespace) {
@@ -37,35 +36,42 @@ export default function register(dbOps) {
       if (cached) return cached.value;
     }
 
-    const metadata =
-      dbHelpers.parseJSON(getDiscoveryCacheStmt.get(`${prefix}metadata`)?.value) ||
-      {};
-    const recommendationsRow = getDiscoveryCacheStmt.get(`${prefix}recommendations`);
+    const [
+      metadataRow,
+      recommendationsRow,
+      globalTopRow,
+      basedOnRow,
+      topTagsRow,
+      topGenresRow,
+      fallbackGenresRow,
+      fallbackGenrePoolsRow,
+      discoverPlaylistsRow,
+      providerRow,
+    ] = await Promise.all([
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}metadata`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}recommendations`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}globalTop`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}basedOn`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}topTags`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}topGenres`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}fallbackGenres`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}fallbackGenrePools`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}discoverPlaylists`]),
+      db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}provider`]),
+    ]);
+
+    const metadata = dbHelpers.parseJSON(metadataRow?.value) || {};
     const recommendations = dbHelpers.parseJSON(recommendationsRow?.value);
-    const globalTopRow = getDiscoveryCacheStmt.get(`${prefix}globalTop`);
     const globalTop = dbHelpers.parseJSON(globalTopRow?.value);
-    const basedOn = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}basedOn`)?.value
-    );
-    const topTags = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}topTags`)?.value
-    );
-    const topGenres = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}topGenres`)?.value
-    );
-    const fallbackGenres = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}fallbackGenres`)?.value
-    );
-    const fallbackGenrePools = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}fallbackGenrePools`)?.value
-    );
-    const discoverPlaylists = dbHelpers.parseJSON(
-      getDiscoveryCacheStmt.get(`${prefix}discoverPlaylists`)?.value
-    );
-    const provider =
-      getDiscoveryCacheStmt.get(`${prefix}provider`)?.value || null;
+    const basedOn = dbHelpers.parseJSON(basedOnRow?.value);
+    const topTags = dbHelpers.parseJSON(topTagsRow?.value);
+    const topGenres = dbHelpers.parseJSON(topGenresRow?.value);
+    const fallbackGenres = dbHelpers.parseJSON(fallbackGenresRow?.value);
+    const fallbackGenrePools = dbHelpers.parseJSON(fallbackGenrePoolsRow?.value);
+    const discoverPlaylists = dbHelpers.parseJSON(discoverPlaylistsRow?.value);
+    const provider = providerRow?.value || null;
     const lastUpdated = cacheNamespace
-      ? getDiscoveryCacheStmt.get(`${prefix}lastUpdated`)?.value ||
+      ? (await db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}lastUpdated`]))?.value ||
         recommendationsRow?.last_updated ||
         null
       : recommendationsRow?.last_updated ||
@@ -102,69 +108,69 @@ export default function register(dbOps) {
     return result;
   };
 
-  dbOps.updateDiscoveryCache = function (discovery, cacheNamespace = null) {
+  dbOps.updateDiscoveryCache = async function (discovery, cacheNamespace = null) {
     const now = new Date().toISOString();
     const prefix = cacheNamespace ? `${cacheNamespace}:` : "";
     if (cacheNamespace) discoveryUserCache.delete(cacheNamespace);
-    const updateFn = db.transaction(() => {
+    await db.transaction(async () => {
       if (discovery.recommendations) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}recommendations`,
           dbHelpers.stringifyJSON(discovery.recommendations),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.globalTop) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}globalTop`,
           dbHelpers.stringifyJSON(discovery.globalTop),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.basedOn) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}basedOn`,
           dbHelpers.stringifyJSON(discovery.basedOn),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.topTags) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}topTags`,
           dbHelpers.stringifyJSON(discovery.topTags),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.topGenres) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}topGenres`,
           dbHelpers.stringifyJSON(discovery.topGenres),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.fallbackGenres) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}fallbackGenres`,
           dbHelpers.stringifyJSON(discovery.fallbackGenres),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.fallbackGenrePools) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}fallbackGenrePools`,
           dbHelpers.stringifyJSON(discovery.fallbackGenrePools),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.discoverPlaylists) {
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}discoverPlaylists`,
           dbHelpers.stringifyJSON(discovery.discoverPlaylists),
-          now
-        );
+          now,
+        ]);
       }
       if (discovery.provider) {
-        upsertDiscoveryCacheStmt.run(`${prefix}provider`, discovery.provider, now);
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [`${prefix}provider`, discovery.provider, now]);
       }
       const hasMetadataUpdate =
         (discovery.metadata && typeof discovery.metadata === "object") ||
@@ -172,10 +178,8 @@ export default function register(dbOps) {
           Object.prototype.hasOwnProperty.call(discovery, field),
         );
       if (hasMetadataUpdate) {
-        const existingMetadata =
-          dbHelpers.parseJSON(
-            getDiscoveryCacheStmt.get(`${prefix}metadata`)?.value,
-          ) || {};
+        const existingMetadataRow = await db.get(GET_DISCOVERY_CACHE_SQL, [`${prefix}metadata`]);
+        const existingMetadata = dbHelpers.parseJSON(existingMetadataRow?.value) || {};
         const nextMetadata = {
           ...existingMetadata,
           ...(discovery.metadata && typeof discovery.metadata === "object"
@@ -187,24 +191,21 @@ export default function register(dbOps) {
             nextMetadata[field] = discovery[field];
           }
         }
-        upsertDiscoveryCacheStmt.run(
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [
           `${prefix}metadata`,
           dbHelpers.stringifyJSON(nextMetadata),
           now,
-        );
+        ]);
       }
       if (cacheNamespace) {
-        upsertDiscoveryCacheStmt.run(`${prefix}lastUpdated`, now, now);
+        await db.run(UPSERT_DISCOVERY_CACHE_SQL, [`${prefix}lastUpdated`, now, now]);
       }
     });
-    updateFn();
   };
 
-  dbOps.deleteDiscoveryCacheByPrefix = function (prefix) {
+  dbOps.deleteDiscoveryCacheByPrefix = async function (prefix) {
     const namespace = String(prefix || "").replace(/%$/, "").replace(/:$/, "");
     discoveryUserCache.delete(namespace);
-    return db.prepare("DELETE FROM discovery_cache WHERE key LIKE ?").run(
-      `${prefix}%`
-    );
+    return db.run(DELETE_DISCOVERY_CACHE_BY_PREFIX_SQL, [`${prefix}%`]);
   };
 }

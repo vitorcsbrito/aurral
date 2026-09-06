@@ -1,19 +1,6 @@
-import { db } from "../../config/db-sqlite.js";
-
-const getImageStmt = db.prepare("SELECT * FROM images_cache WHERE mbid = ?");
-const getImageJsonStmt = db.prepare("SELECT images_json FROM images_cache WHERE mbid = ?");
-const upsertImageStmt = db.prepare(
-  "INSERT OR REPLACE INTO images_cache (mbid, image_url, images_json, cache_age, created_at) VALUES (?, ?, ?, ?, ?)"
-);
-const countImagesStmt = db.prepare("SELECT COUNT(*) as count FROM images_cache");
-const deleteImageStmt = db.prepare("DELETE FROM images_cache WHERE mbid = ?");
-const clearImagesStmt = db.prepare("DELETE FROM images_cache");
-const cleanOldImagesStmt = db.prepare(
-  "DELETE FROM images_cache WHERE cache_age < ?"
-);
+import { db } from "../../config/database.js";
 
 const NOT_FOUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const getImagesStmtsByCount = new Map();
 
 const parseImages = (value) => {
   if (!value) return null;
@@ -27,31 +14,12 @@ const parseImages = (value) => {
 
 const serializeImages = (images) => (Array.isArray(images) ? JSON.stringify(images) : null);
 
-const getDeezerMbidCacheStmt = db.prepare(
-  "SELECT mbid FROM deezer_mbid_cache WHERE cache_key = ?"
-);
-const setDeezerMbidCacheStmt = db.prepare(
-  "INSERT OR REPLACE INTO deezer_mbid_cache (cache_key, mbid) VALUES (?, ?)"
-);
-const getMusicbrainzArtistMbidCacheStmt = db.prepare(
-  "SELECT mbid, updated_at FROM musicbrainz_artist_mbid_cache WHERE artist_name_key = ?"
-);
-const setMusicbrainzArtistMbidCacheStmt = db.prepare(
-  "INSERT OR REPLACE INTO musicbrainz_artist_mbid_cache (artist_name_key, mbid, updated_at) VALUES (?, ?, ?)"
-);
-const cleanOldMusicbrainzArtistMbidCacheStmt = db.prepare(
-  "DELETE FROM musicbrainz_artist_mbid_cache WHERE updated_at < ?"
-);
-
 export default function register(dbOps) {
-  dbOps.getImage = function (mbid) {
-    const row = getImageStmt.get(mbid);
+  dbOps.getImage = async function (mbid) {
+    const row = await db.get("SELECT * FROM images_cache WHERE mbid = ?", [mbid]);
     if (!row) return null;
-    if (
-      row.image_url === "NOT_FOUND" &&
-      Date.now() - row.cache_age > NOT_FOUND_TTL_MS
-    ) {
-      deleteImageStmt.run(mbid);
+    if (row.image_url === "NOT_FOUND" && Date.now() - row.cache_age > NOT_FOUND_TTL_MS) {
+      await db.run("DELETE FROM images_cache WHERE mbid = ?", [mbid]);
       return null;
     }
     return {
@@ -62,25 +30,18 @@ export default function register(dbOps) {
     };
   };
 
-  dbOps.getImages = function (mbids) {
+  dbOps.getImages = async function (mbids) {
     if (!mbids || !mbids.length) return {};
-    let stmt = getImagesStmtsByCount.get(mbids.length);
-    if (!stmt) {
-      const placeholders = mbids.map(() => "?").join(",");
-      stmt = db.prepare(
-        `SELECT mbid, image_url, images_json, cache_age FROM images_cache WHERE mbid IN (${placeholders})`
-      );
-      getImagesStmtsByCount.set(mbids.length, stmt);
-    }
-    const rows = stmt.all(...mbids);
+    const placeholders = mbids.map(() => "?").join(",");
+    const rows = await db.all(
+      `SELECT mbid, image_url, images_json, cache_age FROM images_cache WHERE mbid IN (${placeholders})`,
+      mbids,
+    );
     const now = Date.now();
     const result = {};
     for (const row of rows) {
-      if (
-        row.image_url === "NOT_FOUND" &&
-        now - row.cache_age > NOT_FOUND_TTL_MS
-      ) {
-        deleteImageStmt.run(row.mbid);
+      if (row.image_url === "NOT_FOUND" && now - row.cache_age > NOT_FOUND_TTL_MS) {
+        await db.run("DELETE FROM images_cache WHERE mbid = ?", [row.mbid]);
         continue;
       }
       result[row.mbid] = {
@@ -92,46 +53,62 @@ export default function register(dbOps) {
     return result;
   };
 
-  dbOps.setImage = function (mbid, imageUrl, images) {
+  dbOps.setImage = async function (mbid, imageUrl, images) {
     const imagesJson =
       imageUrl === "NOT_FOUND"
         ? null
         : images === undefined
-          ? getImageJsonStmt.get(mbid)?.images_json || null
+          ? (await db.get("SELECT images_json FROM images_cache WHERE mbid = ?", [mbid]))
+              ?.images_json || null
           : serializeImages(images);
-    upsertImageStmt.run(mbid, imageUrl, imagesJson, Date.now(), new Date().toISOString());
+    await db.run(
+      `INSERT INTO images_cache (mbid, image_url, images_json, cache_age, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (mbid) DO UPDATE SET
+         image_url = EXCLUDED.image_url,
+         images_json = EXCLUDED.images_json,
+         cache_age = EXCLUDED.cache_age,
+         created_at = EXCLUDED.created_at`,
+      [mbid, imageUrl, imagesJson, Date.now(), new Date().toISOString()],
+    );
   };
 
-  dbOps.countImages = function () {
-    const row = countImagesStmt.get();
+  dbOps.countImages = async function () {
+    const row = await db.get("SELECT COUNT(*) as count FROM images_cache");
     return Number(row?.count || 0);
   };
 
-  dbOps.deleteImage = function (mbid) {
-    return deleteImageStmt.run(mbid);
+  dbOps.deleteImage = async function (mbid) {
+    return db.run("DELETE FROM images_cache WHERE mbid = ?", [mbid]);
   };
 
-  dbOps.clearImages = function () {
-    return clearImagesStmt.run();
+  dbOps.clearImages = async function () {
+    return db.run("DELETE FROM images_cache");
   };
 
-  dbOps.cleanOldImageCache = function (maxAgeDays = 30) {
+  dbOps.cleanOldImageCache = async function (maxAgeDays = 30) {
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-    return cleanOldImagesStmt.run(cutoff);
+    return db.run("DELETE FROM images_cache WHERE cache_age < ?", [cutoff]);
   };
 
-  dbOps.getDeezerMbidCache = function (cacheKey) {
-    const row = getDeezerMbidCacheStmt.get(cacheKey);
+  dbOps.getDeezerMbidCache = async function (cacheKey) {
+    const row = await db.get("SELECT mbid FROM deezer_mbid_cache WHERE cache_key = ?", [cacheKey]);
     return row?.mbid ?? null;
   };
 
-  dbOps.setDeezerMbidCache = function (cacheKey, mbid) {
-    setDeezerMbidCacheStmt.run(cacheKey, mbid);
+  dbOps.setDeezerMbidCache = async function (cacheKey, mbid) {
+    await db.run(
+      `INSERT INTO deezer_mbid_cache (cache_key, mbid) VALUES (?, ?)
+       ON CONFLICT (cache_key) DO UPDATE SET mbid = EXCLUDED.mbid`,
+      [cacheKey, mbid],
+    );
   };
 
-  dbOps.getMusicbrainzArtistMbidCache = function (artistNameKey) {
+  dbOps.getMusicbrainzArtistMbidCache = async function (artistNameKey) {
     if (!artistNameKey) return null;
-    const row = getMusicbrainzArtistMbidCacheStmt.get(artistNameKey);
+    const row = await db.get(
+      "SELECT mbid, updated_at FROM musicbrainz_artist_mbid_cache WHERE artist_name_key = ?",
+      [artistNameKey],
+    );
     if (!row) return null;
     return {
       mbid: row.mbid || null,
@@ -139,10 +116,16 @@ export default function register(dbOps) {
     };
   };
 
-  dbOps.setMusicbrainzArtistMbidCache = function (artistNameKey, mbid) {
+  dbOps.setMusicbrainzArtistMbidCache = async function (artistNameKey, mbid) {
     if (!artistNameKey) return null;
     const updatedAt = Date.now();
-    setMusicbrainzArtistMbidCacheStmt.run(artistNameKey, mbid || null, updatedAt);
+    await db.run(
+      `INSERT INTO musicbrainz_artist_mbid_cache (artist_name_key, mbid, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (artist_name_key) DO UPDATE SET
+         mbid = EXCLUDED.mbid,
+         updated_at = EXCLUDED.updated_at`,
+      [artistNameKey, mbid || null, updatedAt],
+    );
     return {
       artistNameKey,
       mbid: mbid || null,
@@ -150,8 +133,8 @@ export default function register(dbOps) {
     };
   };
 
-  dbOps.cleanOldMusicbrainzArtistMbidCache = function (maxAgeDays = 90) {
+  dbOps.cleanOldMusicbrainzArtistMbidCache = async function (maxAgeDays = 90) {
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-    return cleanOldMusicbrainzArtistMbidCacheStmt.run(cutoff);
+    return db.run("DELETE FROM musicbrainz_artist_mbid_cache WHERE updated_at < ?", [cutoff]);
   };
 }
