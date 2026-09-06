@@ -8,9 +8,8 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, historyModule] = await setupIsolatedBackend(
+const [isolatedState, historyModule] = await setupIsolatedBackend(
   "aurral-history",
-  "backend/config/db-sqlite.js",
   "backend/services/aurralHistoryService.js",
 );
 
@@ -25,8 +24,10 @@ const { downloadTracker } = await importFromRepo(
 );
 const { getHonkerDb } = await importFromRepo("backend/services/honkerDb.js");
 
-test.beforeEach(() => {
-  resetDatabase(db);
+await downloadTracker.init();
+
+test.beforeEach(async () => {
+  await resetDatabase();
   const transaction = getHonkerDb().transaction();
   transaction.execute("DELETE FROM _honker_live WHERE queue = ?", ["weekly-flow-operation"]);
   transaction.commit();
@@ -39,7 +40,7 @@ test.after(async () => {
 
 test("upsertAurralHistory keeps timestamp for unchanged records", async () => {
   const baseTime = Date.now();
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-1",
     kind: "track_download",
     title: "Searching slskd for Song",
@@ -50,7 +51,7 @@ test("upsertAurralHistory keeps timestamp for unchanged records", async () => {
     createdAt: baseTime - 4000,
   });
 
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-1",
     kind: "track_download",
     title: "Searching slskd for Song",
@@ -67,7 +68,7 @@ test("upsertAurralHistory keeps timestamp for unchanged records", async () => {
 
 test("upsertAurralHistory moves changed records to the top", async () => {
   const baseTime = Date.now();
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-1",
     kind: "track_download",
     title: "Searching slskd for Older Song",
@@ -77,7 +78,7 @@ test("upsertAurralHistory moves changed records to the top", async () => {
     metadata: { jobId: "job-1", trackName: "Older Song", artistName: "Artist" },
     createdAt: baseTime - 4000,
   });
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-2",
     kind: "track_download",
     title: "Searching slskd for Newer Song",
@@ -88,7 +89,7 @@ test("upsertAurralHistory moves changed records to the top", async () => {
     createdAt: baseTime - 2000,
   });
 
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-1",
     kind: "track_download",
     title: "Failed to download Older Song",
@@ -106,7 +107,7 @@ test("upsertAurralHistory moves changed records to the top", async () => {
 });
 
 test("track download history separates NZBGet from slskd", async () => {
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-slskd",
     kind: "track_download",
     title: "Searching slskd for Soulseek Song",
@@ -120,7 +121,7 @@ test("track download history separates NZBGet from slskd", async () => {
       downloadSource: "slskd",
     },
   });
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "job-usenet",
     kind: "track_download",
     title: "Searching NZBGet for Usenet Song",
@@ -151,7 +152,7 @@ test("getAurralHistoryRequests reconciles completed download jobs", async () => 
     },
     "playlist-1",
   );
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: jobId,
     kind: "track_download",
     title: "Downloading Song via slskd",
@@ -188,7 +189,7 @@ test("queued library track jobs appear in activity immediately", async () => {
     "library",
   );
 
-  recordTrackJobQueued(downloadTracker.getJob(jobId));
+  await recordTrackJobQueued(downloadTracker.getJob(jobId));
 
   const entry = (await getAurralHistoryRequests()).find((item) => item.jobId === jobId);
   assert.equal(entry?.status, "pending");
@@ -241,7 +242,7 @@ test("getAurralHistoryRequests fails stale active download history", async () =>
     },
     "playlist-1",
   );
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: jobId,
     kind: "track_download",
     title: "Searching slskd for Stale Song",
@@ -271,7 +272,7 @@ test("getAurralHistoryRequests fails stale active download history", async () =>
 });
 
 test("getAurralHistoryRequests fails orphaned download history", async () => {
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: "missing-job",
     kind: "track_download",
     title: "Searching slskd for Missing Song",
@@ -308,7 +309,7 @@ test("blocked track download history exposes source filename", async () => {
     remoteFilename: "Artist - Song (2024).flac",
   });
   downloadTracker.setBlocked(jobId, "blocked-duration-mismatch", "/tmp/staging/other-name.mp3");
-  recordTrackJobBlocked(downloadTracker.getJob(jobId), "blocked-duration-mismatch");
+  await recordTrackJobBlocked(downloadTracker.getJob(jobId), "blocked-duration-mismatch");
 
   const entries = await getAurralHistoryRequests();
   const entry = entries.find((item) => item.jobId === jobId);
@@ -327,7 +328,7 @@ test("blocked track download history falls back to staging basename", async () =
     "playlist-1",
   );
   downloadTracker.setBlocked(jobId, "blocked-duration-mismatch", "/tmp/staging/downloaded-track.mp3");
-  upsertAurralHistory({
+  await upsertAurralHistory({
     referenceId: jobId,
     kind: "track_download",
     title: "Review needed for Song",

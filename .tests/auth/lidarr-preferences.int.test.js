@@ -11,9 +11,8 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { userOps, dbOps }] = await setupIsolatedBackend(
+const [isolatedState, { userOps, dbOps }] = await setupIsolatedBackend(
   "lidarr-preferences-api",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 const DEFAULT_ROOT_FOLDERS = [
@@ -335,28 +334,30 @@ function seedLidarrArtistAlbum(artist, album) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
+  await resetDatabase();
   fakeLidarr = await startFakeLidarr();
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     integrations: {
       lidarr: { url: fakeLidarr.url, apiKey: "fake-key", qualityProfileId: 7 },
     },
     rootFolderPath: "/music/main",
     onboardingComplete: true,
   });
-  const admin = userOps.createUser(
+  const admin = await userOps.createUser(
     "admin",
     bcrypt.hashSync("password123", 4),
     "admin",
   );
   adminUserId = admin?.id || null;
-  server = await startServerProcess();
+  server = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
   authToken = await loginAsAdmin();
 });
 
 test.beforeEach(async () => {
   fakeLidarr.reset();
-  userOps.updateUser(adminUserId, {
+  await userOps.updateUser(adminUserId, {
     lidarrRootFolderPath: null,
     lidarrQualityProfileId: null,
   });
@@ -411,7 +412,7 @@ test("GET /users/me/lidarr-preferences", async () => {
 
   for (const c of cases) {
     await saveLidarrSettings();
-    userOps.updateUser(adminUserId, {
+    await userOps.updateUser(adminUserId, {
       lidarrRootFolderPath: null,
       lidarrQualityProfileId: null,
     });
@@ -433,7 +434,7 @@ test("PATCH /users/me/lidarr-preferences accepts valid selections and clears the
     qualityProfileId: 9,
     tagId: null,
   });
-  const stored = userOps.getUserById(adminUserId);
+  const stored = await userOps.getUserById(adminUserId);
   assert.equal(stored?.lidarrRootFolderPath, "/music/alt");
   assert.equal(stored?.lidarrQualityProfileId, 9);
 
@@ -500,11 +501,11 @@ test("POST /library/artists resolves root folder and quality profile precedence"
     },
   ];
   for (const c of cases) {
-    userOps.updateUser(adminUserId, {
+    await userOps.updateUser(adminUserId, {
       lidarrRootFolderPath: null,
       lidarrQualityProfileId: null,
     });
-    c.setup?.();
+    await c.setup?.();
     const { posted } = await postLibraryArtist({ foreignArtistId: c.mbid, ...c.body });
     assert.equal(posted.rootFolderPath, c.rootFolderPath);
     assert.equal(posted.qualityProfileId, c.qualityProfileId);
@@ -708,7 +709,7 @@ test("POST /library/downloads/album repairs monitoring after Lidarr search flips
 });
 
 test("POST /library/artists returns 409 when saved defaults are stale", async () => {
-  userOps.updateUser(adminUserId, {
+  await userOps.updateUser(adminUserId, {
     lidarrRootFolderPath: "/music/stale",
     lidarrQualityProfileId: 999,
   });

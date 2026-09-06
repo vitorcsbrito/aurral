@@ -3,24 +3,43 @@ import assert from "node:assert/strict";
 import {
   setupIsolatedBackend,
   cleanupIsolatedState,
-  importFromRepo,
 } from "../helpers/backendTestHarness.js";
 
 const [
   isolatedState,
-  _dbSqlite,
   honkerDb,
   runtime,
   taskStatus,
   operationQueueModule,
 ] = await setupIsolatedBackend(
   "honker-worker-runtime",
-  "backend/config/db-sqlite.js",
   "backend/services/honkerDb.js",
   "backend/services/honkerWorkerRuntime.js",
   "backend/services/honkerTaskStatus.js",
   "backend/services/weeklyFlow/weeklyFlowOperationQueue.js",
 );
+const { db } = await import("../../backend/config/database.js");
+
+// withJobHeartbeat records the run start asynchronously.
+async function waitForRunningRun(jobId) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const row = await db.get(
+      "SELECT id FROM honker_task_runs WHERE job_id = ? AND status = 'running'",
+      [jobId],
+    );
+    if (row) return row;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`No running task run recorded for job ${jobId}`);
+}
+
+// honker_task_runs lives in Postgres; _honker_* tables stay in honker.db.
+const INSERT_TASK_RUN = `
+  INSERT INTO honker_task_runs (
+    job_id, queue, name, payload, worker_id, attempt, status,
+    queued_at, run_at, started_at, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
+`;
 
 const STALE_RUNNING_MS = 60 * 60 * 1000;
 
@@ -97,47 +116,34 @@ test("task status exposes startedAt and runningForMs for live processing jobs", 
     await work;
   });
 
-  const status = await taskStatus.getHonkerTaskStatus();
-  const live = status.queue.find(
-    (entry) =>
-      entry.source === "live" &&
-      entry.jobId === jobId &&
-      entry.status === "running",
-  );
-  assert.ok(live?.startedAt);
-  assert.ok(Number(live?.runningForMs) >= 0);
-  assert.equal(live?.isStale, false);
-
-  resolveWork();
-  await heartbeatPromise;
-  job.ack();
+  try {
+    await waitForRunningRun(jobId);
+    const status = await taskStatus.getHonkerTaskStatus();
+    const live = status.queue.find(
+      (entry) =>
+        entry.source === "live" &&
+        entry.jobId === jobId &&
+        entry.status === "running",
+    );
+    assert.ok(live?.startedAt);
+    assert.ok(Number(live?.runningForMs) >= 0);
+    assert.equal(live?.isStale, false);
+  } finally {
+    // Always release the work so a failed assertion cannot hang the run.
+    resolveWork();
+    await heartbeatPromise;
+    job.ack();
+  }
 });
 
 test("task status marks long-running jobs as stale", async () => {
-  const { db } = await importFromRepo("backend/config/db-sqlite.js");
   const queue = honkerDb.getLibraryScanQueue();
   const jobId = queue.enqueue({ kind: "stale-test" });
   const job = queue.claimOne(honkerDb.getWorkerId());
   assert.equal(job?.id, jobId);
 
   const twoHoursAgo = Math.floor(Date.now() / 1000) - 7200;
-  db.prepare(
-    `
-      INSERT INTO honker_task_runs (
-        job_id,
-        queue,
-        name,
-        payload,
-        worker_id,
-        attempt,
-        status,
-        queued_at,
-        run_at,
-        started_at,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
-    `,
-  ).run(
+  await db.run(INSERT_TASK_RUN, [
     jobId,
     "library-scan",
     "Library Scan",
@@ -148,7 +154,7 @@ test("task status marks long-running jobs as stale", async () => {
     twoHoursAgo,
     twoHoursAgo,
     twoHoursAgo,
-  );
+  ]);
 
   const status = await taskStatus.getHonkerTaskStatus();
   const live = status.queue.find(
@@ -167,30 +173,13 @@ test("task status marks long-running jobs as stale", async () => {
 });
 
 test("clearStaleHonkerJobs removes long-running processing jobs", async () => {
-  const { db } = await importFromRepo("backend/config/db-sqlite.js");
   const queue = honkerDb.getSystemTaskQueue();
   const jobId = queue.enqueue({ kind: "playlist-startup-migration" });
   const job = queue.claimOne(honkerDb.getWorkerId());
   assert.equal(job?.id, jobId);
 
   const twoHoursAgo = Math.floor(Date.now() / 1000) - 7200;
-  db.prepare(
-    `
-      INSERT INTO honker_task_runs (
-        job_id,
-        queue,
-        name,
-        payload,
-        worker_id,
-        attempt,
-        status,
-        queued_at,
-        run_at,
-        started_at,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
-    `,
-  ).run(
+  await db.run(INSERT_TASK_RUN, [
     jobId,
     "system-task",
     "Playlist Startup Migration",
@@ -201,7 +190,7 @@ test("clearStaleHonkerJobs removes long-running processing jobs", async () => {
     twoHoursAgo,
     twoHoursAgo,
     twoHoursAgo,
-  );
+  ]);
 
   const before = await taskStatus.getHonkerTaskStatus();
   assert.ok(
@@ -280,9 +269,10 @@ test("task status groups duplicate completed system task runs", async () => {
 });
 
 test("task run ledger prunes dead jobs older than one hour", async () => {
-  const { db } = await importFromRepo("backend/config/db-sqlite.js");
+  const honker = honkerDb.getHonkerDb();
   const twoHoursAgo = Math.floor(Date.now() / 1000) - 7200;
-  db.prepare(
+  const tx = honker.transaction();
+  tx.execute(
     `
       INSERT INTO _honker_dead (
         queue,
@@ -296,35 +286,34 @@ test("task run ledger prunes dead jobs older than one hour", async () => {
         died_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(
-    "slskd-pipeline",
-    JSON.stringify({ phase: "finalize" }),
-    0,
-    twoHoursAgo,
-    4,
-    5,
-    "stale failure",
-    twoHoursAgo,
-    twoHoursAgo,
+    [
+      "slskd-pipeline",
+      JSON.stringify({ phase: "finalize" }),
+      0,
+      twoHoursAgo,
+      4,
+      5,
+      "stale failure",
+      twoHoursAgo,
+      twoHoursAgo,
+    ],
   );
+  tx.commit();
 
   const status = await taskStatus.getHonkerTaskStatus();
   assert.equal(
     status.queue.some((entry) => entry.error === "stale failure"),
     false,
   );
-  const remaining = db
-    .prepare(
-      "SELECT COUNT(*) AS count FROM _honker_dead WHERE last_error = 'stale failure'",
-    )
-    .get();
+  const remaining = honker.query(
+    "SELECT COUNT(*) AS count FROM _honker_dead WHERE last_error = 'stale failure'",
+  )[0];
   assert.equal(Number(remaining?.count || 0), 0);
 });
 
 test("task run ledger prunes entries older than one hour", async () => {
-  const { db } = await importFromRepo("backend/config/db-sqlite.js");
   const twoHoursAgo = Math.floor(Date.now() / 1000) - 7200;
-  db.prepare(
+  await db.run(
     `
       INSERT INTO honker_task_runs (
         job_id,
@@ -342,20 +331,21 @@ test("task run ledger prunes entries older than one hour", async () => {
         created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(
-    424242,
-    "system-task",
-    "Stale Task",
-    null,
-    null,
-    0,
-    "completed",
-    twoHoursAgo,
-    twoHoursAgo,
-    twoHoursAgo,
-    twoHoursAgo,
-    100,
-    twoHoursAgo,
+    [
+      424242,
+      "system-task",
+      "Stale Task",
+      null,
+      null,
+      0,
+      "completed",
+      twoHoursAgo,
+      twoHoursAgo,
+      twoHoursAgo,
+      twoHoursAgo,
+      100,
+      twoHoursAgo,
+    ],
   );
 
   const status = await taskStatus.getHonkerTaskStatus();
@@ -363,11 +353,9 @@ test("task run ledger prunes entries older than one hour", async () => {
     status.queue.some((entry) => entry.name === "Stale Task"),
     false,
   );
-  const remaining = db
-    .prepare(
-      "SELECT COUNT(*) AS count FROM honker_task_runs WHERE name = 'Stale Task'",
-    )
-    .get();
+  const remaining = await db.get(
+    "SELECT COUNT(*) AS count FROM honker_task_runs WHERE name = 'Stale Task'",
+  );
   assert.equal(Number(remaining?.count || 0), 0);
 });
 

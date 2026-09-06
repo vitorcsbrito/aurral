@@ -7,24 +7,24 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, history, webhook, scanWorker, honker] = await setupIsolatedBackend(
+const [isolatedState, history, webhook, scanWorker, honker] = await setupIsolatedBackend(
   "lidarr-webhook",
-  "backend/config/db-sqlite.js",
   "backend/services/aurralHistoryService.js",
   "backend/routes/lidarrWebhook.js",
   "backend/services/libraryScanWorker.js",
   "backend/services/honkerDb.js",
 );
+const { db } = await import("../../backend/config/database.js");
 
 const { upsertAurralHistory } = history;
 const { handleLidarrWebhook } = webhook;
 const { clearScheduledLibraryScan, getScheduledLibraryScanJobId } = scanWorker;
 const { getLibraryScanQueue } = honker;
 
-const cancelScheduledScan = () => {
+const cancelScheduledScan = async () => {
   const jobId = getScheduledLibraryScanJobId();
   if (jobId) getLibraryScanQueue().cancel(jobId);
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
 };
 
 function createResponse() {
@@ -46,19 +46,19 @@ function createResponse() {
   };
 }
 
-test.beforeEach(() => {
-  cancelScheduledScan();
-  resetDatabase(db);
-  db.prepare("DELETE FROM aurral_history").run();
+test.beforeEach(async () => {
+  await cancelScheduledScan();
+  await resetDatabase();
+  await db.run("DELETE FROM aurral_history");
 });
 
-test.afterEach(() => {
-  cancelScheduledScan();
+test.afterEach(async () => {
+  await cancelScheduledScan();
 });
 
-test("Lidarr Download webhook re-indexes only the imported artist", () => {
+test("Lidarr Download webhook re-indexes only the imported artist", async () => {
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     {
       body: {
         eventType: "Download",
@@ -79,9 +79,9 @@ test("Lidarr Download webhook re-indexes only the imported artist", () => {
   });
 });
 
-test("Lidarr artist delete webhooks schedule a full re-index", () => {
+test("Lidarr artist delete webhooks schedule a full re-index", async () => {
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     { body: { eventType: "ArtistDelete", artist: { id: 77, name: "Gone Artist" } } },
     response,
   );
@@ -94,12 +94,12 @@ test("Lidarr artist delete webhooks schedule a full re-index", () => {
     includeLidarr: true,
   });
   getLibraryScanQueue().cancel(jobId);
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
 });
 
-test("Lidarr album delete webhooks re-index only the album's artist", () => {
+test("Lidarr album delete webhooks re-index only the album's artist", async () => {
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     { body: { eventType: "AlbumDelete", artist: { id: 78 }, album: { id: 5, title: "Gone Album" } } },
     response,
   );
@@ -113,25 +113,24 @@ test("Lidarr album delete webhooks re-index only the album's artist", () => {
     artistIds: [78],
   });
   getLibraryScanQueue().cancel(jobId);
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
 
   // Without an artist id the deletion cannot be scoped.
-  handleLidarrWebhook({ body: { eventType: "AlbumDelete", album: { id: 6 } } }, createResponse());
+  await handleLidarrWebhook(
+    { body: { eventType: "AlbumDelete", album: { id: 6 } } },
+    createResponse(),
+  );
   const fullJobId = getScheduledLibraryScanJobId();
   assert.deepEqual(JSON.parse(getLibraryScanQueue().getJob(fullJobId).payload), {
     force: false,
     includeLidarr: true,
   });
   getLibraryScanQueue().cancel(fullJobId);
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
 });
 
-test.after(async () => {
-  await cleanupIsolatedState(isolatedState);
-});
-
-test("Lidarr Download webhook marks the matching request available", () => {
-  upsertAurralHistory({
+test("Lidarr Download webhook marks the matching request available", async () => {
+  await upsertAurralHistory({
     referenceId: "42",
     kind: "album_requested",
     title: "Requested Blue Train",
@@ -148,7 +147,7 @@ test("Lidarr Download webhook marks the matching request available", () => {
   });
 
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     {
       body: {
         eventType: "Download",
@@ -166,15 +165,16 @@ test("Lidarr Download webhook marks the matching request available", () => {
   );
 
   assert.deepEqual(response.result.body, { handled: true });
-  const entry = db
-    .prepare("SELECT status_label, metadata FROM aurral_history WHERE id = ?")
-    .get("aurral-album_requested-42");
+  const entry = await db.get(
+    "SELECT status_label, metadata FROM aurral_history WHERE id = ?",
+    ["aurral-album_requested-42"],
+  );
   assert.equal(entry.status_label, "Downloaded");
   assert.equal(JSON.parse(entry.metadata).username, "alice");
 });
 
-test("Lidarr Download webhook ignores unrelated albums", () => {
-  upsertAurralHistory({
+test("Lidarr Download webhook ignores unrelated albums", async () => {
+  await upsertAurralHistory({
     referenceId: "42",
     kind: "album_requested",
     title: "Requested Blue Train",
@@ -184,20 +184,20 @@ test("Lidarr Download webhook ignores unrelated albums", () => {
   });
 
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     { body: { eventType: "Download", album: { id: 99, title: "Other Album" } } },
     response,
   );
 
   assert.deepEqual(response.result.body, { handled: false });
-  const entry = db
-    .prepare("SELECT status_label FROM aurral_history WHERE id = ?")
-    .get("aurral-album_requested-42");
+  const entry = await db.get("SELECT status_label FROM aurral_history WHERE id = ?", [
+    "aurral-album_requested-42",
+  ]);
   assert.equal(entry.status_label, "Searching");
 });
 
-test("Lidarr Download webhook matches a request through its album metadata", () => {
-  upsertAurralHistory({
+test("Lidarr Download webhook matches a request through its album metadata", async () => {
+  await upsertAurralHistory({
     referenceId: "artist-mbid",
     kind: "album_requested",
     title: "Requested Blue Train",
@@ -207,24 +207,29 @@ test("Lidarr Download webhook matches a request through its album metadata", () 
   });
 
   const response = createResponse();
-  handleLidarrWebhook(
+  await handleLidarrWebhook(
     { body: { eventType: "Download", album: { id: 42, title: "Blue Train" } } },
     response,
   );
 
   assert.deepEqual(response.result.body, { handled: true });
-  const entry = db
-    .prepare("SELECT status_label, metadata FROM aurral_history WHERE id = ?")
-    .get("aurral-album_requested-artist-mbid");
+  const entry = await db.get(
+    "SELECT status_label, metadata FROM aurral_history WHERE id = ?",
+    ["aurral-album_requested-artist-mbid"],
+  );
   assert.equal(entry.status_label, "Downloaded");
   const metadata = JSON.parse(entry.metadata);
   assert.equal(metadata.albumId, "42");
   assert.equal(metadata.albumName, "Blue Train");
 });
 
-test("Lidarr non-download events are acknowledged without changing history", () => {
+test("Lidarr non-download events are acknowledged without changing history", async () => {
   const response = createResponse();
-  handleLidarrWebhook({ body: { eventType: "Test" } }, response);
+  await handleLidarrWebhook({ body: { eventType: "Test" } }, response);
   assert.equal(response.result.statusCode, 204);
   assert.equal(response.result.ended, true);
+});
+
+test.after(async () => {
+  await cleanupIsolatedState(isolatedState);
 });

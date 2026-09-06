@@ -7,24 +7,24 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, , { plexConnectionStore }] = await setupIsolatedBackend(
+const [isolatedState, , { plexConnectionStore }] = await setupIsolatedBackend(
   "plex-connection-store",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/plex/plexConnectionStore.js",
 );
+const { db } = await import("../../backend/config/database.js");
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("getConnection returns null when nothing is linked", () => {
-  assert.equal(plexConnectionStore.getConnection(1), null);
-  assert.deepEqual(plexConnectionStore.getPublicStatus(1), {
+test("getConnection returns null when nothing is linked", async () => {
+  assert.equal(await plexConnectionStore.getConnection(1), null);
+  assert.deepEqual(await plexConnectionStore.getPublicStatus(1), {
     connected: false,
     linkType: null,
     plexUsername: null,
@@ -33,8 +33,8 @@ test("getConnection returns null when nothing is linked", () => {
   });
 });
 
-test("saveConnection round-trips and encrypts the token at rest", () => {
-  const saved = plexConnectionStore.saveConnection(1, {
+test("saveConnection round-trips and encrypts the token at rest", async () => {
+  const saved = await plexConnectionStore.saveConnection(1, {
     linkType: "self",
     token: "plex-token-abc",
     clientId: "client-1",
@@ -48,16 +48,16 @@ test("saveConnection round-trips and encrypts the token at rest", () => {
   assert.equal(saved.plexAccountId, 42);
   assert.equal(saved.linkedByAdminId, null);
 
-  const raw = db.prepare("SELECT value FROM settings WHERE key = ?").get("plexConnections");
+  const raw = await db.get("SELECT value FROM settings WHERE key = ?", ["plexConnections"]);
   assert.ok(raw?.value);
   assert.ok(!raw.value.includes("plex-token-abc"), "raw token must not be stored in plaintext");
 
-  const fetched = plexConnectionStore.getConnection(1);
+  const fetched = await plexConnectionStore.getConnection(1);
   assert.equal(fetched.token, "plex-token-abc");
 });
 
-test("getPublicStatus never leaks the token", () => {
-  plexConnectionStore.saveConnection(2, {
+test("getPublicStatus never leaks the token", async () => {
+  await plexConnectionStore.saveConnection(2, {
     linkType: "managed",
     token: "super-secret",
     clientId: "client-2",
@@ -65,27 +65,27 @@ test("getPublicStatus never leaks the token", () => {
     plexUsername: "kid",
     linkedByAdminId: 1,
   });
-  const status = plexConnectionStore.getPublicStatus(2);
+  const status = await plexConnectionStore.getPublicStatus(2);
   assert.equal(status.connected, true);
   assert.equal(status.linkType, "managed");
   assert.equal(status.plexUsername, "kid");
   assert.equal(JSON.stringify(status).includes("super-secret"), false);
 });
 
-test("saveConnection rejects invalid linkType or missing token/clientId", () => {
-  assert.throws(() =>
+test("saveConnection rejects invalid linkType or missing token/clientId", async () => {
+  await assert.rejects(() =>
     plexConnectionStore.saveConnection(3, { linkType: "admin", token: "t", clientId: "c" }),
   );
-  assert.throws(() =>
+  await assert.rejects(() =>
     plexConnectionStore.saveConnection(3, { linkType: "self", token: "", clientId: "c" }),
   );
-  assert.throws(() =>
+  await assert.rejects(() =>
     plexConnectionStore.saveConnection(3, { linkType: "self", token: "t", clientId: "" }),
   );
 });
 
-test("updateToken refreshes the token, keeps identity, and clears lastError", () => {
-  plexConnectionStore.saveConnection(4, {
+test("updateToken refreshes the token, keeps identity, and clears lastError", async () => {
+  await plexConnectionStore.saveConnection(4, {
     linkType: "managed",
     token: "old-token",
     clientId: "client-4",
@@ -93,46 +93,49 @@ test("updateToken refreshes the token, keeps identity, and clears lastError", ()
     plexUsername: "teen",
     linkedByAdminId: 1,
   });
-  plexConnectionStore.setLastError(4, "401 stale token");
-  assert.equal(plexConnectionStore.getConnection(4).lastError.message, "401 stale token");
+  await plexConnectionStore.setLastError(4, "401 stale token");
+  assert.equal(
+    (await plexConnectionStore.getConnection(4)).lastError.message,
+    "401 stale token",
+  );
 
-  const updated = plexConnectionStore.updateToken(4, { token: "new-token" });
+  const updated = await plexConnectionStore.updateToken(4, { token: "new-token" });
   assert.equal(updated.token, "new-token");
   assert.equal(updated.plexUsername, "teen");
   assert.equal(updated.lastError, null);
 });
 
-test("updateToken is a no-op when nothing is linked", () => {
-  assert.equal(plexConnectionStore.updateToken(999, { token: "x" }), null);
+test("updateToken is a no-op when nothing is linked", async () => {
+  assert.equal(await plexConnectionStore.updateToken(999, { token: "x" }), null);
 });
 
-test("clearConnection removes the entry and reports whether one existed", () => {
-  plexConnectionStore.saveConnection(5, {
+test("clearConnection removes the entry and reports whether one existed", async () => {
+  await plexConnectionStore.saveConnection(5, {
     linkType: "self",
     token: "t",
     clientId: "c",
     plexAccountId: 1,
   });
-  assert.equal(plexConnectionStore.clearConnection(5), true);
-  assert.equal(plexConnectionStore.getConnection(5), null);
-  assert.equal(plexConnectionStore.clearConnection(5), false);
+  assert.equal(await plexConnectionStore.clearConnection(5), true);
+  assert.equal(await plexConnectionStore.getConnection(5), null);
+  assert.equal(await plexConnectionStore.clearConnection(5), false);
 });
 
-test("getAllLinkedPlexAccountIds aggregates across users", () => {
-  plexConnectionStore.saveConnection(6, {
+test("getAllLinkedPlexAccountIds aggregates across users", async () => {
+  await plexConnectionStore.saveConnection(6, {
     linkType: "self",
     token: "t",
     clientId: "c6",
     plexAccountId: 100,
   });
-  plexConnectionStore.saveConnection(7, {
+  await plexConnectionStore.saveConnection(7, {
     linkType: "managed",
     token: "t",
     clientId: "c7",
     plexAccountId: 200,
     linkedByAdminId: 1,
   });
-  const ids = plexConnectionStore.getAllLinkedPlexAccountIds();
+  const ids = await plexConnectionStore.getAllLinkedPlexAccountIds();
   assert.ok(ids.has("100"));
   assert.ok(ids.has("200"));
   assert.equal(ids.size, 2);

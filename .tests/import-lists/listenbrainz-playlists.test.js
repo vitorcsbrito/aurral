@@ -8,15 +8,14 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { scrobbleConnectionStore }, { listenbrainzPlaylistClient }] =
+const [isolatedState, { scrobbleConnectionStore }, { listenbrainzPlaylistClient }] =
   await setupIsolatedBackend(
     "listenbrainz-playlists",
-    "backend/config/db-sqlite.js",
     "backend/services/scrobbleConnectionStore.js",
     "backend/services/importLists/listenbrainzPlaylists.js",
   );
 
-test.beforeEach(() => resetDatabase(db));
+test.beforeEach(async () => resetDatabase());
 test.after(() => cleanupIsolatedState(isolatedState));
 
 test("lists owned and created-for ListenBrainz playlists without duplicates", async (t) => {
@@ -44,7 +43,7 @@ test("lists owned and created-for ListenBrainz playlists without duplicates", as
         : {}),
     },
   });
-  scrobbleConnectionStore.saveConnection(7, "listenbrainz", {
+  await scrobbleConnectionStore.saveConnection(7, "listenbrainz", {
     token: "test-token",
     displayName: "playlist-user",
   });

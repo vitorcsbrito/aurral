@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { importFromRepo } from "../helpers/backendTestHarness.js";
+import { importFromRepo, resetDatabase } from "../helpers/backendTestHarness.js";
 import { createDiscoveryArtistBatcher } from "../helpers/discoveryFixtures.js";
+
+await resetDatabase();
 
 test("per-user refresh: rerankCachedRecommendations produces a personalized slice from the global pool", async () => {
   const { rerankCachedRecommendations } = await importFromRepo(
@@ -61,17 +63,17 @@ test("per-user refresh: user-specific feedback is isolated from global feedback"
     "backend/services/discovery/index.js",
   );
 
-  resetDiscoveryFeedback("global");
-  resetDiscoveryFeedback("user-abc");
+  await resetDiscoveryFeedback("global");
+  await resetDiscoveryFeedback("user-abc");
 
-  addDiscoveryFeedback("global", {
+  await addDiscoveryFeedback("global", {
     id: "global-fb",
     artistId: "11111111-1111-1111-1111-111111111111",
     artistName: "Global Dislike",
     action: "less_like_this",
   });
 
-  addDiscoveryFeedback("user-abc", {
+  await addDiscoveryFeedback("user-abc", {
     id: "user-fb",
     artistId: "22222222-2222-2222-2222-222222222222",
     artistName: "User Dislike",
@@ -92,8 +94,8 @@ test("per-user refresh: user-specific feedback is isolated from global feedback"
     false,
   );
 
-  resetDiscoveryFeedback("global");
-  resetDiscoveryFeedback("user-abc");
+  await resetDiscoveryFeedback("global");
+  await resetDiscoveryFeedback("user-abc");
 });
 
 test("per-user refresh: mergeRetainedRecommendationPool preserves per-user retained pool across refreshes", async () => {
@@ -166,14 +168,14 @@ test("per-user refresh: addDiscoveryFeedback deduplicates feedback per user", as
     "backend/services/discovery/index.js",
   );
 
-  addDiscoveryFeedback("user-dedup", {
+  await addDiscoveryFeedback("user-dedup", {
     id: "dedup-1",
     artistId: "artist-1",
     artistName: "Artist One",
     action: "more_like_this",
   });
 
-  addDiscoveryFeedback("user-dedup", {
+  await addDiscoveryFeedback("user-dedup", {
     id: "dedup-2",
     artistId: "artist-1",
     artistName: "Artist One",

@@ -10,6 +10,11 @@ import {
   parseSlskdRemoteFile,
   predictSlskdLocalPathCandidates,
 } from "../../backend/services/slskdOrchestrator.js";
+import { ensureTestDatabase } from "../helpers/backendTestHarness.js";
+import { loadSettingsCache } from "../../backend/db/helpers/settings.js";
+
+await ensureTestDatabase();
+await loadSettingsCache();
 
 test("parseSlskdRemoteFile reads parent folder and basename from remote paths", () => {
   assert.deepEqual(

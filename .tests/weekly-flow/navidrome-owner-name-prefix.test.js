@@ -9,21 +9,19 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps, userOps },
   { flowPlaylistConfig },
   { WeeklyFlowPlaylistManager },
 ] = await setupIsolatedBackend(
   "navidrome-owner-name-prefix",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistManager.js",
 );
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+test.beforeEach(async () => {
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -60,19 +58,19 @@ function makeManager() {
   return manager;
 }
 
-test("the Navidrome adapter keeps an unowned flow name bare", () => {
+test("the Navidrome adapter keeps an unowned flow name bare", async () => {
   const manager = makeManager();
-  const names = manager.navidromeDestination.getPlaylistNames({
+  const names = await manager.navidromeDestination.getPlaylistNames({
     displayName: "Weekend Vibes",
   });
   assert.equal(names.current, "Weekend Vibes");
   assert.deepEqual(names.legacy, ["[A] Weekend Vibes", "Aurral Weekend Vibes"]);
 });
 
-test("the Navidrome adapter prefixes an owned flow and keeps legacy names", () => {
-  const jody = userOps.createUser("jody", "hash", "user");
+test("the Navidrome adapter prefixes an owned flow and keeps legacy names", async () => {
+  const jody = await userOps.createUser("jody", "hash", "user");
   const manager = makeManager();
-  const names = manager.navidromeDestination.getPlaylistNames({
+  const names = await manager.navidromeDestination.getPlaylistNames({
     ownerUserId: jody.id,
     displayName: "Weekend Vibes",
   });
@@ -84,11 +82,11 @@ test("the Navidrome adapter prefixes an owned flow and keeps legacy names", () =
   ]);
 });
 
-test("the Navidrome adapter prefixes an owned shared playlist and keeps legacy names", () => {
-  const jody = userOps.createUser("jody", "hash", "user");
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "80s Anthems" });
+test("the Navidrome adapter prefixes an owned shared playlist and keeps legacy names", async () => {
+  const jody = await userOps.createUser("jody", "hash", "user");
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "80s Anthems" });
   const manager = makeManager();
-  const names = manager.navidromeDestination.getPlaylistNames({
+  const names = await manager.navidromeDestination.getPlaylistNames({
     entityId: playlist.id,
     ownerUserId: jody.id,
     displayName: "80s Anthems",
@@ -99,19 +97,19 @@ test("the Navidrome adapter prefixes an owned shared playlist and keeps legacy n
     "[AS] 80s Anthems",
     "Aurral Shared 80s Anthems",
   ]);
-  flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+  await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
 });
 
 test("two different owners can use the same native playlist name", async () => {
-  const gordon = userOps.createUser("gordon", "hash", "admin");
-  const jody = userOps.createUser("jody", "hash", "user");
-  const gordonFlow = flowPlaylistConfig.createFlow({
+  const gordon = await userOps.createUser("gordon", "hash", "admin");
+  const jody = await userOps.createUser("jody", "hash", "user");
+  const gordonFlow = await flowPlaylistConfig.createFlow({
     name: "Weekend Vibes",
     ownerUserId: gordon.id,
   });
-  flowPlaylistConfig.setEnabled(gordonFlow.id, true);
-  const jodyFlow = flowPlaylistConfig.createFlow({ name: "Weekend Vibes", ownerUserId: jody.id });
-  flowPlaylistConfig.setEnabled(jodyFlow.id, true);
+  await flowPlaylistConfig.setEnabled(gordonFlow.id, true);
+  const jodyFlow = await flowPlaylistConfig.createFlow({ name: "Weekend Vibes", ownerUserId: jody.id });
+  await flowPlaylistConfig.setEnabled(jodyFlow.id, true);
 
   const manager = makeManager();
   await manager.ensurePlaylists();

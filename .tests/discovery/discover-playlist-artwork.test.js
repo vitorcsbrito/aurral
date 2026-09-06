@@ -9,6 +9,7 @@ import {
   cleanupIsolatedState,
   createIsolatedStateDir,
   importFromRepo,
+  resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
 const isolatedState = await createIsolatedStateDir(
@@ -16,6 +17,7 @@ const isolatedState = await createIsolatedStateDir(
   { dataDirRelativePath: path.join(".state", "aurral") },
 );
 applyIsolatedBackendEnv(isolatedState);
+await resetDatabase();
 
 const [playlistArtworkBuilder, { registerArtwork }] = await Promise.all(
   [

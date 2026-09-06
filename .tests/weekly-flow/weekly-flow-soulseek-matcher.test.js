@@ -9,6 +9,11 @@ import {
   stripVersionSuffix,
   validateDownloadedTrack,
 } from "../../backend/services/weeklyFlow/weeklyFlowSoulseekMatcher.js";
+import { ensureTestDatabase } from "../helpers/backendTestHarness.js";
+import { loadSettingsCache } from "../../backend/db/helpers/settings.js";
+
+await ensureTestDatabase();
+await loadSettingsCache();
 
 const rankOpts = { preferredFormat: "flac", strictFormat: false };
 

@@ -6,13 +6,12 @@ import path from "node:path";
 import {
   cleanupIsolatedState,
   importFromRepo,
+  resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }] = await setupIsolatedBackend(
-  "scan-incremental",
-  "backend/config/db-sqlite.js",
-);
+const [isolatedState] = await setupIsolatedBackend("scan-incremental");
+const { db } = await import("../../backend/config/database.js");
 const { indexLidarrLibrary } = await importFromRepo("backend/services/libraryLidarrIndexer.js");
 const { beginLibraryScan, finishLibraryScan } =
   await importFromRepo("backend/services/libraryMediaStore.js");
@@ -70,18 +69,21 @@ const buildClient = (calls = []) => ({
   getRootFolders: async () => [{ path: root }],
 });
 
-const availability = () => Object.fromEntries(
-  db.prepare(
-    `SELECT artist.name, media.available
-     FROM library_media_files AS media
-     JOIN library_albums AS album ON album.id = media.album_id
-     JOIN library_artists AS artist ON artist.id = album.artist_id
-     ORDER BY artist.name`,
-  ).all().map((row) => [row.name, row.available]),
+const availability = async () => Object.fromEntries(
+  (
+    await db.all(
+      `SELECT artist.name, media.available
+       FROM library_media_files AS media
+       JOIN library_albums AS album ON album.id = media.album_id
+       JOIN library_artists AS artist ON artist.id = album.artist_id
+       ORDER BY artist.name`,
+    )
+  ).map((row) => [row.name, row.available]),
 );
 const trackCalls = (calls) => calls.filter((call) => call.startsWith("/track")).sort();
 
 test.before(async () => {
+  await resetDatabase();
   root = await mkdtemp(path.join(tmpdir(), "aurral-scan-incremental-"));
   for (const id of [1, 2]) {
     const filePath = path.join(root, `Incremental ${id}`, "Album", "01 Track.flac");
@@ -108,7 +110,7 @@ test("a rescan skips track and file reads for artists Lidarr reports unchanged",
   assert.equal(second.changed, false);
   assert.equal(second.artistsSkipped, 2);
   assert.deepEqual(trackCalls(calls), []);
-  assert.deepEqual(availability(), { "Incremental 1": 1, "Incremental 2": 1 });
+  assert.deepEqual(await availability(), { "Incremental 1": 1, "Incremental 2": 1 });
 });
 
 test("only artists whose statistics changed are re-read, and skipped media stays available", async () => {
@@ -119,12 +121,13 @@ test("only artists whose statistics changed are re-read, and skipped media stays
   assert.equal(result.changed, true);
   assert.equal(result.artistsSkipped, 1);
   assert.deepEqual(trackCalls(calls), ["/track?albumId=10", "/trackfile?albumId=10"]);
-  assert.deepEqual(availability(), { "Incremental 1": 1, "Incremental 2": 1 });
+  assert.deepEqual(await availability(), { "Incremental 1": 1, "Incremental 2": 1 });
 });
 
-const fingerprints = () => Object.fromEntries(
-  db.prepare("SELECT name, lidarr_fingerprint FROM library_artists ORDER BY name").all()
-    .map((row) => [row.name, row.lidarr_fingerprint]),
+const fingerprints = async () => Object.fromEntries(
+  (
+    await db.all("SELECT name, lidarr_fingerprint FROM library_artists ORDER BY name")
+  ).map((row) => [row.name, row.lidarr_fingerprint]),
 );
 
 test("a forced scan reads every artist and leaves fresh fingerprints", async () => {
@@ -132,7 +135,7 @@ test("a forced scan reads every artist and leaves fresh fingerprints", async () 
   const forced = await indexLidarrLibrary({ client: buildClient(forcedCalls), syncSearch: false, force: true });
   assert.equal(forced.artistsSkipped, 0);
   assert.equal(trackCalls(forcedCalls).length, 4);
-  assert.ok(Object.values(fingerprints()).every((value) => typeof value === "string"));
+  assert.ok(Object.values(await fingerprints()).every((value) => typeof value === "string"));
 
   const again = [];
   assert.equal((await indexLidarrLibrary({ client: buildClient(again), syncSearch: false })).artistsSkipped, 2);
@@ -142,15 +145,15 @@ test("a forced scan reads every artist and leaves fresh fingerprints", async () 
 test("an artist without a committed fingerprint is re-read even after a completed run", async () => {
   // A scan killed after rewriting the artist row leaves the fingerprint
   // cleared; a later completed run of any kind must not hide that.
-  db.prepare("UPDATE library_artists SET lidarr_fingerprint = NULL WHERE name = 'Incremental 1'").run();
-  finishLibraryScan(beginLibraryScan({ source: "lidarr-artist" }), { status: "complete" });
-  finishLibraryScan(beginLibraryScan({ source: "lidarr" }), { status: "complete" });
+  await db.run("UPDATE library_artists SET lidarr_fingerprint = NULL WHERE name = 'Incremental 1'");
+  await finishLibraryScan(await beginLibraryScan({ source: "lidarr-artist" }), { status: "complete" });
+  await finishLibraryScan(await beginLibraryScan({ source: "lidarr" }), { status: "complete" });
 
   const calls = [];
   const result = await indexLidarrLibrary({ client: buildClient(calls), syncSearch: false });
   assert.equal(result.artistsSkipped, 1);
   assert.deepEqual(trackCalls(calls), ["/track?albumId=10", "/trackfile?albumId=10"]);
-  assert.ok(typeof fingerprints()["Incremental 1"] === "string", "the re-read stamps the fingerprint");
+  assert.ok(typeof (await fingerprints())["Incremental 1"] === "string", "the re-read stamps the fingerprint");
 });
 
 test("an artist whose file could not be indexed gets no fingerprint", async () => {
@@ -162,7 +165,7 @@ test("an artist whose file could not be indexed gets no fingerprint", async () =
     const result = await indexLidarrLibrary({ client: buildClient(calls), syncSearch: false });
     assert.equal(result.filesFailed, 1);
     assert.equal(result.artistsSkipped, 1);
-    assert.equal(fingerprints()["Incremental 2"], null);
+    assert.equal((await fingerprints())["Incremental 2"], null);
   } finally {
     await mkdir(path.dirname(missing), { recursive: true });
     await writeFile(missing, "fixture");
@@ -173,8 +176,8 @@ test("an artist whose file could not be indexed gets no fingerprint", async () =
   assert.equal(result.filesFailed, 0);
   assert.equal(result.artistsSkipped, 1);
   assert.deepEqual(trackCalls(calls), ["/track?albumId=20", "/trackfile?albumId=20"]);
-  assert.ok(typeof fingerprints()["Incremental 2"] === "string");
-  assert.deepEqual(availability(), { "Incremental 1": 1, "Incremental 2": 1 });
+  assert.ok(typeof (await fingerprints())["Incremental 2"] === "string");
+  assert.deepEqual(await availability(), { "Incremental 1": 1, "Incremental 2": 1 });
 });
 
 test("a scoped re-index commits the fingerprint the next full scan trusts", async () => {

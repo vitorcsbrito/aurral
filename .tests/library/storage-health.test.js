@@ -14,17 +14,16 @@ import {
 const previousFileBrowseRoots = process.env.FILE_BROWSE_ROOTS;
 const previousPathMappings = process.env.PATH_MAPPINGS;
 
-const [isolatedState, { db }, { dbOps }, { runStorageHealthCheck }, { resolvePlaylistRoot }] =
+const [isolatedState, { dbOps }, { runStorageHealthCheck }, { resolvePlaylistRoot }] =
   await setupIsolatedBackend(
     "storage-health",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/storageHealthService.js",
     "backend/services/playlistPaths.js",
   );
 
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   const { downloadTracker } = await importFromRepo(
     "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   );
@@ -33,7 +32,7 @@ test.beforeEach(async () => {
   await fs.mkdir(downloadFolder, { recursive: true });
   process.env.FILE_BROWSE_ROOTS = downloadFolder;
   delete process.env.PATH_MAPPINGS;
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {},
     pathMappings: [],
@@ -64,7 +63,7 @@ test("runStorageHealthCheck passes when downloads folder is writable", async () 
 });
 
 test("runStorageHealthCheck fails when a path mapping local folder is missing", async () => {
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     pathMappings: [
       {
@@ -101,31 +100,31 @@ test("native playback passes when any available file is readable", async () => {
     upsertLibraryMediaFile,
     upsertLibraryTrack,
   } = await importFromRepo("backend/services/libraryMediaStore.js");
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: "storage-health:artist",
     name: "Storage Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: "storage-health:album",
     artistId: artist.id,
     title: "Storage Album",
     albumArtist: artist.name,
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: "storage-health:track",
     title: "Storage Track",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
   const readablePath = path.join(process.env.DOWNLOAD_FOLDER, "1-readable.flac");
   await fs.writeFile(readablePath, "audio");
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: track.id,
     source: "lidarr",
     path: path.join(process.env.DOWNLOAD_FOLDER, "0-stale.flac"),
     available: true,
   });
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: track.id,
     source: "aurral",
     path: readablePath,
@@ -186,7 +185,7 @@ test("NZBGet health verifies the real Aurral transfer instead of filesystem iden
     });
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -226,7 +225,7 @@ test("download-client health fails when the reported path cannot perform a trans
     });
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -253,7 +252,7 @@ test("slskd missing-path remediation points to slskd rather than a nonexistent A
     response.end(JSON.stringify({ directories: {} }));
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -291,7 +290,7 @@ test("unrelated Navidrome libraries do not fail local storage health", async (t)
     );
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -342,7 +341,7 @@ test("Navidrome health does not compare reused Lidarr and Navidrome paths", asyn
     response.end(JSON.stringify([]));
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -380,7 +379,7 @@ test("configured Plex is included and validates its Aurral library path", async 
     );
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,
@@ -411,7 +410,7 @@ test("POSIX library paths remain case-sensitive", async (t) => {
     response.end(JSON.stringify([{ id: "1", name: "Wrong case", path: wrongCasePath }]));
   });
   t.after(server.close);
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...dbOps.getSettings().integrations,

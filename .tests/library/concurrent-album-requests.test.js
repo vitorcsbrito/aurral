@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 
 process.env.NODE_ENV = "test";
 
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
 import { lidarrClient } from "../../backend/services/lidarrClient.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 const flushImmediate = () => new Promise((resolve) => setImmediate(resolve));
 

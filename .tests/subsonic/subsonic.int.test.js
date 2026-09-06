@@ -8,10 +8,10 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }, { hashPassword }] =
+const [isolatedState, , { dbOps, userOps }, { hashPassword }] =
   await setupIsolatedBackend(
     "subsonic-contract",
-    "backend/config/db-sqlite.js",
+    "backend/config/database.js",
     "backend/db/helpers/index.js",
     "backend/middleware/passwordHash.js",
   );
@@ -42,9 +42,9 @@ async function request(method, params) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
-  userOps.createUser("alice", hashPassword("password123"), "user");
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+  await userOps.createUser("alice", hashPassword("password123"), "user");
   aurral = await startServerProcess({ extraEnv: { CORS_ORIGIN: "" } });
 });
 

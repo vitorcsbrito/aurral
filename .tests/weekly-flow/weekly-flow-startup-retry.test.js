@@ -9,7 +9,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   { flowPlaylistConfig },
   { downloadTracker },
@@ -17,7 +16,6 @@ const [
   { startWorkerIfPending },
 ] = await setupIsolatedBackend(
   "weekly-flow-startup-retry",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
@@ -25,10 +23,12 @@ const [
   "backend/services/weeklyFlow/weeklyFlowScheduler.js",
 );
 
-test.beforeEach(() => {
+await downloadTracker.init();
+
+test.beforeEach(async () => {
   downloadTracker.clearAll();
-  resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -41,7 +41,7 @@ test.after(async () => {
 });
 
 test("startup leaves failed tracks terminal", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Incomplete",
     tracks: [{ artistName: "Missing", trackName: "Leave Failed" }],
   });
@@ -67,7 +67,7 @@ test("startup leaves failed tracks terminal", async () => {
 });
 
 test("startup resumes pending work", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Pending work",
     tracks: [{ artistName: "Pending", trackName: "Resume Me" }],
   });

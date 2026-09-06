@@ -6,18 +6,17 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, { registerGeneral }, { playlistManager }] =
+const [isolatedState, { dbOps }, { registerGeneral }, { playlistManager }] =
   await setupIsolatedBackend(
     "general-settings",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/routes/settings/handlers/general.js",
     "backend/services/weeklyFlow/weeklyFlowPlaylistManager.js",
   );
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+test.beforeEach(async () => {
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
 });
 
 test.after(() => cleanupIsolatedState(isolatedState));
@@ -73,7 +72,10 @@ test("schedules the library scan after playlist initialization settles", async (
       response,
     );
 
-    await new Promise((resolve) => setImmediate(resolve));
+    const deadline = Date.now() + 10000;
+    while (!events.includes("ensure-start") && Date.now() < deadline) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     assert.deepEqual(events, ["ensure-start"]);
 
     releaseInitialization();

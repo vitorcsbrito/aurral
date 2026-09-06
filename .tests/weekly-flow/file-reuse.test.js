@@ -11,14 +11,12 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   trackerModule,
   reuseModule,
   playlistConfigModule,
 ] = await setupIsolatedBackend(
   "weekly-flow-file-reuse",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   "backend/services/weeklyFlow/weeklyFlowFileReuse.js",
@@ -40,9 +38,11 @@ const {
 
 const weeklyFlowRoot = process.env.WEEKLY_FLOW_FOLDER;
 
+await downloadTracker.init();
+
 test.beforeEach(async () => {
-  await resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -288,7 +288,7 @@ test("repairReusableTrackLinks requeues missing completed tracks and refreshes p
 });
 
 test("reuseTrackForPlaylist path-shares flow files until refresh relocates them", async () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Discover Weekly", size: 10 });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Discover Weekly", size: 10 });
   const track = {
     artistName: "Burial",
     trackName: "Archangel",
@@ -413,7 +413,7 @@ test("removePlaylistFileIfUnshared relocates when another playlist still referen
 });
 
 test("removePlaylistFileIfUnshared preserves external files during shared cleanup", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "External" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "External" });
   const track = {
     artistName: "Aphex Twin",
     trackName: "External Xtal",

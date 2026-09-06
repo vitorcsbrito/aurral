@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import axios from "../../lib/axiosFetch.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import {
   musicbrainzArtistIdentityCache,
   musicbrainzGetArtistIdentityByMbid,
 } from "../../backend/services/apiClients/musicbrainz.js";
+
+// The contact header reads settings, so the mirror must be loaded.
+await ensureTestDatabase();
+await reloadMirrors();
 
 test("MusicBrainz identity retries transient failures instead of caching them for an hour", async (t) => {
   const mbid = "transient-identity-test";

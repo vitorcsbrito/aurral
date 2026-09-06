@@ -6,25 +6,24 @@ import {
   setupIsolatedBackend,
 } from "./helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps, userOps }] = await setupIsolatedBackend(
   "inbox-helper",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 
 let userId;
 
-test.before(() => {
-  resetDatabase(db);
-  userId = userOps.createUser("inbox-user", "password-hash").id;
+test.before(async () => {
+  await resetDatabase();
+  userId = (await userOps.createUser("inbox-user", "password-hash")).id;
 });
 
 test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("inbox items preserve read state while source metadata updates", () => {
-  const first = dbOps.upsertInboxItem({
+test("inbox items preserve read state while source metadata updates", async () => {
+  const first = await dbOps.upsertInboxItem({
     userId,
     kind: "release",
     sourceKey: "artist:release",
@@ -33,13 +32,13 @@ test("inbox items preserve read state while source metadata updates", () => {
     metadata: { releaseDate: "2026-08-05" },
   });
   assert.equal(first.isRead, false);
-  assert.equal(dbOps.getInboxUnreadCount(userId), 1);
+  assert.equal(await dbOps.getInboxUnreadCount(userId), 1);
 
-  const read = dbOps.updateInboxItem(userId, first.id, { isRead: true });
+  const read = await dbOps.updateInboxItem(userId, first.id, { isRead: true });
   assert.equal(read.isRead, true);
-  assert.equal(dbOps.getInboxUnreadCount(userId), 0);
+  assert.equal(await dbOps.getInboxUnreadCount(userId), 0);
 
-  const refreshed = dbOps.upsertInboxItem({
+  const refreshed = await dbOps.upsertInboxItem({
     userId,
     kind: "release",
     sourceKey: "artist:release",

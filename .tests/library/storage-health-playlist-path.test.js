@@ -7,18 +7,17 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, { runStorageHealthCheck }] =
+const [isolatedState, { dbOps }, { runStorageHealthCheck }] =
   await setupIsolatedBackend(
     "storage-health-playlist-path",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/storageHealthService.js",
   );
 
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   const downloadFolder = process.env.DOWNLOAD_FOLDER;
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {},
     pathMappings: [],

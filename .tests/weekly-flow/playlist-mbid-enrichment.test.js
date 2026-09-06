@@ -9,7 +9,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   { flowPlaylistConfig },
   { downloadTracker },
@@ -21,7 +20,6 @@ const [
   },
 ] = await setupIsolatedBackend(
   "playlist-mbid-enrichment",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
@@ -30,10 +28,12 @@ const [
   "backend/services/playlistMbidEnrichmentService.js",
 );
 
-test.beforeEach(() => {
+await downloadTracker.init();
+
+test.beforeEach(async () => {
   downloadTracker.clearAll();
-  resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -46,7 +46,7 @@ test.after(async () => {
 });
 
 test("enrichSharedPlaylistMbids fills missing playlist and job MBIDs", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Imported",
     tracks: [
       {
@@ -98,7 +98,7 @@ test("enrichSharedPlaylistMbids fills missing playlist and job MBIDs", async () 
 });
 
 test("enrichSharedPlaylistMbids rescans the library after updating a downloaded job", async (t) => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Downloaded",
     tracks: [{ artistName: "Refused", trackName: "New Noise" }],
   });
@@ -138,7 +138,7 @@ test("enrichSharedPlaylistMbids returns missing when playlist not found", async 
 });
 
 test("enrichSharedPlaylistMbids handles resolveTrackContext throwing by falling back to original track", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Fragile",
     tracks: [{ artistName: "Unknown", trackName: "Ghost" }],
   });
@@ -153,7 +153,7 @@ test("enrichSharedPlaylistMbids handles resolveTrackContext throwing by falling 
 });
 
 test("enrichSharedPlaylistMbids leaves already-enriched tracks unchanged", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Enriched",
     tracks: [{
       artistName: "Radiohead",
@@ -176,7 +176,7 @@ test("enrichSharedPlaylistMbids leaves already-enriched tracks unchanged", async
 });
 
 test("enrichSharedPlaylistMbids does not re-resolve complete tracks", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Complete",
     tracks: [{
       artistName: "Radiohead",
@@ -200,7 +200,7 @@ test("enrichSharedPlaylistMbids does not re-resolve complete tracks", async () =
 });
 
 test("enrichSharedPlaylistMbids can reconcile complete tracks once when explicitly requested", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Needs artist repair",
     tracks: [{
       artistName: "Radiohead",
@@ -226,8 +226,8 @@ test("enrichSharedPlaylistMbids can reconcile complete tracks once when explicit
   );
 });
 
-test("startup artist reconciliation is scheduled only once", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("startup artist reconciliation is scheduled only once", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "One-time artist repair",
     tracks: [{
       artistName: "Radiohead",
@@ -238,11 +238,11 @@ test("startup artist reconciliation is scheduled only once", () => {
     }],
   });
 
-  const first = schedulePlaylistMbidEnrichmentForMissingPlaylists({
+  const first = await schedulePlaylistMbidEnrichmentForMissingPlaylists({
     reason: "startup",
     reconcileArtistMbids: true,
   });
-  const second = schedulePlaylistMbidEnrichmentForMissingPlaylists({
+  const second = await schedulePlaylistMbidEnrichmentForMissingPlaylists({
     reason: "startup",
     reconcileArtistMbids: true,
   });

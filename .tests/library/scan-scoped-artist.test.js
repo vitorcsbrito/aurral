@@ -6,13 +6,12 @@ import path from "node:path";
 import {
   cleanupIsolatedState,
   importFromRepo,
+  resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }] = await setupIsolatedBackend(
-  "scan-scoped-artist",
-  "backend/config/db-sqlite.js",
-);
+const [isolatedState] = await setupIsolatedBackend("scan-scoped-artist");
+const { db } = await import("../../backend/config/database.js");
 const { indexLidarrLibrary } = await importFromRepo("backend/services/libraryLidarrIndexer.js");
 const { scanConfiguredLibrary } = await importFromRepo("backend/services/libraryIndexService.js");
 
@@ -87,17 +86,20 @@ const buildClient = ({
   getRootFolders: async () => [{ path: root }],
 });
 
-const mediaAvailability = () => Object.fromEntries(
-  db.prepare(
-    `SELECT artist.name, media.available
-     FROM library_media_files AS media
-     JOIN library_albums AS album ON album.id = media.album_id
-     JOIN library_artists AS artist ON artist.id = album.artist_id
-     ORDER BY artist.name`,
-  ).all().map((row) => [row.name, row.available]),
+const mediaAvailability = async () => Object.fromEntries(
+  (
+    await db.all(
+      `SELECT artist.name, media.available
+       FROM library_media_files AS media
+       JOIN library_albums AS album ON album.id = media.album_id
+       JOIN library_artists AS artist ON artist.id = album.artist_id
+       ORDER BY artist.name`,
+    )
+  ).map((row) => [row.name, row.available]),
 );
 
 test.before(async () => {
+  await resetDatabase();
   root = await mkdtemp(path.join(tmpdir(), "aurral-scan-scoped-"));
   for (const artist of ARTISTS) {
     const filePath = path.join(root, artist.artistName, "Album", "01 Track.flac");
@@ -115,8 +117,8 @@ test.after(async () => {
 test("a scoped re-index only fetches and reconciles the requested artist", async () => {
   const full = await indexLidarrLibrary({ client: buildClient(), syncSearch: false });
   assert.equal(full.filesIndexed, 2);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
-  db.prepare("UPDATE library_artists SET updated_at = 1").run();
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  await db.run("UPDATE library_artists SET updated_at = 1");
 
   const calls = [];
   const scoped = await indexLidarrLibrary({
@@ -129,14 +131,14 @@ test("a scoped re-index only fetches and reconciles the requested artist", async
   assert.equal(scoped.filesIndexed, 0);
   assert.deepEqual(calls.sort(), ["/album?artistId=1", "/artist/1"]);
   // Artist two's file is also "missing" from Lidarr, but it was out of scope.
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
   assert.equal(
-    db.prepare("SELECT updated_at FROM library_artists WHERE name = 'Scoped Two'").get().updated_at,
+    (await db.get("SELECT updated_at FROM library_artists WHERE name = 'Scoped Two'")).updated_at,
     1,
   );
-  const run = db.prepare(
+  const run = await db.get(
     "SELECT source, root_path, status FROM library_scan_runs ORDER BY id DESC LIMIT 1",
-  ).get();
+  );
   assert.deepEqual(run, { source: "lidarr-artist", root_path: "artist:1", status: "complete" });
 });
 
@@ -147,15 +149,16 @@ test("a scoped re-index of an artist Lidarr no longer has is skipped", async () 
     artistIds: [999],
   });
   assert.equal(result.skipped, true);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
 });
 
-const fingerprintOf = (name) =>
-  db.prepare("SELECT lidarr_fingerprint FROM library_artists WHERE name = ?").get(name).lidarr_fingerprint;
+const fingerprintOf = async (name) =>
+  (await db.get("SELECT lidarr_fingerprint FROM library_artists WHERE name = ?", [name]))
+    .lidarr_fingerprint;
 
 test("a scoped re-index whose album fetch fails leaves the artist untouched", async () => {
   await indexLidarrLibrary({ client: buildClient(), syncSearch: false, artistIds: [1] });
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
 
   const result = await indexLidarrLibrary({
     client: buildClient({ albumErrors: [1] }),
@@ -163,7 +166,7 @@ test("a scoped re-index whose album fetch fails leaves the artist untouched", as
     artistIds: [1],
   });
   assert.equal(result.skipped, true);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
 
   // With a second artist in scope the failed one is dropped, the other reconciled.
   const partial = await indexLidarrLibrary({
@@ -172,12 +175,12 @@ test("a scoped re-index whose album fetch fails leaves the artist untouched", as
     artistIds: [1, 2],
   });
   assert.equal(partial.skipped, undefined);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 0 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 0 });
 });
 
 test("a scoped re-index keeps an artist's files when Lidarr returns fewer than it reports", async () => {
   await indexLidarrLibrary({ client: buildClient(), syncSearch: false, artistIds: [2] });
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
 
   // Lidarr says artist one has one file but the track list came back empty.
   const truncated = await indexLidarrLibrary({
@@ -187,8 +190,8 @@ test("a scoped re-index keeps an artist's files when Lidarr returns fewer than i
   });
   assert.equal(truncated.filesIndexed, 0);
   assert.equal(truncated.filesFailed, 0);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
-  assert.equal(fingerprintOf("Scoped One"), null);
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  assert.equal(await fingerprintOf("Scoped One"), null);
 
   // The album really is gone: Lidarr reports zero files and no albums.
   const deleted = await indexLidarrLibrary({
@@ -197,8 +200,8 @@ test("a scoped re-index keeps an artist's files when Lidarr returns fewer than i
     artistIds: [1],
   });
   assert.equal(deleted.filesIndexed, 0);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
-  assert.ok(fingerprintOf("Scoped One"));
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 0, "Scoped Two": 1 });
+  assert.ok(await fingerprintOf("Scoped One"));
 });
 
 test("a scoped configured scan skips the Aurral root", async () => {
@@ -209,15 +212,20 @@ test("a scoped configured scan skips the Aurral root", async () => {
   });
   assert.equal(result.local.skipped, true);
   assert.equal(result.lidarr.changed, true);
-  assert.deepEqual(mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
+  assert.deepEqual(await mediaAvailability(), { "Scoped One": 1, "Scoped Two": 1 });
   assert.equal(
-    db.prepare("SELECT COUNT(*) AS count FROM library_scan_runs WHERE source = 'aurral'").get().count,
+    Number(
+      (await db.get("SELECT COUNT(*) AS count FROM library_scan_runs WHERE source = 'aurral'"))
+        .count,
+    ),
     0,
   );
 });
 
 test("a Lidarr phase failure fails the scan and records a failed run", async () => {
-  const before = db.prepare("SELECT COUNT(*) AS count FROM library_scan_runs").get().count;
+  const before = Number(
+    (await db.get("SELECT COUNT(*) AS count FROM library_scan_runs")).count,
+  );
   const client = buildClient();
   client.getAllAlbums = async () => {
     throw new Error("Lidarr API request failed - no response: This operation was aborted");
@@ -226,16 +234,20 @@ test("a Lidarr phase failure fails the scan and records a failed run", async () 
     scanConfiguredLibrary({ musicRoot: root, lidarrClient: client, includeLidarr: true }),
     /Lidarr library scan failed: .*aborted/,
   );
-  const run = db.prepare(
+  const run = await db.get(
     "SELECT source, root_path, status, error FROM library_scan_runs ORDER BY id DESC LIMIT 1",
-  ).get();
+  );
   assert.equal(run.source, "lidarr");
   assert.equal(run.root_path, "full");
   assert.equal(run.status, "failed");
   assert.match(run.error, /aborted/);
   // The local phase still ran and recorded its own run.
-  const runs = db.prepare(
+  const after = Number(
+    (await db.get("SELECT COUNT(*) AS count FROM library_scan_runs")).count,
+  );
+  const runs = await db.all(
     "SELECT source, status FROM library_scan_runs WHERE id > (SELECT MAX(id) FROM library_scan_runs) - ? ORDER BY id",
-  ).all(db.prepare("SELECT COUNT(*) AS count FROM library_scan_runs").get().count - before);
+    [after - before],
+  );
   assert.deepEqual(runs.map((entry) => `${entry.source}:${entry.status}`), ["aurral:complete", "lidarr:failed"]);
 });

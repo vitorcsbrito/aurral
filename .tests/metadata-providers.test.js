@@ -27,7 +27,7 @@ test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("default settings and unset backend config use BrainzMash metadata", () => {
+test("default settings and unset backend config use BrainzMash metadata", async () => {
   assert.equal(
     defaultData.settings.integrations.metadata.provider,
     "brainzmash",
@@ -38,7 +38,7 @@ test("default settings and unset backend config use BrainzMash metadata", () => 
   );
   assert.equal(getMusicbrainzApiBaseUrl(), DEFAULT_METADATA_BASE_URL);
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...(dbOps.getSettings().integrations || {}),
@@ -54,8 +54,8 @@ test("default settings and unset backend config use BrainzMash metadata", () => 
   assert.equal(getMusicbrainzApiBaseUrl(), DEFAULT_METADATA_BASE_URL);
 });
 
-test("custom BrainzMash base URL is respected end to end", () => {
-  dbOps.updateSettings({
+test("custom BrainzMash base URL is respected end to end", async () => {
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       ...(dbOps.getSettings().integrations || {}),
@@ -90,7 +90,7 @@ test("BrainzMash rejects the saturation boundary before its deadline", async () 
   let timeout = null;
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -120,7 +120,7 @@ test("BrainzMash rejects the saturation boundary before its deadline", async () 
     controller.abort();
     await Promise.allSettled(requests);
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });

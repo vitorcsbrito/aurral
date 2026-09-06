@@ -12,18 +12,17 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, { flowPlaylistConfig }, { WeeklyFlowPlaylistManager }] =
+const [isolatedState, { dbOps }, { flowPlaylistConfig }, { WeeklyFlowPlaylistManager }] =
   await setupIsolatedBackend(
     "playlist-artwork",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
     "backend/services/weeklyFlow/weeklyFlowPlaylistManager.js",
   );
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+test.beforeEach(async () => {
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     playlistArtwork: { style: "aurral" },
     onboardingComplete: true,
@@ -65,13 +64,13 @@ function makeManager() {
 }
 
 test("writes WebP artwork for flows and playlists without M3U files", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Late Night",
     enabled: false,
   });
-  flowPlaylistConfig.setEnabled(flow.id, true);
+  await flowPlaylistConfig.setEnabled(flow.id, true);
 
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Road Trip",
     tracks: [{ artistName: "A", trackName: "One" }],
   });
@@ -79,11 +78,11 @@ test("writes WebP artwork for flows and playlists without M3U files", async () =
   const manager = makeManager();
   await manager.ensurePlaylists();
 
-  const flowName = manager.getPlaylistName(flow.id);
+  const flowName = await manager.getPlaylistName(flow.id);
   const flowBase = manager._sanitize(flowName);
   const flowWebp = path.join(manager.libraryRoot, `${flowBase}.webp`);
 
-  const playlistName = manager.getPlaylistName(playlist.id);
+  const playlistName = await manager.getPlaylistName(playlist.id);
   const playlistBase = manager._sanitize(playlistName);
   const playlistWebp = path.join(manager.libraryRoot, `${playlistBase}.webp`);
 
@@ -104,7 +103,7 @@ test("writes WebP artwork for flows and playlists without M3U files", async () =
 });
 
 test("serves temporary artwork and replaces it when the photo source recovers", async (t) => {
-  dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
+  await dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
   const source = await sharp({
     create: {
       width: 32,
@@ -120,7 +119,7 @@ test("serves temporary artwork and replaces it when the photo source recovers", 
     if (!sourceAvailable) throw new Error("Request failed with status code 503");
     return { data: source };
   });
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Offline Photos",
     tracks: [{ artistName: "A", trackName: "One" }],
   });
@@ -137,7 +136,7 @@ test("serves temporary artwork and replaces it when the photo source recovers", 
 });
 
 test("replaces the old generated JPEG fallback with photo artwork", async (t) => {
-  dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
+  await dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
   const source = await sharp({
     create: {
       width: 32,
@@ -149,13 +148,13 @@ test("replaces the old generated JPEG fallback with photo artwork", async (t) =>
     .jpeg()
     .toBuffer();
   t.mock.method(axios, "get", async () => ({ data: source }));
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Legacy Fallback",
     tracks: [{ artistName: "A", trackName: "One" }],
   });
   const manager = makeManager();
   await fs.mkdir(manager.libraryRoot, { recursive: true });
-  const baseName = manager._sanitize(manager.getPlaylistName(playlist.id));
+  const baseName = manager._sanitize(await manager.getPlaylistName(playlist.id));
   const artworkPath = path.join(manager.libraryRoot, `${baseName}.jpg`);
   const fallback = await buildPlaylistArtworkWebpBuffer({
     playlistName: playlist.name,
@@ -174,7 +173,7 @@ test("replaces the old generated JPEG fallback with photo artwork", async (t) =>
 });
 
 test("does not replace uploaded artwork in photo mode", async (t) => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Custom Cover",
     tracks: [{ artistName: "A", trackName: "One" }],
   });
@@ -192,7 +191,7 @@ test("does not replace uploaded artwork in photo mode", async (t) => {
   await manager.saveArtworkUpload(playlist.id, uploaded);
   const artworkPath = (await manager.resolveArtworkFile(playlist.id)).safePath;
   const before = await fs.readFile(artworkPath);
-  dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
+  await dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
   let photoRequests = 0;
   t.mock.method(axios, "get", async () => {
     photoRequests += 1;
@@ -206,24 +205,24 @@ test("does not replace uploaded artwork in photo mode", async (t) => {
 });
 
 test("removes old sidecar artwork when a flow is renamed", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Old Name",
     enabled: false,
   });
-  flowPlaylistConfig.setEnabled(flow.id, true);
+  await flowPlaylistConfig.setEnabled(flow.id, true);
 
   const manager = makeManager();
   await manager.ensurePlaylists();
 
-  const oldName = manager.getPlaylistName(flow.id);
+  const oldName = await manager.getPlaylistName(flow.id);
   const oldBase = manager._sanitize(oldName);
   const oldWebp = path.join(manager.libraryRoot, `${oldBase}.webp`);
   await assert.doesNotReject(() => fs.access(oldWebp));
 
-  flowPlaylistConfig.updateFlow(flow.id, { name: "New Name" });
+  await flowPlaylistConfig.updateFlow(flow.id, { name: "New Name" });
   await manager.ensurePlaylists();
 
-  const newName = manager.getPlaylistName(flow.id);
+  const newName = await manager.getPlaylistName(flow.id);
   const newBase = manager._sanitize(newName);
   const newWebp = path.join(manager.libraryRoot, `${newBase}.webp`);
   await assert.doesNotReject(() => fs.access(newWebp));
@@ -232,7 +231,7 @@ test("removes old sidecar artwork when a flow is renamed", async () => {
 });
 
 test("writes sidecar artwork for draft flows without playlists", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Draft Flow",
     enabled: false,
   });
@@ -240,7 +239,7 @@ test("writes sidecar artwork for draft flows without playlists", async () => {
   const manager = makeManager();
   await manager.ensurePlaylists();
 
-  const playlistName = manager.getPlaylistName(flow.id);
+  const playlistName = await manager.getPlaylistName(flow.id);
   const base = manager._sanitize(playlistName);
   const m3u = path.join(manager.libraryRoot, `${base}.m3u`);
   const webp = path.join(manager.libraryRoot, `${base}.webp`);
@@ -250,40 +249,40 @@ test("writes sidecar artwork for draft flows without playlists", async () => {
 });
 
 test("keeps artwork when an enabled flow is disabled", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Toggle",
     enabled: false,
   });
-  flowPlaylistConfig.setEnabled(flow.id, true);
+  await flowPlaylistConfig.setEnabled(flow.id, true);
 
   const manager = makeManager();
   await manager.ensurePlaylists();
 
-  const base = manager._sanitize(manager.getPlaylistName(flow.id));
+  const base = manager._sanitize(await manager.getPlaylistName(flow.id));
   const m3u = path.join(manager.libraryRoot, `${base}.m3u`);
   const webp = path.join(manager.libraryRoot, `${base}.webp`);
   await assert.rejects(() => fs.access(m3u));
   await assert.doesNotReject(() => fs.access(webp));
 
-  flowPlaylistConfig.setEnabled(flow.id, false);
+  await flowPlaylistConfig.setEnabled(flow.id, false);
   await manager.ensurePlaylists();
   await assert.rejects(() => fs.access(m3u));
   await assert.doesNotReject(() => fs.access(webp));
 });
 
 test("does not regenerate artwork after explicit remove until generate", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "No Regen",
     enabled: false,
   });
-  flowPlaylistConfig.setEnabled(flow.id, true);
+  await flowPlaylistConfig.setEnabled(flow.id, true);
 
   const manager = makeManager();
   await manager.ensurePlaylists();
 
   const flowWebp = path.join(
     manager.libraryRoot,
-    `${manager._sanitize(manager.getPlaylistName(flow.id))}.webp`,
+    `${manager._sanitize(await manager.getPlaylistName(flow.id))}.webp`,
   );
   await assert.doesNotReject(() => fs.access(flowWebp));
 
@@ -298,11 +297,11 @@ test("does not regenerate artwork after explicit remove until generate", async (
 });
 
 test("generates fallback artwork when the photo source is down", async (t) => {
-  dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
+  await dbOps.updateSettings({ playlistArtwork: { style: "photo" } });
   t.mock.method(axios, "get", async () => {
     throw new Error("Request failed with status code 503");
   });
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Offline Generate" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Offline Generate" });
   const manager = makeManager();
 
   const outputPath = await manager.generateArtwork(playlist.id);
@@ -312,7 +311,7 @@ test("generates fallback artwork when the photo source is down", async (t) => {
 });
 
 test("syncs artwork changes to the existing Navidrome playlist", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Artwork API" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Artwork API" });
   const manager = makeManager();
   await manager.ensurePlaylists();
   manager.__artworkUploads.length = 0;

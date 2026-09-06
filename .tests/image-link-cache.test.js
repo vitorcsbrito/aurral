@@ -137,14 +137,14 @@ test("empty cached cover responses are not immutable", () => {
 });
 
 test("cached artist image links survive byte-cache eviction without metadata requests", async () => {
-  dbOps.setImage(mbid, staleLocalUrl, imageLinks);
+  await dbOps.setImage(mbid, staleLocalUrl, imageLinks);
 
   const result = await getArtistImage(mbid);
 
   assert.equal(providerRequests, 0);
   assert.equal(result.url, imageLinks[0].image);
   assert.deepEqual(result.images, imageLinks);
-  assert.deepEqual(dbOps.getImages([mbid])[mbid]?.images, imageLinks);
+  assert.deepEqual((await dbOps.getImages([mbid]))[mbid]?.images, imageLinks);
 });
 
 test("fresh artist metadata persists every image link", async () => {
@@ -166,29 +166,32 @@ test("fresh artist metadata persists every image link", async () => {
       },
     ],
   );
-  assert.deepEqual(dbOps.getImage(coldMbid)?.images, result.images);
+  assert.deepEqual((await dbOps.getImage(coldMbid))?.images, result.images);
 });
 
 test("missing artist image bytes trigger link replacement", async () => {
-  dbOps.setImage(missingArtistBytesMbid, staleLocalUrl);
+  await dbOps.setImage(missingArtistBytesMbid, staleLocalUrl);
   const requestsBefore = providerRequests;
 
   const result = await getArtistImage(missingArtistBytesMbid);
 
   assert.equal(providerRequests, requestsBefore + 1);
   assert.equal(result.url, "https://images.example/cold-artist.jpg");
-  assert.equal(dbOps.getImage(missingArtistBytesMbid)?.imageUrl, result.url);
+  assert.equal((await dbOps.getImage(missingArtistBytesMbid))?.imageUrl, result.url);
 });
 
 test("missing release-group image bytes trigger link replacement", async () => {
-  dbOps.setImage(`rg:${missingReleaseBytesMbid}`, staleLocalUrl);
+  await dbOps.setImage(`rg:${missingReleaseBytesMbid}`, staleLocalUrl);
   const requestsBefore = providerRequests;
 
   const result = await fetchReleaseGroupCoverUrl(missingReleaseBytesMbid);
 
   assert.equal(providerRequests, requestsBefore + 1);
   assert.equal(result.imageUrl, resolvedCoverUrls.get(missingReleaseBytesMbid));
-  assert.equal(dbOps.getImage(`rg:${missingReleaseBytesMbid}`)?.imageUrl, result.imageUrl);
+  assert.equal(
+    (await dbOps.getImage(`rg:${missingReleaseBytesMbid}`))?.imageUrl,
+    result.imageUrl,
+  );
 });
 
 test("missing provider artwork does not synthesize an unverified cover URL", async () => {
@@ -199,18 +202,18 @@ test("missing provider artwork does not synthesize an unverified cover URL", asy
   assert.equal(providerRequests, requestsBefore + 1);
   assert.equal(result.imageUrl, null);
   assert.equal(result.notFound, true);
-  assert.equal(dbOps.getImage(`rg:${unresolvedReleaseMbid}`)?.imageUrl, "NOT_FOUND");
+  assert.equal((await dbOps.getImage(`rg:${unresolvedReleaseMbid}`))?.imageUrl, "NOT_FOUND");
 });
 
 test("release-group refresh replaces a stale cached link", async () => {
-  dbOps.setImage(`rg:${coldMbid}`, "https://images.example/dead-cover.jpg");
+  await dbOps.setImage(`rg:${coldMbid}`, "https://images.example/dead-cover.jpg");
   const requestsBefore = providerRequests;
 
   const result = await fetchReleaseGroupCoverUrl(coldMbid, { bypassCache: true });
 
   assert.equal(providerRequests, requestsBefore + 1);
   assert.equal(result.imageUrl, "https://images.example/cold-artist.jpg");
-  assert.equal(dbOps.getImage(`rg:${coldMbid}`)?.imageUrl, result.imageUrl);
+  assert.equal((await dbOps.getImage(`rg:${coldMbid}`))?.imageUrl, result.imageUrl);
 });
 
 test("release-group fallback links are not stored under the requested MBID", async () => {
@@ -221,7 +224,7 @@ test("release-group fallback links are not stored under the requested MBID", asy
   });
 
   assert.equal(result.imageUrl, "https://images.example/fallback.jpg");
-  assert.equal(dbOps.getImage(`rg:${fallbackRequestedMbid}`), null);
+  assert.equal(await dbOps.getImage(`rg:${fallbackRequestedMbid}`), null);
 });
 
 test("release-group refreshes coalesce per MBID", async () => {

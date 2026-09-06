@@ -4,6 +4,7 @@ import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
 import http from "http";
+import net from "net";
 import { db } from "../../backend/config/database.js";
 import { migrateDatabase } from "../../backend/db/pg/schema.js";
 
@@ -107,7 +108,16 @@ export async function reloadMirrors() {
 
 export async function resetDatabase() {
   await ensureTestDatabase();
-  await db.exec(`TRUNCATE ${RESET_TABLES.join(", ")} CASCADE`);
+  // TRUNCATE needs ACCESS EXCLUSIVE; background pollers deadlock it (40P01).
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await db.exec(`TRUNCATE ${RESET_TABLES.join(", ")} CASCADE`);
+      break;
+    } catch (error) {
+      if (error?.code !== "40P01" || attempt >= 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
   await reloadMirrors();
 }
 
@@ -168,14 +178,24 @@ async function waitForServer(port, child) {
   throw new Error(`Timed out waiting for server on port ${port}: ${lastError}`);
 }
 
+// Asks the OS for a free port; concurrent test processes stop colliding.
+async function findFreePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
 export async function startServerProcess({
   port,
   extraEnv = {},
 } = {}) {
   const chosenPort =
-    Number.isInteger(port) && port > 0
-      ? port
-      : 4100 + Math.floor(Math.random() * 1000);
+    Number.isInteger(port) && port > 0 ? port : await findFreePort();
   const child = spawn("node", ["backend/server.js"], {
     cwd: repoRoot,
     env: {

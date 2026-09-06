@@ -7,17 +7,16 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, playlistConfigModule] = await setupIsolatedBackend(
+const [isolatedState, { dbOps }, playlistConfigModule] = await setupIsolatedBackend(
   "playlist-description-fallback",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
 );
 const { flowPlaylistConfig } = playlistConfigModule;
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+test.beforeEach(async () => {
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -29,8 +28,8 @@ test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("an explicit flow description is kept as-is, not overridden by the preset catalog", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("an explicit flow description is kept as-is, not overridden by the preset catalog", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Custom Name",
     size: 20,
     discoverPresetId: "discover-weekly",
@@ -39,8 +38,8 @@ test("an explicit flow description is kept as-is, not overridden by the preset c
   assert.equal(flow.description, "My own custom description");
 });
 
-test("a flow adopted from a preset with no description of its own falls back to the current catalog description", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("a flow adopted from a preset with no description of its own falls back to the current catalog description", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Listening History",
     size: 20,
     discoverPresetId: "focus-listening-history",
@@ -48,8 +47,8 @@ test("a flow adopted from a preset with no description of its own falls back to 
   assert.equal(flow.description, "Tracks based on what you've recently been listening to");
 });
 
-test("the fallback re-reads on every fetch, so a later catalog fix reaches an already-adopted flow without a re-adopt", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("the fallback re-reads on every fetch, so a later catalog fix reaches an already-adopted flow without a re-adopt", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Discover Weekly Clone",
     size: 20,
     discoverPresetId: "discover-weekly",
@@ -59,13 +58,13 @@ test("the fallback re-reads on every fetch, so a later catalog fix reaches an al
   assert.equal(refetched.description, "Fresh picks from your recommendation profile");
 });
 
-test("a flow with no discoverPresetId and no description has a null description, not an error", () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Manual Flow", size: 20 });
+test("a flow with no discoverPresetId and no description has a null description, not an error", async () => {
+  const flow = await flowPlaylistConfig.createFlow({ name: "Manual Flow", size: 20 });
   assert.equal(flow.description, null);
 });
 
-test("a flow whose discoverPresetId doesn't match any known preset falls back to null rather than throwing", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("a flow whose discoverPresetId doesn't match any known preset falls back to null rather than throwing", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Orphaned Preset Flow",
     size: 20,
     discoverPresetId: "no-such-preset-id",
@@ -73,8 +72,8 @@ test("a flow whose discoverPresetId doesn't match any known preset falls back to
   assert.equal(flow.description, null);
 });
 
-test("editorial preset descriptions are found too (a separate catalog from personal presets)", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("editorial preset descriptions are found too (a separate catalog from personal presets)", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Metal Mayhem",
     size: 20,
     discoverPresetId: "top-metal",
@@ -83,8 +82,8 @@ test("editorial preset descriptions are found too (a separate catalog from perso
   assert.equal(flow.description, "Heavy riffs and thunderous drums");
 });
 
-test("shared playlists get the same fallback treatment as flows", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("shared playlists get the same fallback treatment as flows", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Heavy Rotation",
     sourceName: "Heavy Rotation",
     discoverPresetId: "top-metal",
@@ -93,8 +92,8 @@ test("shared playlists get the same fallback treatment as flows", () => {
   assert.equal(playlist.description, "Heavy riffs and thunderous drums");
 });
 
-test("an explicit shared playlist description is kept as-is", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("an explicit shared playlist description is kept as-is", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "My Import",
     sourceName: "My Import",
     description: "Imported from Spotify",

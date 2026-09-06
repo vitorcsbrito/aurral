@@ -19,7 +19,15 @@ const {
   stopLibraryScanWorker,
 } = await import("../../backend/services/libraryScanWorker.js");
 const { dbOps } = await import("../../backend/db/helpers/index.js");
-const { db } = await import("../../backend/config/db-sqlite.js");
+const { db } = await import("../../backend/config/database.js");
+const { ensureTestDatabase, reloadMirrors } = await import(
+  "../helpers/backendTestHarness.js"
+);
+
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
 const { beginLibraryScan, finishLibraryScan } = await import(
   "../../backend/services/libraryMediaStore.js"
 );
@@ -41,31 +49,31 @@ test("library scans are not scheduled as a recurring background task", () => {
 
 test("library bootstrap runs only until the first completed scan", async () => {
   const queue = getLibraryScanQueue();
-  db.prepare("DELETE FROM library_scan_runs").run();
-  clearScheduledLibraryScan();
+  await db.run("DELETE FROM library_scan_runs");
+  await clearScheduledLibraryScan();
   let bootstrapJobId;
   try {
     await processSystemTask({ kind: "library-index-bootstrap" });
     bootstrapJobId = getScheduledLibraryScanJobId();
     assert.ok(bootstrapJobId);
     queue.cancel(bootstrapJobId);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
 
-    const scanId = beginLibraryScan({ source: "test" });
-    finishLibraryScan(scanId);
+    const scanId = await beginLibraryScan({ source: "test" });
+    await finishLibraryScan(scanId);
     await processSystemTask({ kind: "library-index-bootstrap" });
     assert.equal(getScheduledLibraryScanJobId(), null);
   } finally {
     if (bootstrapJobId) queue.cancel(bootstrapJobId);
-    clearScheduledLibraryScan();
-    db.prepare("DELETE FROM library_scan_runs WHERE source = 'test'").run();
+    await clearScheduledLibraryScan();
+    await db.run("DELETE FROM library_scan_runs WHERE source = 'test'");
   }
 });
 
 test("library refresh queues a forced scan and exposes its queue status", async () => {
   const existingJobId = Number(dbOps.getJSONSetting("pendingLibraryScanJob")?.jobId);
   if (Number.isSafeInteger(existingJobId)) getLibraryScanQueue().cancel(existingJobId);
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
 
   const routes = new Map();
   registerCanonical({
@@ -117,103 +125,105 @@ test("library refresh queues a forced scan and exposes its queue status", async 
     body.jobId = jobId;
   } finally {
     if (refreshJobId || body?.jobId) getLibraryScanQueue().cancel(refreshJobId || body.jobId);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
     await new Promise((resolve) => setImmediate(resolve));
     await stopLibraryScanWorker();
   }
 });
 
-test("library scan scheduling keeps one pending job and recovers stale registry entries", () => {
+test("library scan scheduling keeps one pending job and recovers stale registry entries", async () => {
   const queue = getLibraryScanQueue();
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
   let firstJob;
   let secondJob;
   let thirdJob;
   try {
-    firstJob = scheduleLibraryScan();
-    assert.equal(scheduleLibraryScan(), firstJob, "requests merge into a queued job");
+    firstJob = await scheduleLibraryScan();
+    assert.equal(await scheduleLibraryScan(), firstJob, "requests merge into a queued job");
     const claimed = queue.claimOne("library-scan-test");
     assert.equal(claimed?.id, firstJob);
-    assert.equal(claimScheduledLibraryScanJob(firstJob), true);
+    assert.equal(await claimScheduledLibraryScanJob(firstJob), true);
 
     // The running job already read its options, so a new request cannot merge
     // into it: it gets a fresh queued job that later requests merge into.
-    secondJob = scheduleLibraryScan({ artistIds: [7] });
+    secondJob = await scheduleLibraryScan({ artistIds: [7] });
     assert.notEqual(secondJob, firstJob);
     assert.equal(getScheduledLibraryScanJobId(), secondJob);
-    assert.equal(scheduleLibraryScan({ artistIds: [8] }), secondJob);
+    assert.equal(await scheduleLibraryScan({ artistIds: [8] }), secondJob);
     assert.deepEqual(
-      JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'pendingLibraryScanJob'").get().value).artistIds,
+      JSON.parse(
+        (await db.get("SELECT value FROM settings WHERE key = 'pendingLibraryScanJob'")).value,
+      ).artistIds,
       [7, 8],
     );
-    onLibraryScanSuccess(null, { id: firstJob });
+    await onLibraryScanSuccess(null, { id: firstJob });
     assert.equal(getScheduledLibraryScanJobId(), secondJob, "finishing the old job keeps the new registry");
 
     queue.cancel(firstJob);
     queue.cancel(secondJob);
-    thirdJob = scheduleLibraryScan();
+    thirdJob = await scheduleLibraryScan();
     assert.notEqual(thirdJob, secondJob);
     assert.equal(getScheduledLibraryScanJobId(), thirdJob);
   } finally {
     if (firstJob) queue.cancel(firstJob);
     if (secondJob) queue.cancel(secondJob);
     if (thirdJob) queue.cancel(thirdJob);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
   }
 });
 
-test("a full refresh upgrades a pending local-only scan", () => {
+test("a full refresh upgrades a pending local-only scan", async () => {
   const queue = getLibraryScanQueue();
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
   let jobId;
   try {
-    jobId = scheduleLibraryScan({ includeLidarr: false });
+    jobId = await scheduleLibraryScan({ includeLidarr: false });
     assert.deepEqual(JSON.parse(queue.getJob(jobId).payload), {
       force: false,
       includeLidarr: false,
     });
-    assert.equal(scheduleLibraryScan({ includeLidarr: true }), jobId);
+    assert.equal(await scheduleLibraryScan({ includeLidarr: true }), jobId);
     assert.equal(dbOps.getJSONSetting("pendingLibraryScanJob").includeLidarr, true);
   } finally {
     if (jobId) queue.cancel(jobId);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
   }
 });
 
-test("claiming an unregistered scan does not inherit stale Lidarr mode", () => {
+test("claiming an unregistered scan does not inherit stale Lidarr mode", async () => {
   const queue = getLibraryScanQueue();
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
   let jobId;
   try {
-    jobId = scheduleLibraryScan({ includeLidarr: false });
-    dbOps.setJSONSetting("pendingLibraryScanJob", { includeLidarr: true });
-    assert.equal(claimScheduledLibraryScanJob(jobId), true);
+    jobId = await scheduleLibraryScan({ includeLidarr: false });
+    await dbOps.setJSONSetting("pendingLibraryScanJob", { includeLidarr: true });
+    assert.equal(await claimScheduledLibraryScanJob(jobId), true);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId,
       includeLidarr: false,
     });
   } finally {
     if (jobId) queue.cancel(jobId);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
   }
 });
 
-test("terminal library scan outcomes clear the persistent registry", () => {
+test("terminal library scan outcomes clear the persistent registry", async () => {
   const queue = getLibraryScanQueue();
   let successJob;
   let failedJob;
   try {
-    successJob = scheduleLibraryScan();
-    onLibraryScanSuccess(null, { id: successJob });
+    successJob = await scheduleLibraryScan();
+    await onLibraryScanSuccess(null, { id: successJob });
     assert.equal(getScheduledLibraryScanJobId(), null);
 
-    failedJob = scheduleLibraryScan();
-    onLibraryScanFinalFailure({ id: failedJob });
+    failedJob = await scheduleLibraryScan();
+    await onLibraryScanFinalFailure({ id: failedJob });
     assert.equal(getScheduledLibraryScanJobId(), null);
   } finally {
     if (successJob) queue.cancel(successJob);
     if (failedJob) queue.cancel(failedJob);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
   }
 });
 
@@ -307,19 +317,19 @@ test("library file watcher never ignores an existing directory named with a peri
   }
 });
 
-test("artist-scoped scans merge into one job and upgrade to a full scan", () => {
+test("artist-scoped scans merge into one job and upgrade to a full scan", async () => {
   const queue = getLibraryScanQueue();
-  clearScheduledLibraryScan();
+  await clearScheduledLibraryScan();
   let jobId;
   let secondJob;
   try {
-    jobId = scheduleLibraryScan({ artistIds: [11] });
+    jobId = await scheduleLibraryScan({ artistIds: [11] });
     assert.deepEqual(JSON.parse(queue.getJob(jobId).payload), {
       force: false,
       includeLidarr: true,
       artistIds: [11],
     });
-    assert.equal(scheduleLibraryScan({ artistIds: [12, 11] }), jobId);
+    assert.equal(await scheduleLibraryScan({ artistIds: [12, 11] }), jobId);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId,
       includeLidarr: true,
@@ -328,7 +338,7 @@ test("artist-scoped scans merge into one job and upgrade to a full scan", () => 
 
     // A local-only request adds the Aurral root to the scoped job instead of
     // upgrading it to a full Lidarr pull.
-    assert.equal(scheduleLibraryScan({ includeLidarr: false }), jobId);
+    assert.equal(await scheduleLibraryScan({ includeLidarr: false }), jobId);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId,
       includeLidarr: true,
@@ -336,20 +346,20 @@ test("artist-scoped scans merge into one job and upgrade to a full scan", () => 
       includeLocal: true,
     });
     // A full request upgrades it, and scoped requests then ride along.
-    assert.equal(scheduleLibraryScan({ includeLidarr: true }), jobId);
+    assert.equal(await scheduleLibraryScan({ includeLidarr: true }), jobId);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId,
       includeLidarr: true,
     });
-    assert.equal(scheduleLibraryScan({ artistIds: [13] }), jobId);
+    assert.equal(await scheduleLibraryScan({ artistIds: [13] }), jobId);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId,
       includeLidarr: true,
     });
 
     queue.cancel(jobId);
-    secondJob = scheduleLibraryScan({ includeLidarr: false });
-    assert.equal(scheduleLibraryScan({ artistIds: [14] }), secondJob);
+    secondJob = await scheduleLibraryScan({ includeLidarr: false });
+    assert.equal(await scheduleLibraryScan({ artistIds: [14] }), secondJob);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId: secondJob,
       includeLidarr: true,
@@ -360,7 +370,7 @@ test("artist-scoped scans merge into one job and upgrade to a full scan", () => 
       force: false,
       includeLidarr: false,
     });
-    assert.equal(claimScheduledLibraryScanJob(secondJob), true);
+    assert.equal(await claimScheduledLibraryScanJob(secondJob), true);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob"), {
       jobId: secondJob,
       includeLidarr: true,
@@ -370,25 +380,25 @@ test("artist-scoped scans merge into one job and upgrade to a full scan", () => 
   } finally {
     if (jobId) queue.cancel(jobId);
     if (secondJob) queue.cancel(secondJob);
-    clearScheduledLibraryScan();
+    await clearScheduledLibraryScan();
   }
 });
 
 test("artist-scoped scans do not count as a completed library scan", async () => {
   const queue = getLibraryScanQueue();
-  db.prepare("DELETE FROM library_scan_runs").run();
-  clearScheduledLibraryScan();
+  await db.run("DELETE FROM library_scan_runs");
+  await clearScheduledLibraryScan();
   let bootstrapJobId;
   try {
-    const scanId = beginLibraryScan({ source: "lidarr-artist", rootPath: "artist:1" });
-    finishLibraryScan(scanId);
+    const scanId = await beginLibraryScan({ source: "lidarr-artist", rootPath: "artist:1" });
+    await finishLibraryScan(scanId);
     await processSystemTask({ kind: "library-index-bootstrap" });
     bootstrapJobId = getScheduledLibraryScanJobId();
     assert.ok(bootstrapJobId);
   } finally {
     if (bootstrapJobId) queue.cancel(bootstrapJobId);
-    clearScheduledLibraryScan();
-    db.prepare("DELETE FROM library_scan_runs WHERE source = 'lidarr-artist'").run();
+    await clearScheduledLibraryScan();
+    await db.run("DELETE FROM library_scan_runs WHERE source = 'lidarr-artist'");
   }
 });
 

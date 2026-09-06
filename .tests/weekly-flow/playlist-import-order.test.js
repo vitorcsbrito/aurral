@@ -11,7 +11,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   trackerModule,
   playlistConfigModule,
@@ -25,7 +24,6 @@ const [
   lastfmStationsModule,
 ] = await setupIsolatedBackend(
   "playlist-import-order",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
@@ -72,9 +70,11 @@ async function writeReusableTrack(track, playlistType = "source-playlist") {
   return { jobId, sourcePath };
 }
 
+await downloadTracker.init();
+
 test.beforeEach(async () => {
-  await resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -156,7 +156,7 @@ test("mixed reuse seeding keeps import job order", async () => {
     await writeReusableTrack(reusableA);
     await writeReusableTrack(reusableC);
 
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Import Order",
       tracks: [],
     });
@@ -198,20 +198,20 @@ test("flow refresh clears playback before downloads finish", async () => {
   const originalScheduleNextRun = flowPlaylistConfig.scheduleNextRun;
   const events = [];
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...dbOps.getSettings(),
       integrations: {
         lastfm: { apiKey: "test" },
         slskd: { enabled: true, url: "http://slskd", apiKey: "test" },
       },
     });
-    const flow = flowPlaylistConfig.createFlow({
+    const flow = await flowPlaylistConfig.createFlow({
       name: "Refresh Before Download",
       mix: { discover: 100, mix: 0, trending: 0, focus: 0 },
       size: 1,
       scheduleDays: [1],
     });
-    flowPlaylistConfig.setEnabled(flow.id, true);
+    await flowPlaylistConfig.setEnabled(flow.id, true);
     playlistSource.buildFlowRunPlan = async () => ({
       primaryTracks: [],
       reserveTracks: [],
@@ -255,7 +255,7 @@ test("deleting a track keeps remaining import order in config", async () => {
     await writeReusableTrack(tracks[0]);
     await writeReusableTrack(tracks[2]);
 
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Delete Order",
       tracks: [],
     });
@@ -306,7 +306,7 @@ test("replacing a shared playlist removes Spotify tracks and honors file retenti
       trackName: "Removed",
       albumName: "Album",
     };
-    const keepPlaylist = flowPlaylistConfig.createSharedPlaylist({
+    const keepPlaylist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Keep Removed",
       tracks: [track],
       importSource: {
@@ -332,7 +332,7 @@ test("replacing a shared playlist removes Spotify tracks and honors file retenti
     assert.deepEqual(flowPlaylistConfig.getSharedPlaylist(keepPlaylist.id).tracks, []);
     await fs.access(keepPath);
 
-    const deletePlaylist = flowPlaylistConfig.createSharedPlaylist({
+    const deletePlaylist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Delete Removed",
       tracks: [track],
       importSource: {
@@ -370,7 +370,7 @@ test("ListenBrainz sync uses the shared import update path", async () => {
     listenbrainzPlaylistClient.getGeneratedPlaylistTracks;
   weeklyFlowWorker.start = async () => false;
   try {
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "ListenBrainz Mix",
       ownerUserId: 7,
       tracks: [{ artistName: "Old Artist", trackName: "Old Song" }],
@@ -418,7 +418,7 @@ test("Last.fm station sync refreshes the saved station and username", async () =
   const originalGetStationTracks = lastfmStationClient.getStationTracks;
   weeklyFlowWorker.start = async () => false;
   try {
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Last.fm Mix",
       ownerUserId: 7,
       tracks: [{ artistName: "Old Artist", trackName: "Old Song" }],
@@ -478,7 +478,7 @@ test("Spotify sync keeps a retention change made while Spotify is pending", asyn
       trackName: "Removed",
       albumName: "Album",
     };
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Pending Retention",
       ownerUserId: 7,
       tracks: [track],
@@ -507,7 +507,7 @@ test("Spotify sync keeps a retention change made while Spotify is pending", asyn
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
+    await flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
       importSource: {
         ...playlist.importSource,
         keepRemovedTracks: false,
@@ -546,7 +546,7 @@ test("Spotify cleanup serializes retention updates with file removal", async () 
       trackName: "Cleanup",
       albumName: "Album",
     };
-    const playlist = flowPlaylistConfig.createSharedPlaylist({
+    const playlist = await flowPlaylistConfig.createSharedPlaylist({
       name: "Serialized Retention",
       ownerUserId: 7,
       tracks: [track],

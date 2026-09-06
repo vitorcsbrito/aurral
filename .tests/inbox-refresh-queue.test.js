@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   cleanupIsolatedState,
+  reloadMirrors,
   setupIsolatedBackend,
 } from "./helpers/backendTestHarness.js";
 
@@ -17,7 +18,7 @@ const [
   axios,
 ] = await setupIsolatedBackend(
   "inbox-refresh-queue",
-  "backend/config/db-sqlite.js",
+  "backend/config/database.js",
   "backend/db/helpers/index.js",
   "backend/services/inboxService.js",
   "backend/services/honkerDb.js",
@@ -37,34 +38,35 @@ const { processSystemTask } = systemTaskWorker;
 
 let userId;
 
-function clearRefreshState() {
+async function clearRefreshState() {
   const transaction = getHonkerDb().transaction();
   transaction.execute("DELETE FROM _honker_live");
   transaction.commit();
-  db.prepare("DELETE FROM inbox_items").run();
-  db.prepare("DELETE FROM settings WHERE key LIKE 'inboxRefresh:%'").run();
+  await db.run("DELETE FROM inbox_items");
+  await db.run("DELETE FROM settings WHERE key LIKE 'inboxRefresh:%'");
+  await reloadMirrors();
 }
 
-test.before(() => {
+test.before(async () => {
   getSystemTaskQueue();
-  userId = userOps.createUser("inbox-refresh-user", "password-hash").id;
-  upsertLibraryArtist({
+  userId = (await userOps.createUser("inbox-refresh-user", "password-hash")).id;
+  await upsertLibraryArtist({
     identityKey: "artist:inbox-refresh",
     mbid: "artist-mbid",
     name: "Inbox Refresh Artist",
   });
 });
 
-test.beforeEach(() => {
-  clearRefreshState();
+test.beforeEach(async () => {
+  await clearRefreshState();
 });
 
 test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("GET inbox reads cached rows without creating refresh work", () => {
-  const result = getInboxForUser(userId);
+test("GET inbox reads cached rows without creating refresh work", async () => {
+  const result = await getInboxForUser(userId);
   const jobs = getHonkerDb().query(
     "SELECT id FROM _honker_live WHERE queue = 'system-task'",
   );
@@ -171,7 +173,7 @@ test("expired inbox leases are reported stale and recovered without overlap", as
 });
 
 test("provider failure preserves rows and marks the inbox stale", async () => {
-  const previous = dbOps.upsertInboxItem({
+  const previous = await dbOps.upsertInboxItem({
     userId,
     kind: "release",
     sourceKey: "prior:release",
@@ -211,7 +213,7 @@ test("provider failure preserves rows and marks the inbox stale", async () => {
     assert.equal(status.status, "stale");
     assert.equal(status.stale, true);
     assert.match(status.error, /shows: Ticketmaster unavailable/);
-    assert.equal(dbOps.getInboxItem(userId, previous.id)?.title, "Previously cached release");
+    assert.equal((await dbOps.getInboxItem(userId, previous.id))?.title, "Previously cached release");
   } finally {
     axios.default.get = originalAxiosGet;
     if (originalTicketmasterKey === undefined) delete process.env.TICKETMASTER_API_KEY;
@@ -220,7 +222,7 @@ test("provider failure preserves rows and marks the inbox stale", async () => {
 });
 
 test("failed refreshes are explicit and a worker retry can complete", async () => {
-  const previous = dbOps.upsertInboxItem({
+  const previous = await dbOps.upsertInboxItem({
     userId,
     kind: "release",
     sourceKey: "failed:release",
@@ -240,7 +242,7 @@ test("failed refreshes are explicit and a worker retry can complete", async () =
     assert.equal(failed.status, "failed");
     assert.equal(failed.stale, true);
     assert.match(failed.error, /Inbox provider unavailable/);
-    assert.equal(dbOps.getInboxItem(userId, previous.id)?.title, "Retained while refresh fails");
+    assert.equal((await dbOps.getInboxItem(userId, previous.id))?.title, "Retained while refresh fails");
   } finally {
     dbOps.getSettings = originalGetSettings;
   }

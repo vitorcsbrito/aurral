@@ -12,9 +12,8 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps, userOps }] = await setupIsolatedBackend(
   "navidrome-settings-api",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 
@@ -44,9 +43,9 @@ async function apiFetch(path, options = {}) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
-  userOps.createUser("admin", bcrypt.hashSync("password123", 4), "admin");
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+  await userOps.createUser("admin", bcrypt.hashSync("password123", 4), "admin");
 
   navidrome = http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -79,7 +78,9 @@ test.before(async () => {
   await new Promise((resolve) => navidrome.listen(0, "127.0.0.1", resolve));
   navidromeUrl = `http://127.0.0.1:${navidrome.address().port}`;
 
-  aurral = await startServerProcess();
+  aurral = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
   const login = await fetch(`http://127.0.0.1:${aurral.port}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

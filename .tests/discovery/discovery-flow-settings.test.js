@@ -25,11 +25,11 @@ test("discovery flow settings use defaults when unset", () => {
   assert.equal(isDiscoveryPersonalizedEnabled(), true);
 });
 
-test("discovery personalized toggle", () => {
+test("discovery personalized toggle", async () => {
   const settings = dbOps.getSettings();
   assert.equal(isDiscoveryPersonalizedEnabled(), true);
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...settings,
     integrations: {
       ...settings.integrations,

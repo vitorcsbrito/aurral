@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import {
   getCanonicalArtistProjection,
   getCanonicalLibrary,
@@ -25,18 +26,23 @@ import { scanMusicRoot } from "../../backend/services/libraryFileScanner.js";
 import { indexLidarrLibrary } from "../../backend/services/libraryLidarrIndexer.js";
 import { scanConfiguredLibrary } from "../../backend/services/libraryIndexService.js";
 
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
+
 test("scan change tracking ignores unrelated database writes", async () => {
   const settingKey = `unrelated-scan-write-${process.pid}`;
   try {
     const result = await withLibraryScan("test-unrelated-write", null, async () => {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(settingKey, "value");
+      await db.run("INSERT INTO settings (key, value) VALUES (?, ?)", [settingKey, "value"]);
       return { filesSeen: 0, filesIndexed: 0, filesFailed: 0 };
     });
 
     assert.equal(result.changed, false);
   } finally {
-    db.prepare("DELETE FROM settings WHERE key = ?").run(settingKey);
-    db.prepare("DELETE FROM library_scan_runs WHERE source = 'test-unrelated-write'").run();
+    await db.run("DELETE FROM settings WHERE key = ?", [settingKey]);
+    await db.run("DELETE FROM library_scan_runs WHERE source = 'test-unrelated-write'");
   }
 });
 
@@ -49,8 +55,9 @@ test("overlapping scans keep change tracking isolated", async () => {
   let firstChanged;
 
   try {
+    // Held open on purpose so the second scan overlaps it.
     const first = withLibraryScan("test-overlap-first", null, async () => {
-      upsertLibraryArtist({ identityKey, name: "Overlapping Scan", syncSearch: false });
+      await upsertLibraryArtist({ identityKey, name: "Overlapping Scan", syncSearch: false });
       firstChanged = true;
       await holdFirst;
       return { filesSeen: 0, filesIndexed: 0, filesFailed: 0 };
@@ -66,8 +73,8 @@ test("overlapping scans keep change tracking isolated", async () => {
     assert.equal((await first).changed, true);
   } finally {
     releaseFirst?.();
-    db.prepare("DELETE FROM library_artists WHERE identity_key = ?").run(identityKey);
-    db.prepare("DELETE FROM library_scan_runs WHERE source LIKE 'test-overlap-%'").run();
+    await db.run("DELETE FROM library_artists WHERE identity_key = ?", [identityKey]);
+    await db.run("DELETE FROM library_scan_runs WHERE source LIKE 'test-overlap-%'");
   }
 });
 
@@ -75,50 +82,52 @@ test("a failed scan-run insert does not leak scan state", async () => {
   const identityKey = `name:scan-insert-failure-${process.pid}`;
   let artist;
   try {
-    artist = upsertLibraryArtist({ identityKey, name: "Before Failure", syncSearch: false });
-    const album = upsertLibraryAlbum({
+    artist = await upsertLibraryArtist({ identityKey, name: "Before Failure", syncSearch: false });
+    const album = await upsertLibraryAlbum({
       identityKey: `${identityKey}:album`,
       artistId: artist.id,
       title: "Scan Failure Album",
       syncSearch: false,
     });
-    const track = upsertLibraryTrack({
+    const track = await upsertLibraryTrack({
       identityKey: `${identityKey}:track`,
       title: "Scan Failure Track",
       artistName: "Before Failure",
       syncSearch: false,
     });
-    linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, syncSearch: false });
-    upsertLibraryMediaFile({
+    await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, syncSearch: false });
+    await upsertLibraryMediaFile({
       trackId: track.id,
       albumId: album.id,
       source: "aurral",
       path: `/tmp/scan-insert-failure-${process.pid}.flac`,
       available: true,
     });
-    assert.equal(getCanonicalLibrary().artists.find((item) => item.id === artist.id)?.name, "Before Failure");
+    assert.equal((await getCanonicalLibrary()).artists.find((item) => item.id === artist.id)?.name, "Before Failure");
 
-    db.exec(`CREATE TEMP TRIGGER fail_library_scan_insert
-      BEFORE INSERT ON library_scan_runs BEGIN
-        SELECT RAISE(FAIL, 'scan insert failed');
-      END`);
+    await db.exec(`CREATE OR REPLACE FUNCTION fail_library_scan_insert() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'scan insert failed'; END; $$`);
+    await db.exec(`CREATE TRIGGER fail_library_scan_insert
+      BEFORE INSERT ON library_scan_runs
+      FOR EACH ROW EXECUTE FUNCTION fail_library_scan_insert()`);
     await assert.rejects(
-      () => withLibraryScan("test-insert-failure", null, async () => ({})),
+      async () => withLibraryScan("test-insert-failure", null, async () => ({})),
       /scan insert failed/,
     );
-    db.exec("DROP TRIGGER fail_library_scan_insert");
+    await db.exec("DROP TRIGGER fail_library_scan_insert ON library_scan_runs");
 
     await withLibraryScan("test-after-insert-failure", null, async () => {
-      upsertLibraryArtist({ identityKey, name: "After Failure", syncSearch: false });
+      await upsertLibraryArtist({ identityKey, name: "After Failure", syncSearch: false });
       return { filesSeen: 0, filesIndexed: 0, filesFailed: 0 };
     });
 
-    assert.equal(getCanonicalLibrary().artists.find((item) => item.id === artist.id)?.name, "After Failure");
+    assert.equal((await getCanonicalLibrary()).artists.find((item) => item.id === artist.id)?.name, "After Failure");
   } finally {
-    db.exec("DROP TRIGGER IF EXISTS fail_library_scan_insert");
-    if (artist) db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    db.prepare("DELETE FROM library_scan_runs WHERE source LIKE 'test-%insert-failure'").run();
-    invalidateCanonicalLibraryCache();
+    await db.exec("DROP TRIGGER IF EXISTS fail_library_scan_insert ON library_scan_runs");
+    await db.exec("DROP FUNCTION IF EXISTS fail_library_scan_insert()");
+    if (artist) await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await db.run("DELETE FROM library_scan_runs WHERE source LIKE 'test-%insert-failure'");
+    await invalidateCanonicalLibraryCache();
   }
 });
 
@@ -147,13 +156,12 @@ test("a local-only configured scan does not contact Lidarr", async () => {
 test("a failed provider scan repairs derived library indexes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "aurral-failed-index-repair-"));
   const identityKey = `name:failed-index-repair-${process.pid}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey,
     name: "Failed Index Repair",
     syncSearch: false,
   });
-  db.prepare("DELETE FROM library_search_documents WHERE entity_kind = 'artist' AND entity_id = ?")
-    .run(artist.id);
+  await db.run("DELETE FROM library_search_documents WHERE entity_kind = 'artist' AND entity_id = ?", [artist.id]);
 
   try {
     // The Lidarr failure fails the scan (so the job backs off) after the
@@ -172,13 +180,11 @@ test("a failed provider scan repairs derived library indexes", async () => {
       }),
       /Lidarr library scan failed: Lidarr unavailable/,
     );
-    const indexed = db.prepare(
-      "SELECT 1 FROM library_search_documents WHERE entity_kind = 'artist' AND entity_id = ?",
-    ).get(artist.id);
+    const indexed = await db.get("SELECT 1 FROM library_search_documents WHERE entity_kind = 'artist' AND entity_id = ?", [artist.id]);
 
     assert.equal(Boolean(indexed), true);
   } finally {
-    db.prepare("DELETE FROM library_artists WHERE identity_key = ?").run(identityKey);
+    await db.run("DELETE FROM library_artists WHERE identity_key = ?", [identityKey]);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -203,6 +209,23 @@ const metadata = {
   },
 };
 
+// xmin is the writing transaction id; untouched rows keep theirs.
+const libraryRowVersions = async () => {
+  const versions = {};
+  for (const table of [
+    "library_artists",
+    "library_albums",
+    "library_tracks",
+    "library_media_files",
+    "library_search_documents",
+  ]) {
+    versions[table] = (
+      await db.all(`SELECT id, xmin::TEXT AS version FROM ${table} ORDER BY id`)
+    ).map((row) => `${row.id}:${row.version}`);
+  }
+  return versions;
+};
+
 async function createAudioFile(root, relativePath) {
   const filePath = path.join(root, relativePath);
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -210,33 +233,25 @@ async function createAudioFile(root, relativePath) {
   return filePath;
 }
 
-function deleteIndexedFile(source, filePath) {
-  const links = db.prepare(
-    `SELECT media.track_id AS trackId, album_track.album_id AS albumId, album.artist_id AS artistId
+async function deleteIndexedFile(source, filePath) {
+  const links = await db.all(`SELECT media.track_id AS "trackId", album_track.album_id AS "albumId", album.artist_id AS "artistId"
      FROM library_media_files AS media
      LEFT JOIN library_album_tracks AS album_track ON album_track.track_id = media.track_id
      LEFT JOIN library_albums AS album ON album.id = album_track.album_id
-     WHERE media.source = ? AND media.path = ?`,
-  ).all(source, filePath);
-  db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(source, filePath);
+     WHERE media.source = ? AND media.path = ?`, [source, filePath]);
+  await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", [source, filePath]);
 
   for (const { trackId, albumId, artistId } of links) {
-    const remainingFiles = db.prepare(
-      "SELECT COUNT(*) AS count FROM library_media_files WHERE track_id = ?",
-    ).get(trackId).count;
+    const remainingFiles = (await db.get("SELECT COUNT(*) AS count FROM library_media_files WHERE track_id = ?", [trackId])).count;
     if (remainingFiles === 0) {
-      db.prepare("DELETE FROM library_album_tracks WHERE track_id = ?").run(trackId);
-      db.prepare("DELETE FROM library_tracks WHERE id = ?").run(trackId);
+      await db.run("DELETE FROM library_album_tracks WHERE track_id = ?", [trackId]);
+      await db.run("DELETE FROM library_tracks WHERE id = ?", [trackId]);
     }
     if (albumId != null) {
-      db.prepare(
-        "DELETE FROM library_albums WHERE id = ? AND NOT EXISTS (SELECT 1 FROM library_album_tracks WHERE album_id = ?)",
-      ).run(albumId, albumId);
+      await db.run("DELETE FROM library_albums WHERE id = ? AND NOT EXISTS (SELECT 1 FROM library_album_tracks WHERE album_id = ?)", [albumId, albumId]);
     }
     if (artistId != null) {
-      db.prepare(
-        "DELETE FROM library_artists WHERE id = ? AND NOT EXISTS (SELECT 1 FROM library_albums WHERE artist_id = ?)",
-      ).run(artistId, artistId);
+      await db.run("DELETE FROM library_artists WHERE id = ? AND NOT EXISTS (SELECT 1 FROM library_albums WHERE artist_id = ?)", [artistId, artistId]);
     }
   }
 }
@@ -259,7 +274,7 @@ test("scanMusicRoot indexes tagged media and ignores Flow output", async () => {
       source,
       metadataReader: async () => metadata,
     });
-    const snapshot = getLibrarySnapshot();
+    const snapshot = await getLibrarySnapshot();
     const files = snapshot.files.filter((file) => file.source === source);
 
     assert.equal(result.filesSeen, 1);
@@ -286,16 +301,14 @@ test("scanMusicRoot derives stable fallback records when tags are missing", asyn
       source,
       metadataReader: async () => ({ common: {}, format: {} }),
     });
-    const indexed = db.prepare(
-      `SELECT artist.name AS artistName, album.title AS albumTitle,
-        track.title AS trackTitle, media.available
+    const indexed = await db.get(`SELECT artist.name AS "artistName", album.title AS "albumTitle",
+        track.title AS "trackTitle", media.available
        FROM library_media_files AS media
        JOIN library_tracks AS track ON track.id = media.track_id
        JOIN library_album_tracks AS album_track ON album_track.track_id = track.id
        JOIN library_albums AS album ON album.id = album_track.album_id
        JOIN library_artists AS artist ON artist.id = album.artist_id
-       WHERE media.source = ? AND media.path = ?`,
-    ).get(source, filePath);
+       WHERE media.source = ? AND media.path = ?`, [source, filePath]);
 
     assert.deepEqual(indexed, {
       artistName: "Fallback Artist",
@@ -309,87 +322,79 @@ test("scanMusicRoot derives stable fallback records when tags are missing", asyn
   }
 });
 
-test("upsertLibraryArtist promotes a name fallback when its MBID becomes known", () => {
+test("upsertLibraryArtist promotes a name fallback when its MBID becomes known", async () => {
   const name = `Identity Promotion ${process.pid} ${Date.now()}`;
   const mbid = "11111111-1111-4111-8111-111111111112";
-  const fallback = upsertLibraryArtist({
+  const fallback = await upsertLibraryArtist({
     identityKey: buildFallbackIdentityKey("artist", name),
     name,
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: buildFallbackIdentityKey("album", fallback.identity_key, "Album"),
     artistId: fallback.id,
     title: "Album",
   });
 
   try {
-    const resolved = upsertLibraryArtist({
+    const resolved = await upsertLibraryArtist({
       identityKey: `mbid:${mbid}`,
       mbid,
       name,
     });
-    const fallbackAgain = upsertLibraryArtist({
+    const fallbackAgain = await upsertLibraryArtist({
       identityKey: buildFallbackIdentityKey("artist", name),
       name,
     });
-    const artists = db.prepare("SELECT id, mbid FROM library_artists WHERE name = ?").all(name);
-    const linkedAlbum = db.prepare("SELECT artist_id FROM library_albums WHERE id = ?").get(album.id);
+    const artists = await db.all("SELECT id, mbid FROM library_artists WHERE name = ?", [name]);
+    const linkedAlbum = await db.get("SELECT artist_id FROM library_albums WHERE id = ?", [album.id]);
 
     assert.deepEqual(artists, [{ id: resolved.id, mbid }]);
     assert.equal(resolved.id, fallback.id);
     assert.equal(fallbackAgain.id, resolved.id);
     assert.equal(linkedAlbum.artist_id, resolved.id);
   } finally {
-    db.prepare("DELETE FROM library_artists WHERE name = ?").run(name);
+    await db.run("DELETE FROM library_artists WHERE name = ?", [name]);
   }
 });
 
-test("upsertLibraryArtist repairs an existing fallback and MBID duplicate", () => {
+test("upsertLibraryArtist repairs an existing fallback and MBID duplicate", async () => {
   const name = `Identity Repair ${process.pid} ${Date.now()}`;
   const mbid = "11111111-1111-4111-8111-111111111113";
   const fallbackKey = buildFallbackIdentityKey("artist", name);
-  const fallback = upsertLibraryArtist({
+  const fallback = await upsertLibraryArtist({
     identityKey: fallbackKey,
     name,
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: buildFallbackIdentityKey("album", fallback.identity_key, "Album"),
     artistId: fallback.id,
     title: "Album",
   });
   const timestamp = Date.now();
-  const resolvedId = Number(db.prepare(
-    `INSERT INTO library_artists
+  const resolvedId = (await db.get(`INSERT INTO library_artists
       (identity_key, mbid, name, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(`mbid:${mbid}`, mbid, name, timestamp, timestamp).lastInsertRowid);
-  const userId = Number(db.prepare(
-    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-  ).run(`identity-repair-${process.pid}-${timestamp}`, "hash").lastInsertRowid);
-  db.prepare(
-    `INSERT INTO subsonic_stars (user_id, entity_kind, entity_key, created_at)
-     VALUES (?, 'artist', ?, ?)`,
-  ).run(userId, fallbackKey, timestamp);
+     VALUES (?, ?, ?, ?, ?) RETURNING id`, [`mbid:${mbid}`, mbid, name, timestamp, timestamp])).id;
+  const userId = (await db.get("INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id", [`identity-repair-${process.pid}-${timestamp}`, "hash"])).id;
+  await db.run(`INSERT INTO subsonic_stars (user_id, entity_kind, entity_key, created_at)
+     VALUES (?, 'artist', ?, ?)`, [userId, fallbackKey, timestamp]);
 
   try {
-    const resolved = upsertLibraryArtist({ identityKey: `mbid:${mbid}`, mbid, name });
-    const artists = db.prepare("SELECT id, mbid FROM library_artists WHERE name = ?").all(name);
-    const linkedAlbum = db.prepare("SELECT artist_id FROM library_albums WHERE id = ?").get(album.id);
-    const star = db.prepare(
-      "SELECT entity_key FROM subsonic_stars WHERE user_id = ? AND entity_kind = 'artist'",
-    ).get(userId);
+    const resolved = await upsertLibraryArtist({ identityKey: `mbid:${mbid}`, mbid, name });
+    const artists = await db.all("SELECT id, mbid FROM library_artists WHERE name = ?", [name]);
+    const linkedAlbum = await db.get("SELECT artist_id FROM library_albums WHERE id = ?", [album.id]);
+    const star = await db.get("SELECT entity_key FROM subsonic_stars WHERE user_id = ? AND entity_kind = 'artist'", [userId]);
 
     assert.deepEqual(artists, [{ id: resolvedId, mbid }]);
     assert.equal(resolved.id, resolvedId);
     assert.equal(linkedAlbum.artist_id, resolvedId);
     assert.equal(star.entity_key, `mbid:${mbid}`);
   } finally {
-    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-    db.prepare("DELETE FROM library_artists WHERE name = ?").run(name);
+    await db.run("DELETE FROM users WHERE id = ?", [userId]);
+    await db.run("DELETE FROM library_artists WHERE name = ?", [name]);
   }
 });
 
-test("upsertLibraryArtist merges normalized name variants when the MBID row exists first", () => {
+test("upsertLibraryArtist merges normalized name variants when the MBID row exists first", async () => {
   const suffix = `${process.pid} ${Date.now()}`;
   const cases = [
     {
@@ -406,12 +411,12 @@ test("upsertLibraryArtist merges normalized name variants when the MBID row exis
 
   try {
     for (const entry of cases) {
-      const resolved = upsertLibraryArtist({
+      const resolved = await upsertLibraryArtist({
         identityKey: `mbid:${entry.mbid}`,
         mbid: entry.mbid,
         name: entry.canonicalName,
       });
-      const fallback = upsertLibraryArtist({
+      const fallback = await upsertLibraryArtist({
         identityKey: buildFallbackIdentityKey("artist", entry.fallbackName),
         name: entry.fallbackName,
       });
@@ -420,12 +425,12 @@ test("upsertLibraryArtist merges normalized name variants when the MBID row exis
     }
 
     assert.equal(
-      db.prepare("SELECT COUNT(*) AS count FROM library_artists WHERE name LIKE ?").get(`%${suffix}`)
-        .count,
+      Number((await db.get("SELECT COUNT(*) AS count FROM library_artists WHERE name LIKE ?", [`%${suffix}`]))
+        .count),
       cases.length,
     );
   } finally {
-    db.prepare("DELETE FROM library_artists WHERE name LIKE ?").run(`%${suffix}`);
+    await db.run("DELETE FROM library_artists WHERE name LIKE ?", [`%${suffix}`]);
   }
 });
 
@@ -448,16 +453,14 @@ test("scanMusicRoot applies trusted job metadata when file tags omit identities"
         trackName: "Track",
       }),
     });
-    const indexed = db.prepare(
-      `SELECT artist.mbid AS artistMbid, album.release_group_mbid AS releaseGroupMbid,
-        track.mbid AS trackMbid
+    const indexed = await db.get(`SELECT artist.mbid AS "artistMbid", album.release_group_mbid AS "releaseGroupMbid",
+        track.mbid AS "trackMbid"
        FROM library_media_files AS media
        JOIN library_tracks AS track ON track.id = media.track_id
        JOIN library_album_tracks AS album_track ON album_track.track_id = track.id
        JOIN library_albums AS album ON album.id = album_track.album_id
        JOIN library_artists AS artist ON artist.id = album.artist_id
-       WHERE media.source = ? AND media.path = ?`,
-    ).get(source, filePath);
+       WHERE media.source = ? AND media.path = ?`, [source, filePath]);
 
     assert.deepEqual(indexed, {
       artistMbid: "11111111-1111-4111-8111-111111111111",
@@ -488,16 +491,14 @@ test("scanMusicRoot reads Aurral identity markers from portable comments", async
         format: {},
       }),
     });
-    const indexed = db.prepare(
-      `SELECT artist.mbid AS artistMbid, album.release_group_mbid AS releaseGroupMbid,
-        track.mbid AS trackMbid
+    const indexed = await db.get(`SELECT artist.mbid AS "artistMbid", album.release_group_mbid AS "releaseGroupMbid",
+        track.mbid AS "trackMbid"
        FROM library_media_files AS media
        JOIN library_tracks AS track ON track.id = media.track_id
        JOIN library_album_tracks AS album_track ON album_track.track_id = track.id
        JOIN library_albums AS album ON album.id = album_track.album_id
        JOIN library_artists AS artist ON artist.id = album.artist_id
-       WHERE media.source = ? AND media.path = ?`,
-    ).get(source, filePath);
+       WHERE media.source = ? AND media.path = ?`, [source, filePath]);
 
     assert.deepEqual(indexed, {
       artistMbid: "11111111-1111-4111-1111-111111111111",
@@ -527,7 +528,7 @@ test("a successful rescan marks removed files unavailable without removing media
       source,
       metadataReader: async () => metadata,
     });
-    const snapshot = getLibrarySnapshot();
+    const snapshot = await getLibrarySnapshot();
     const file = snapshot.files.find((entry) => entry.path === filePath);
 
     assert.equal(file?.available, 0);
@@ -555,7 +556,7 @@ test("a partial rescan preserves the last known-good file availability", async (
         throw new Error("metadata unavailable");
       },
     });
-    const file = getLibrarySnapshot().files.find((entry) => entry.source === source);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.source === source);
 
     assert.equal(file?.available, 1);
   } finally {
@@ -604,7 +605,7 @@ test("indexLidarrLibrary imports logical media and readable track files", async 
     };
 
     const result = await indexLidarrLibrary({ client });
-    const snapshot = getLibrarySnapshot();
+    const snapshot = await getLibrarySnapshot();
     const file = snapshot.files.find((entry) => entry.path === filePath);
 
     assert.equal(result.filesIndexed, 1);
@@ -614,10 +615,8 @@ test("indexLidarrLibrary imports logical media and readable track files", async 
     assert.equal(snapshot.tracks.some((track) => track.title === "Track"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -652,41 +651,37 @@ test("an unchanged Lidarr rescan does not rewrite library rows", async () => {
 
   try {
     await indexLidarrLibrary({ client, syncSearch: false });
-    db.prepare("UPDATE library_artists SET updated_at = 1 WHERE mbid = ?").run(artistMbid);
-    db.prepare("UPDATE library_albums SET updated_at = 1 WHERE release_group_mbid = ?").run(albumMbid);
-    db.prepare("UPDATE library_tracks SET updated_at = 1 WHERE mbid = ?").run(trackMbid);
-    db.prepare("UPDATE library_media_files SET updated_at = 1 WHERE source = 'lidarr' AND path = ?")
-      .run(filePath);
+    await db.run("UPDATE library_artists SET updated_at = 1 WHERE mbid = ?", [artistMbid]);
+    await db.run("UPDATE library_albums SET updated_at = 1 WHERE release_group_mbid = ?", [albumMbid]);
+    await db.run("UPDATE library_tracks SET updated_at = 1 WHERE mbid = ?", [trackMbid]);
+    await db.run("UPDATE library_media_files SET updated_at = 1 WHERE source = 'lidarr' AND path = ?", [filePath]);
 
-    const changesBefore = db.prepare("SELECT total_changes() AS count").get().count;
+    const versionsBefore = await libraryRowVersions();
     const result = await indexLidarrLibrary({ client, syncSearch: false });
-    const changesAfter = db.prepare("SELECT total_changes() AS count").get().count;
 
     assert.equal(result.changed, false);
-    assert.equal(changesAfter - changesBefore, 2);
+    assert.deepEqual(await libraryRowVersions(), versionsBefore);
     assert.deepEqual({
-      artist: db.prepare("SELECT updated_at FROM library_artists WHERE mbid = ?").get(artistMbid)?.updated_at,
-      album: db.prepare("SELECT updated_at FROM library_albums WHERE release_group_mbid = ?").get(albumMbid)?.updated_at,
-      track: db.prepare("SELECT updated_at FROM library_tracks WHERE mbid = ?").get(trackMbid)?.updated_at,
-      media: db.prepare("SELECT updated_at FROM library_media_files WHERE source = 'lidarr' AND path = ?")
-        .get(filePath)?.updated_at,
+      artist: (await db.get("SELECT updated_at FROM library_artists WHERE mbid = ?", [artistMbid]))?.updated_at,
+      album: (await db.get("SELECT updated_at FROM library_albums WHERE release_group_mbid = ?", [albumMbid]))?.updated_at,
+      track: (await db.get("SELECT updated_at FROM library_tracks WHERE mbid = ?", [trackMbid]))?.updated_at,
+      media: (await db.get("SELECT updated_at FROM library_media_files WHERE source = 'lidarr' AND path = ?", [filePath]))?.updated_at,
     }, { artist: 1, album: 1, track: 1, media: 1 });
 
-    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(genreStatsKey, "preserved");
-    const configuredChangesBefore = db.prepare("SELECT total_changes() AS count").get().count;
+    await db.run("INSERT INTO settings (key, value) VALUES (?, ?)", [genreStatsKey, "preserved"]);
+    const configuredVersionsBefore = await libraryRowVersions();
     const configured = await scanConfiguredLibrary({
       musicRoot: path.join(root, "empty-aurral-root"),
       lidarrClient: client,
     });
-    const configuredChangesAfter = db.prepare("SELECT total_changes() AS count").get().count;
 
     assert.equal(configured.local.changed, false);
     assert.equal(configured.lidarr.changed, false);
-    assert.equal(configuredChangesAfter - configuredChangesBefore, 4);
-    assert.equal(db.prepare("SELECT value FROM settings WHERE key = ?").get(genreStatsKey)?.value, "preserved");
+    assert.deepEqual(await libraryRowVersions(), configuredVersionsBefore);
+    assert.equal((await db.get("SELECT value FROM settings WHERE key = ?", [genreStatsKey]))?.value, "preserved");
   } finally {
-    db.prepare("DELETE FROM settings WHERE key = ?").run(genreStatsKey);
-    deleteIndexedFile("lidarr", filePath);
+    await db.run("DELETE FROM settings WHERE key = ?", [genreStatsKey]);
+    await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -697,13 +692,9 @@ test("Lidarr persistence yields between album transactions", async () => {
   const secondAlbumMbid = "60606060-6060-4060-8060-606060606060";
   let scanning = true;
   const yieldedBetweenAlbums = new Promise((resolve) => {
-    const inspect = () => {
-      const firstExists = Boolean(db.prepare(
-        "SELECT 1 FROM library_albums WHERE release_group_mbid = ?",
-      ).get(firstAlbumMbid));
-      const secondExists = Boolean(db.prepare(
-        "SELECT 1 FROM library_albums WHERE release_group_mbid = ?",
-      ).get(secondAlbumMbid));
+    const inspect = async () => {
+      const firstExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [firstAlbumMbid]));
+      const secondExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [secondAlbumMbid]));
       if (firstExists && !secondExists) return resolve(true);
       if (!scanning) return resolve(false);
       setImmediate(inspect);
@@ -731,7 +722,7 @@ test("Lidarr persistence yields between album transactions", async () => {
     assert.equal(await yieldedBetweenAlbums, true);
   } finally {
     scanning = false;
-    db.prepare("DELETE FROM library_artists WHERE mbid = ?").run(artistMbid);
+    await db.run("DELETE FROM library_artists WHERE mbid = ?", [artistMbid]);
   }
 });
 
@@ -753,7 +744,7 @@ test("indexLidarrLibrary keeps artists without albums and refreshes monitoring m
 
   try {
     await indexLidarrLibrary({ client });
-    let projection = getCanonicalArtistProjection({ reference: providerArtistId })[0];
+    let projection = (await getCanonicalArtistProjection({ reference: providerArtistId }))[0];
     assert.equal(projection?.name, "Albumless Artist");
     assert.equal(projection?.foreignArtistId, providerArtistId);
     assert.equal(projection?.providerId, "1212");
@@ -764,13 +755,11 @@ test("indexLidarrLibrary keeps artists without albums and refreshes monitoring m
 
     monitored = true;
     await indexLidarrLibrary({ client });
-    projection = getCanonicalArtistProjection({ reference: providerArtistId })[0];
+    projection = (await getCanonicalArtistProjection({ reference: providerArtistId }))[0];
     assert.equal(projection?.monitored, true);
     assert.equal(projection?.monitorOption, "all");
   } finally {
-    db.prepare("DELETE FROM library_artists WHERE identity_key = ?").run(
-      `lidarr-artist:${providerArtistId}`,
-    );
+    await db.run("DELETE FROM library_artists WHERE identity_key = ?", [`lidarr-artist:${providerArtistId}`]);
   }
 });
 
@@ -806,7 +795,7 @@ test("indexLidarrLibrary keeps fully missing albums in canonical reads", async (
 
   try {
     await indexLidarrLibrary({ client });
-    const page = getCanonicalLibraryPage({
+    const page = await getCanonicalLibraryPage({
       kind: "albums",
       page: 1,
       pageSize: 10,
@@ -815,13 +804,11 @@ test("indexLidarrLibrary keeps fully missing albums in canonical reads", async (
 
     assert.equal(page.items[0]?.title, "Fully Missing Album");
     assert.equal(page.items[0]?.availableTrackCount, 0);
-    const albumMetadata = db.prepare(
-      "SELECT metadata_json FROM library_albums WHERE mbid = ?",
-    ).get(albumMbid);
+    const albumMetadata = await db.get("SELECT metadata_json FROM library_albums WHERE mbid = ?", [albumMbid]);
     assert.equal(JSON.parse(albumMetadata.metadata_json).librarySource, "lidarr");
   } finally {
-    db.prepare("DELETE FROM library_artists WHERE mbid = ?").run(artistMbid);
-    db.prepare("DELETE FROM library_tracks WHERE mbid = ?").run(trackMbid);
+    await db.run("DELETE FROM library_artists WHERE mbid = ?", [artistMbid]);
+    await db.run("DELETE FROM library_tracks WHERE mbid = ?", [trackMbid]);
   }
 });
 
@@ -875,7 +862,7 @@ test("indexLidarrLibrary uses bulk track reads when Lidarr provides them", async
     };
 
     const result = await indexLidarrLibrary({ client });
-    const snapshot = getLibrarySnapshot();
+    const snapshot = await getLibrarySnapshot();
     const file = snapshot.files.find((entry) => entry.path === filePath);
 
     assert.deepEqual(calls, ["tracks", "files"]);
@@ -883,10 +870,8 @@ test("indexLidarrLibrary uses bulk track reads when Lidarr provides them", async
     assert.equal(file?.source, "lidarr");
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -942,17 +927,15 @@ test("indexLidarrLibrary refreshes track files when an ID batch is stale", async
     };
 
     const result = await indexLidarrLibrary({ client });
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.deepEqual(calls, ["tracks", "id-files", "artist-files"]);
     assert.equal(result.filesIndexed, 1);
     assert.equal(file?.source, "lidarr");
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -1006,10 +989,8 @@ test("indexLidarrLibrary does not fan out per album when a bulk track read fails
     assert.deepEqual(calls, ["bulk-tracks", "bulk-files"]);
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -1063,10 +1044,8 @@ test("indexLidarrLibrary does not fan out per album when a bulk track-file read 
     assert.deepEqual(calls, ["bulk-tracks", "bulk-files"]);
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -1083,26 +1062,26 @@ test("indexLidarrLibrary does not reuse a file from another album", async () => 
   const trackFileId = artistId + 10;
   const aurralPath = path.join(root, "Aurral/Eve 6/01 Showerhead.flac");
   try {
-    const artist = upsertLibraryArtist({
+    const artist = await upsertLibraryArtist({
       identityKey: `mbid:${artistMbid}`,
       mbid: artistMbid,
       name: "Eve 6",
     });
-    const album = upsertLibraryAlbum({
+    const album = await upsertLibraryAlbum({
       identityKey: `release-group:${secondAlbumMbid}`,
       mbid: secondAlbumMbid,
       releaseGroupMbid: secondAlbumMbid,
       artistId: artist.id,
       title: "Inside Out",
     });
-    const track = upsertLibraryTrack({
+    const track = await upsertLibraryTrack({
       identityKey: `recording:${recordingMbid}`,
       mbid: recordingMbid,
       title: "Showerhead",
       artistName: "Eve 6",
     });
-    linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
-    upsertLibraryMediaFile({
+    await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
+    await upsertLibraryMediaFile({
       trackId: track.id,
       albumId: album.id,
       source: "aurral",
@@ -1149,8 +1128,7 @@ test("indexLidarrLibrary does not reuse a file from another album", async () => 
       },
     });
 
-    const albumRows = db.prepare(
-      `SELECT album.title AS title, COUNT(DISTINCT media.id) AS files
+    const albumRows = await db.all(`SELECT album.title AS title, COUNT(DISTINCT media.id) AS files
        FROM library_albums AS album
        JOIN library_album_tracks AS album_track ON album_track.album_id = album.id
        LEFT JOIN library_media_files AS media
@@ -1160,13 +1138,12 @@ test("indexLidarrLibrary does not reuse a file from another album", async () => 
         AND media.available = 1
        WHERE album.identity_key IN (?, ?)
        GROUP BY album.id
-       ORDER BY album.title`,
-    ).all(`release-group:${firstAlbumMbid}`, `release-group:${secondAlbumMbid}`);
+       ORDER BY album.title`, [`release-group:${firstAlbumMbid}`, `release-group:${secondAlbumMbid}`]);
     assert.deepEqual(albumRows, [
       { title: "Eve 6", files: 1 },
       { title: "Inside Out", files: 0 },
     ]);
-    const lidarrPage = getCanonicalLibraryPage({
+    const lidarrPage = await getCanonicalLibraryPage({
       source: "lidarr",
       kind: "albums",
       page: 1,
@@ -1174,22 +1151,16 @@ test("indexLidarrLibrary does not reuse a file from another album", async () => 
     });
     assert.deepEqual(lidarrPage.items.map((item) => item.title), ["Eve 6"]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE source = 'lidarr' AND path = ?").run(filePath);
-    db.prepare("DELETE FROM library_media_files WHERE source = 'aurral' AND path = ?").run(aurralPath);
-    const albumRows = db.prepare(
-      "SELECT id FROM library_albums WHERE identity_key IN (?, ?)",
-    ).all(`release-group:${firstAlbumMbid}`, `release-group:${secondAlbumMbid}`);
+    await db.run("DELETE FROM library_media_files WHERE source = 'lidarr' AND path = ?", [filePath]);
+    await db.run("DELETE FROM library_media_files WHERE source = 'aurral' AND path = ?", [aurralPath]);
+    const albumRows = await db.all("SELECT id FROM library_albums WHERE identity_key IN (?, ?)", [`release-group:${firstAlbumMbid}`, `release-group:${secondAlbumMbid}`]);
     const albumIds = albumRows.map((row) => row.id);
     if (albumIds.length) {
-      db.prepare(
-        `DELETE FROM library_album_tracks WHERE album_id IN (${albumIds.map(() => "?").join(",")})`,
-      ).run(...albumIds);
-      db.prepare(
-        `DELETE FROM library_albums WHERE id IN (${albumIds.map(() => "?").join(",")})`,
-      ).run(...albumIds);
+      await db.run(`DELETE FROM library_album_tracks WHERE album_id IN (${albumIds.map(() => "?").join(",")})`, [...albumIds]);
+      await db.run(`DELETE FROM library_albums WHERE id IN (${albumIds.map(() => "?").join(",")})`, [...albumIds]);
     }
-    db.prepare("DELETE FROM library_tracks WHERE identity_key = ?").run(`recording:${recordingMbid}`);
-    db.prepare("DELETE FROM library_artists WHERE identity_key = ?").run(`mbid:${artistMbid}`);
+    await db.run("DELETE FROM library_tracks WHERE identity_key = ?", [`recording:${recordingMbid}`]);
+    await db.run("DELETE FROM library_artists WHERE identity_key = ?", [`mbid:${artistMbid}`]);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1224,16 +1195,14 @@ test("a partial Lidarr rescan preserves existing file availability", async () =>
     await indexLidarrLibrary({ client });
     await rm(filePath);
     const result = await indexLidarrLibrary({ client });
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.equal(result.filesFailed, 1);
     assert.equal(file?.available, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
   }
 });
 
@@ -1256,7 +1225,7 @@ test("a Lidarr rescan preserves files for an album with a missing artist respons
     await indexLidarrLibrary({ client });
     client.request = async () => [];
     const result = await indexLidarrLibrary({ client });
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.equal(result.filesFailed, 1);
     assert.equal(file?.available, 1);
@@ -1313,7 +1282,7 @@ test("a Lidarr outage leaves the last indexed library available", async () => {
       }),
       /Lidarr library scan failed: Lidarr unavailable/,
     );
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.equal(file?.available, 1);
   } finally {
@@ -1347,7 +1316,7 @@ test("an empty Lidarr response leaves the last indexed library available", async
         getRootFolders: async () => [{ path: root }],
       },
     });
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.equal(result.filesIndexed, 0);
     assert.equal(file?.available, 1);
@@ -1376,7 +1345,7 @@ test("a Lidarr rescan marks the final removed media file unavailable", async () 
     await indexLidarrLibrary({ client });
     client.getTrackFilesByAlbumId = async () => [];
     await indexLidarrLibrary({ client });
-    const file = getLibrarySnapshot().files.find((entry) => entry.path === filePath);
+    const file = (await getLibrarySnapshot()).files.find((entry) => entry.path === filePath);
 
     assert.equal(file?.available, 0);
   } finally {

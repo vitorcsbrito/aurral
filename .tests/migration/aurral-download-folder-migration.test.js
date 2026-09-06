@@ -18,7 +18,7 @@ const [
   { migrateAurralDownloadFolder },
 ] = await setupIsolatedBackend(
   "aurral-download-folder-migration",
-  "backend/config/db-sqlite.js",
+  "backend/config/database.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
@@ -29,15 +29,15 @@ const root = process.env.WEEKLY_FLOW_FOLDER;
 
 test.beforeEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
-  resetDatabase(db);
+  await resetDatabase();
   downloadTracker.clearAll();
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     integrations: {},
     flows: [],
     sharedPlaylists: [],
     onboardingComplete: true,
   });
-  dbOps.setJSONSetting("aurralDownloadFolderMigration", null);
+  await dbOps.setJSONSetting("aurralDownloadFolderMigration", null);
 });
 
 test.after(async () => {
@@ -47,8 +47,8 @@ test.after(async () => {
 test.afterEach(() => mock.restoreAll());
 
 test("migrates permanent tracks, isolates active flows, and removes unkept flow files", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Saved" });
-  const flow = flowPlaylistConfig.createFlow({ name: "Nightly", enabled: true });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Saved" });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Nightly", enabled: true });
   const permanentSource = path.join(
     root,
     "aurral-weekly-flow",
@@ -120,7 +120,7 @@ test("migrates permanent tracks, isolates active flows, and removes unkept flow 
 });
 
 test("retains a permanent source when tracker updates are not persisted", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Unpersisted Permanent" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Unpersisted Permanent" });
   const source = path.join(
     root,
     "aurral-weekly-flow",
@@ -153,7 +153,7 @@ test("retains a permanent source when tracker updates are not persisted", async 
 });
 
 test("repairs stale tracker paths from a completed migration", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Repair Complete" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Repair Complete" });
   const source = path.join(
     root,
     "aurral-weekly-flow",
@@ -170,7 +170,7 @@ test("repairs stale tracker paths from a completed migration", async () => {
     playlist.id,
   );
   downloadTracker.setDone(jobId, source);
-  dbOps.setJSONSetting("aurralDownloadFolderMigration", {
+  await dbOps.setJSONSetting("aurralDownloadFolderMigration", {
     version: 1,
     rootPath: path.resolve(root),
     status: "complete",
@@ -191,7 +191,7 @@ test("repairs stale tracker paths from a completed migration", async () => {
 });
 
 test("indexes permanent migrations in one library scan", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Batch indexing" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Batch indexing" });
   const jobs = [];
   for (const trackName of ["Track One", "Track Two"]) {
     const source = path.join(
@@ -220,12 +220,12 @@ test("indexes permanent migrations in one library scan", async () => {
   });
 
   assert.equal(result.migrated, 2);
-  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM library_scan_runs").get().count, 1);
+  assert.equal((await db.get("SELECT COUNT(*) AS count FROM library_scan_runs")).count, 1);
   assert.ok(jobs.every((jobId) => downloadTracker.getJob(jobId).finalPath.startsWith(root)));
 });
 
 test("retains a failed item and completes it safely on retry", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Retry" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Retry" });
   const source = path.join(
     root,
     "aurral-weekly-flow",
@@ -269,7 +269,7 @@ test("retains a failed item and completes it safely on retry", async () => {
 });
 
 test("retains a same-size canonical destination with different content", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Collision" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Collision" });
   const source = path.join(
     root,
     "aurral-weekly-flow",
@@ -304,7 +304,7 @@ test("retains a same-size canonical destination with different content", async (
 });
 
 test("retains partial and ambiguous files instead of guessing", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Review" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Review" });
   const partial = path.join(
     root,
     "aurral-weekly-flow",
@@ -349,7 +349,7 @@ test("retains partial and ambiguous files instead of guessing", async () => {
 });
 
 test("blocks migration when DL_FOLDER overlaps the Lidarr root", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Protected" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Protected" });
   const source = path.join(
     root,
     "aurral-weekly-flow",
