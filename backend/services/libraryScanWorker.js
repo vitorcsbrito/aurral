@@ -3,6 +3,7 @@ import { db } from "../config/db-sqlite.js";
 import { dbOps } from "../db/helpers/index.js";
 import { enqueueLibraryScanJob, getLibraryScanQueue } from "./honkerDb.js";
 import { isHonkerDatabaseClosedError } from "./honkerWorkerRuntime.js";
+import { logger } from "./logger.js";
 import { websocketService } from "./websocketService.js";
 
 const WORKER_NAME = "library-scan";
@@ -219,7 +220,28 @@ const {
     const includeLocal = owned
       ? registry.includeLocal === true
       : payload?.includeLocal === true;
-    await runLibraryScanInWorker({ includeLidarr, artistIds, force, includeLocal });
+    const startedAt = Date.now();
+    const scope = artistIds.length ? `artist:${artistIds.join(",")}` : includeLidarr ? "full" : "local";
+    logger.info("library", "Library scan started", { jobId: job.id, scope, force, includeLocal, attempt: job.attempts });
+    let result;
+    try {
+      result = await runLibraryScanInWorker({ includeLidarr, artistIds, force, includeLocal });
+    } catch (error) {
+      logger.error("library", "Library scan failed", {
+        jobId: job.id,
+        scope,
+        seconds: Math.round((Date.now() - startedAt) / 1000),
+        error: error?.message || String(error),
+      });
+      throw error;
+    }
+    logger.info("library", "Library scan completed", {
+      jobId: job.id,
+      scope,
+      seconds: Math.round((Date.now() - startedAt) / 1000),
+      local: result?.local ? { filesSeen: result.local.filesSeen, filesIndexed: result.local.filesIndexed, filesFailed: result.local.filesFailed } : undefined,
+      lidarr: result?.lidarr ? { skipped: result.lidarr.skipped === true, filesSeen: result.lidarr.filesSeen, filesIndexed: result.lidarr.filesIndexed, filesFailed: result.lidarr.filesFailed, artistsSkipped: result.lidarr.artistsSkipped } : undefined,
+    });
     const { playlistManager } = await import("./weeklyFlow/weeklyFlowPlaylistManager.js");
     await playlistManager.scanLibrary();
     websocketService.broadcast("library", { type: "library_scan_completed" });

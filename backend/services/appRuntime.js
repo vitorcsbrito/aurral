@@ -7,6 +7,8 @@ import {
 import { startSystemTaskWorker } from "./systemTaskWorker.js";
 import { scheduleLibraryScan, startLibraryScanWorker } from "./libraryScanWorker.js";
 import { logger as appLogger } from "./logger.js";
+import { resolveAurralDataDir } from "../config/data-dir.js";
+import { defaultReportDirectory, startEventLoopWatchdog, stopEventLoopWatchdog } from "./eventLoopWatchdog.js";
 import { startNotificationOutboxWorker } from "./notificationOutboxWorker.js";
 import { startPlayEventOutboxWorker } from "./playEventOutboxWorker.js";
 import { startSlskdOrchestratorWorker } from "./slskdOrchestratorWorker.js";
@@ -118,6 +120,7 @@ function stopWorkerSupervisor() {
     workerSupervisorInterval = null;
   }
   stopMemoryWatchdog();
+  stopEventLoopWatchdog();
 }
 
 // Process memory is logged once a minute under verbose logs, and a warning is
@@ -199,6 +202,15 @@ export function startBackgroundWorkers({ logger = console } = {}) {
       logger.warn?.("system", "[AppRuntime] Failed to close interrupted library scans on startup:", { error: error?.message || String(error) });
     });
   startMemoryWatchdog();
+  if (process.env.AURRAL_TEST_SERVER !== "1") {
+    const watchdog = startEventLoopWatchdog({
+      reportDirectory: defaultReportDirectory(resolveAurralDataDir()),
+      logger: appLogger,
+    });
+    if (watchdog.reportDirectory) {
+      appLogger.info("system", "Event loop watchdog armed", { reportDirectory: watchdog.reportDirectory });
+    }
+  }
   import("./aurralHistoryService.js")
     .then(({ syncProcessingActivityHistory }) => syncProcessingActivityHistory())
     .catch((error) => {
