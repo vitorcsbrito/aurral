@@ -55,13 +55,13 @@ export async function adoptDiscoverPresetAsFlow(user, presetId) {
   }
 
   const enrichedPlaylist = await enrichDiscoverPlaylistForAdoption(cachedPlaylist);
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     ...buildFlowPayloadFromPreset(enrichedPlaylist, safePresetId),
     ownerUserId: user.id,
   });
   await playlistManager.ensureSmartPlaylists();
-  flowPlaylistConfig.setEnabled(flow.id, true);
-  flowPlaylistConfig.scheduleNextRun(flow.id);
+  await flowPlaylistConfig.setEnabled(flow.id, true);
+  await flowPlaylistConfig.scheduleNextRun(flow.id);
 
   import("../../services/unifiedSearchService.js").then(({ clearSearchContextCache }) => clearSearchContextCache()).catch(() => {});
 

@@ -678,7 +678,7 @@ const replaceSubsonicPlaylistTracks = async (user, playlist, tracks, updates = {
     for (const jobId of createdJobIds) downloadTracker.removeJob(jobId);
     return null;
   }
-  const updated = flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
+  const updated = await flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
     ...updates,
     tracks: canonicalTracks,
   });
@@ -698,7 +698,7 @@ export async function createSubsonicPlaylist(user, { name, songIds = [] } = {}) 
   const resolved = [];
   for (const id of songIds) resolved.push(await resolveSubsonicTrack(user, id));
   if (resolved.some((entry) => !entry)) return null;
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     id: randomUUID(),
     name: safeName,
     ownerUserId: user.id,
@@ -709,7 +709,7 @@ export async function createSubsonicPlaylist(user, { name, songIds = [] } = {}) 
     playlist,
     resolved.map((entry) => entry.track),
   );
-  if (!updated) flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+  if (!updated) await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
   return updated;
 }
 
@@ -737,14 +737,14 @@ export async function updateSubsonicPlaylist(
   return replaceSubsonicPlaylistTracks(user, playlist, nextTracks, updates);
 }
 
-export function deleteSubsonicPlaylist(user, playlistId) {
+export async function deleteSubsonicPlaylist(user, playlistId) {
   const playlist = flowPlaylistConfig.getSharedPlaylistForUser(
     user,
     normalizeSharedPlaylistId(playlistId),
   );
   if (!playlist || !hasPermission(user, "accessFlow")) return false;
   removeLegacyPlaylistJobs(playlist.id);
-  const deleted = flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+  const deleted = await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
   if (deleted) {
     playlistManager.updateConfig(false);
     playlistManager.deletePlaybackPlaylist(playlist).catch(() => {});

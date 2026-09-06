@@ -93,7 +93,7 @@ export function registerFlows(router) {
       if (validationError) {
         return res.status(400).json({ error: validationError, message: validationError });
       }
-      const flow = flowPlaylistConfig.createFlow({
+      const flow = await flowPlaylistConfig.createFlow({
         name,
         mix,
         size,
@@ -165,7 +165,7 @@ export function registerFlows(router) {
       if (Object.prototype.hasOwnProperty.call(req.body || {}, "yearTo")) {
         updates.yearTo = req.body.yearTo;
       }
-      const updated = flowPlaylistConfig.updateFlow(flowId, updates);
+      const updated = await flowPlaylistConfig.updateFlow(flowId, updates);
       if (!updated) {
         return res.status(404).json({ error: "Flow not found" });
       }
@@ -235,8 +235,8 @@ export function registerFlows(router) {
             message: unavailableError,
           });
         }
-        flowPlaylistConfig.setEnabled(flowId, true);
-        flowPlaylistConfig.scheduleNextRun(flowId);
+        await flowPlaylistConfig.setEnabled(flowId, true);
+        await flowPlaylistConfig.scheduleNextRun(flowId);
 
         await playlistManager.ensureSmartPlaylists();
 
@@ -250,7 +250,7 @@ export function registerFlows(router) {
 
         queueFlowSideEffect("enable-flow-refresh", "enable", flowId);
       } else {
-        flowPlaylistConfig.setEnabled(flowId, false);
+        await flowPlaylistConfig.setEnabled(flowId, false);
         await playlistManager.ensureSmartPlaylists();
 
         res.json({
@@ -308,7 +308,7 @@ export function registerFlows(router) {
         artistAliases: job.artistAliases || [],
         reason: job.reason || null,
       }));
-      playlist = flowPlaylistConfig.createSharedPlaylist({
+      playlist = await flowPlaylistConfig.createSharedPlaylist({
         name: requestedName || `${flow.name} Static`,
         sourceName: flow.name,
         sourceFlowId: flowId,
@@ -363,7 +363,7 @@ export function registerFlows(router) {
       if (playlist?.id) {
         try {
           await playlistManager.weeklyReset([playlist.id]);
-          flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+          await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
           await playlistManager.ensureSmartPlaylists();
         } catch {}
       }
@@ -392,13 +392,13 @@ export function registerFlows(router) {
     }
   });
 
-  router.get("/flows/:flowId/lidarr-import-list", (req, res) => {
+  router.get("/flows/:flowId/lidarr-import-list", async (req, res) => {
     const { flowId } = req.params;
     const flow = getAccessibleFlow(req.user, flowId);
     if (!flow) {
       return res.status(404).json({ error: "Flow not found" });
     }
-    const ensured = flowPlaylistConfig.ensureLidarrFeedToken(flowId);
+    const ensured = await flowPlaylistConfig.ensureLidarrFeedToken(flowId);
     if (!ensured?.lidarrFeedToken) {
       return res.status(404).json({ error: "Flow not found" });
     }

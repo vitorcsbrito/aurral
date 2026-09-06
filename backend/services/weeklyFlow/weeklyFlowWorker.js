@@ -423,7 +423,7 @@ export class WeeklyFlowWorker {
     };
     this.clearPlaylistRunState(key);
     this.setPlaylistRunPlan(key, plan);
-    flowPlaylistConfig.markLastRunAt(key);
+    await flowPlaylistConfig.markLastRunAt(key);
     const jobIds = downloadTracker.addJobs(primaryTracks, key);
     return {
       tracksQueued: primaryTracks.length,
@@ -451,7 +451,7 @@ export class WeeklyFlowWorker {
     this.clearPlaylistRunState(key);
     this.setPlaylistRunPlan(key, plan);
     const primaryTracks = Array.isArray(plan?.primaryTracks) ? plan.primaryTracks : [];
-    flowPlaylistConfig.markLastRunAt(key);
+    await flowPlaylistConfig.markLastRunAt(key);
     const jobIds = downloadTracker.addJobs(primaryTracks, key);
     return {
       tracksQueued: primaryTracks.length,
@@ -875,7 +875,7 @@ export class WeeklyFlowWorker {
               await playlistManager.ensurePlaylists();
               await playlistManager.scheduleScanLibrary(true);
               if (flowPlaylistConfig.isEnabled(playlistType)) {
-                flowPlaylistConfig.scheduleNextRun(playlistType);
+                await flowPlaylistConfig.scheduleNextRun(playlistType);
               }
             } catch (error) {
               console.error(
@@ -886,7 +886,7 @@ export class WeeklyFlowWorker {
 
             const completed = done;
             const flowName =
-              playlistManager.getPlaylistName(playlistType) || playlistType;
+              (await playlistManager.getPlaylistName(playlistType)) || playlistType;
             const flowPath = flowPlaylistConfig.getFlow(playlistType)
               ? path.join(playlistManager.weeklyFlowRoot, AURRAL_FLOWS_DIR, playlistType)
               : playlistManager.weeklyFlowRoot;

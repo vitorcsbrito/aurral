@@ -421,7 +421,7 @@ async function handleSubsonicRequest(req, res) {
   if (method === "deleteplaylist") {
     const playlistId = getParameter(req, "id");
     if (!playlistId) return sendError(res, format, 10, "Required parameter is missing: id");
-    return deleteSubsonicPlaylist(user, playlistId)
+    return (await deleteSubsonicPlaylist(user, playlistId))
       ? sendResponse(res, format)
       : sendError(res, format, 70, "Requested data was not found");
   }

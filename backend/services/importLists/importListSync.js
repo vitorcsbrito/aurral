@@ -63,7 +63,7 @@ export async function syncSharedPlaylistImport({
     };
   } catch (error) {
     const latestPlaylist = flowPlaylistConfig.getSharedPlaylist(playlist.id);
-    flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
+    await flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
       importSource: {
         ...(latestPlaylist?.importSource || playlist.importSource),
         lastSyncError: String(error?.message || "Playlist sync failed"),
