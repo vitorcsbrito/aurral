@@ -45,12 +45,12 @@ export function createWeeklyFlowOperationToken() {
   return `${Date.now()}-${randomUUID()}`;
 }
 
-export function markLatestWeeklyFlowOperationToken(scope, token) {
+export async function markLatestWeeklyFlowOperationToken(scope, token) {
   const safeScope = String(scope || "").trim();
   const safeToken = String(token || "").trim();
   if (!safeScope || !safeToken) return;
   const current = dbOps.getJSONSetting(OPERATION_TOKENS_KEY) || {};
-  dbOps.setJSONSetting(OPERATION_TOKENS_KEY, {
+  await dbOps.setJSONSetting(OPERATION_TOKENS_KEY, {
     ...current,
     [safeScope]: safeToken,
   });

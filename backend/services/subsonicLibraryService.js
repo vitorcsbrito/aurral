@@ -965,10 +965,10 @@ export function resolveStreamPath(value, user) {
 }
 
 const cachedArtworkUrl = async (key) => {
-  const cached = dbOps.getImage(key);
+  const cached = await dbOps.getImage(key);
   if (!cached?.imageUrl || cached.imageUrl === "NOT_FOUND") return null;
   const artwork = await warmPublicImageUrl(cached.imageUrl, LIBRARY_IMAGE_PROFILE);
-  if (artwork && artwork !== cached.imageUrl) dbOps.setImage(key, artwork);
+  if (artwork && artwork !== cached.imageUrl) await dbOps.setImage(key, artwork);
   return artwork || buildImageProxyUrl(cached.imageUrl);
 };
 
@@ -984,7 +984,7 @@ export async function resolveArtworkUrl(value) {
     const result = await fetchReleaseGroupCoverUrl(releaseGroupMbid);
     if (!result?.imageUrl) return null;
     const artwork = await warmPublicImageUrl(result.imageUrl, LIBRARY_IMAGE_PROFILE);
-    if (artwork) dbOps.setImage(cacheKey, artwork);
+    if (artwork) await dbOps.setImage(cacheKey, artwork);
     return artwork;
   }
 
@@ -1017,7 +1017,7 @@ export async function resolveArtworkUrl(value) {
       const cacheId = album.releaseGroupMbid || album.mbid;
       const albumArtwork = cacheId ? await cachedArtworkUrl(`rg:${cacheId}`) : null;
       if (albumArtwork) {
-        dbOps.setImage(artistCacheKey, albumArtwork);
+        await dbOps.setImage(artistCacheKey, albumArtwork);
         return albumArtwork;
       }
     }
@@ -1025,7 +1025,7 @@ export async function resolveArtworkUrl(value) {
       const result = await getArtistImage(entity.mbid, { artistName: entity.name });
       if (result?.url) {
         const artwork = await warmPublicImageUrl(result.url, LIBRARY_IMAGE_PROFILE);
-        if (artwork) dbOps.setImage(artistCacheKey, artwork);
+        if (artwork) await dbOps.setImage(artistCacheKey, artwork);
         return artwork;
       }
     }
@@ -1045,7 +1045,7 @@ export async function resolveArtworkUrl(value) {
   });
   if (!result?.imageUrl) return null;
   const artwork = await warmPublicImageUrl(result.imageUrl, LIBRARY_IMAGE_PROFILE);
-  if (artwork) dbOps.setImage(`rg:${cacheId}`, artwork);
+  if (artwork) await dbOps.setImage(`rg:${cacheId}`, artwork);
   return artwork;
 }
 

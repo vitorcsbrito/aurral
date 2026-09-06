@@ -82,7 +82,7 @@ export const filterBlockedArtistsForUser = (userId = "global", artists = []) => 
   );
 };
 
-export const addDiscoveryFeedback = (userId = "global", entry = {}) => {
+export const addDiscoveryFeedback = async (userId = "global", entry = {}) => {
   const action = normalizeFeedbackAction(entry.action);
   if (!action) throw new Error("Invalid discovery feedback action");
   const artistId = String(entry.artistId || "").trim() || null;
@@ -106,7 +106,7 @@ export const addDiscoveryFeedback = (userId = "global", entry = {}) => {
     createdAt: now.toISOString(),
     expiresAt: null,
   };
-  const deduped = existing.filter((item) => {
+  const deduped = existing.filter(async (item) => {
     const sameArtist =
       (artistId && item.artistId && artistId === item.artistId) ||
       (artistName &&
@@ -115,23 +115,23 @@ export const addDiscoveryFeedback = (userId = "global", entry = {}) => {
     return !(sameArtist && item.action === action);
   });
   deduped.unshift(normalizedEntry);
-  dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), deduped.slice(0, 200));
+  await dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), deduped.slice(0, 200));
   return normalizedEntry;
 };
 
-export const removeDiscoveryFeedback = (userId = "global", feedbackId) => {
+export const removeDiscoveryFeedback = async (userId = "global", feedbackId) => {
   const target = String(feedbackId || "").trim();
   const next = getDiscoveryFeedback(userId).filter(
     (entry) => entry.id !== target,
   );
-  dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), next);
+  await dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), next);
   return next;
 };
 
-export const resetDiscoveryFeedback = (userId = "global") => {
+export const resetDiscoveryFeedback = async (userId = "global") => {
   const blockedArtists = getDiscoveryFeedback(userId).filter(
     (entry) => entry.action === "block_artist",
   );
-  dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), blockedArtists);
+  await dbOps.setJSONSetting(getDiscoveryFeedbackKey(userId), blockedArtists);
   return blockedArtists;
 };

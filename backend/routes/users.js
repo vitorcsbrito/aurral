@@ -88,8 +88,8 @@ const buildListenHistoryUpdates = (body, existing) => {
 
 const router = express.Router();
 
-const reconcileLocalBypassAfterUserMutation = () => {
-  const result = reconcileLocalNetworkBypassSetting();
+const reconcileLocalBypassAfterUserMutation = async () => {
+  const result = await reconcileLocalNetworkBypassSetting();
   if (result.changed) {
     websocketService.reconcileAuthState();
   }
@@ -155,7 +155,7 @@ const normalizeDiscoverLayout = (value) => {
   return normalized;
 };
 
-const clearOrphanedDiscoveryCache = (userId, existingProfile, nextProfile) => {
+const clearOrphanedDiscoveryCache = async (userId, existingProfile, nextProfile) => {
   if (
     !hasListenHistoryProfile(existingProfile) ||
     listenHistoryProfilesEqual(existingProfile, nextProfile)
@@ -164,24 +164,27 @@ const clearOrphanedDiscoveryCache = (userId, existingProfile, nextProfile) => {
   }
   const existingNamespace = getListenHistoryCacheNamespace(existingProfile);
   if (!existingNamespace) return;
-  const otherUsers = userOps
-    .getAllListeningHistoryUsers()
-    .filter((user) => user.id !== userId && listenHistoryProfilesEqual(user, existingProfile));
+  const listeningUsers = await userOps.getAllListeningHistoryUsers();
+  const otherUsers = listeningUsers.filter(
+    (user) => user.id !== userId && listenHistoryProfilesEqual(user, existingProfile),
+  );
   if (otherUsers.length === 0) {
-    dbOps.deleteDiscoveryCacheByPrefix(`${existingNamespace}:`);
+    await dbOps.deleteDiscoveryCacheByPrefix(`${existingNamespace}:`);
   }
 };
 
 router.get("/", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const users = userOps.getAllUsers();
+    const users = await userOps.getAllUsers();
     const globalPlexAccount = await resolveGlobalPlexAccount();
     res.json(
-      users.map((user) => ({
-        ...user,
-        plexLink: plexConnectionStore.getPublicStatus(user.id),
-        plexGlobalAccount: globalPlexAccount,
-      })),
+      await Promise.all(
+        users.map(async (user) => ({
+          ...user,
+          plexLink: await plexConnectionStore.getPublicStatus(user.id),
+          plexGlobalAccount: globalPlexAccount,
+        })),
+      ),
     );
   } catch (e) {
     res.status(500).json({ error: "Failed to list users", message: e.message });
@@ -195,7 +198,7 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
     if (!un || !password) {
       return res.status(400).json({ error: "Username and password required" });
     }
-    if (userOps.getUserByUsername(un)) {
+    if (await userOps.getUserByUsername(un)) {
       return res.status(409).json({ error: "Username already exists" });
     }
     const passwordValidation = requirePasswordStrength(password);
@@ -204,11 +207,11 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
     }
     const hash = hashPassword(password);
     const perms = permissions ? { ...userOps.getDefaultPermissions(), ...permissions } : null;
-    const created = userOps.createUser(un, hash, role, perms);
+    const created = await userOps.createUser(un, hash, role, perms);
     if (!created) {
       return res.status(500).json({ error: "Failed to create user" });
     }
-    reconcileLocalBypassAfterUserMutation();
+    await reconcileLocalBypassAfterUserMutation();
     res.status(201).json({
       id: created.id,
       username: created.username,
@@ -230,7 +233,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
     if (!isAdmin && !isSelf) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    const existing = userOps.getUserById(id);
+    const existing = await userOps.getUserById(id);
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -248,7 +251,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
       ...existing,
       ...(listenHistoryUpdates || {}),
     });
-    clearOrphanedDiscoveryCache(id, existingProfile, requestedProfile);
+    await clearOrphanedDiscoveryCache(id, existingProfile, requestedProfile);
     if (isSelf && !isAdmin) {
       if (permissions !== undefined || role !== undefined) {
         return res.status(403).json({ error: "Forbidden" });
@@ -284,9 +287,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
           lidarrQualityProfileId: existing.lidarrQualityProfileId,
         });
       }
-      const updated = userOps.updateUser(id, updates);
+      const updated = await userOps.updateUser(id, updates);
       if (updates.passwordHash) {
-        deleteSessionsByUserId(id);
+        await deleteSessionsByUserId(id);
       }
       return res.json(updated);
     }
@@ -317,17 +320,17 @@ router.patch("/:id", requireAuth, async (req, res) => {
         lidarrQualityProfileId: existing.lidarrQualityProfileId,
       });
     }
-    const updated = userOps.updateUser(id, updates);
-    reconcileLocalBypassAfterUserMutation();
+    const updated = await userOps.updateUser(id, updates);
+    await reconcileLocalBypassAfterUserMutation();
     res.json(updated);
   } catch (e) {
     res.status(500).json({ error: "Failed to update user", message: e.message });
   }
 });
 
-const sendListenHistorySettings = (req, res) => {
+const sendListenHistorySettings = async (req, res) => {
   try {
-    const user = userOps.getUserById(req.user.id);
+    const user = await userOps.getUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -345,7 +348,7 @@ router.get("/me/listening-history", requireAuth, sendListenHistorySettings);
 
 router.get("/me/lidarr-preferences", requireAuth, async (req, res) => {
   try {
-    const user = userOps.getUserById(req.user.id);
+    const user = await userOps.getUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -360,9 +363,9 @@ router.get("/me/lidarr-preferences", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/me/discover-layout", requireAuth, (req, res) => {
+router.get("/me/discover-layout", requireAuth, async (req, res) => {
   try {
-    const user = userOps.getUserById(req.user.id);
+    const user = await userOps.getUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -378,9 +381,9 @@ router.get("/me/discover-layout", requireAuth, (req, res) => {
   }
 });
 
-router.patch("/me/discover-layout", requireAuth, (req, res) => {
+router.patch("/me/discover-layout", requireAuth, async (req, res) => {
   try {
-    const user = userOps.getUserById(req.user.id);
+    const user = await userOps.getUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -392,7 +395,7 @@ router.patch("/me/discover-layout", requireAuth, (req, res) => {
         field: "layout",
       });
     }
-    dbOps.setUserDiscoverLayout(req.user.id, normalized);
+    await dbOps.setUserDiscoverLayout(req.user.id, normalized);
     res.json({
       layout: normalizeDiscoverLayout(dbOps.getUserDiscoverLayout(req.user.id)),
     });
@@ -406,7 +409,7 @@ router.patch("/me/discover-layout", requireAuth, (req, res) => {
 
 router.patch("/me/lidarr-preferences", requireAuth, async (req, res) => {
   try {
-    const user = userOps.getUserById(req.user.id);
+    const user = await userOps.getUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -453,7 +456,7 @@ router.patch("/me/lidarr-preferences", requireAuth, async (req, res) => {
           message: "Configure Lidarr before saving library defaults.",
         });
       }
-      const updated = userOps.updateUser(req.user.id, {
+      const updated = await userOps.updateUser(req.user.id, {
         lidarrRootFolderPath: null,
         lidarrQualityProfileId: null,
       });
@@ -494,7 +497,7 @@ router.patch("/me/lidarr-preferences", requireAuth, async (req, res) => {
       });
     }
 
-    const updated = userOps.updateUser(req.user.id, {
+    const updated = await userOps.updateUser(req.user.id, {
       lidarrRootFolderPath: nextRootFolderPath,
       lidarrQualityProfileId: nextQualityProfileId,
     });
@@ -524,32 +527,32 @@ router.post("/me/password", requireAuth, async (req, res) => {
     if (!passwordValidation.valid) {
       return res.status(400).json({ error: passwordValidation.error });
     }
-    const u = userOps.getUserById(req.user.id);
+    const u = await userOps.getUserById(req.user.id);
     if (!u || !verifyPassword(currentPassword || "", u.passwordHash)) {
       return res.status(400).json({ error: "Current password is incorrect" });
     }
     const hash = hashPassword(newPassword);
-    userOps.updateUser(req.user.id, { passwordHash: hash });
-    deleteSessionsByUserId(req.user.id);
+    await userOps.updateUser(req.user.id, { passwordHash: hash });
+    await deleteSessionsByUserId(req.user.id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: "Failed to change password", message: e.message });
   }
 });
 
-router.delete("/:id", requireAuth, requireAdmin, (req, res) => {
+router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (req.user.id === id) {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
-    const existing = userOps.getUserById(id);
+    const existing = await userOps.getUserById(id);
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
     }
-    deleteSessionsByUserId(id);
-    userOps.deleteUser(id);
-    reconcileLocalBypassAfterUserMutation();
+    await deleteSessionsByUserId(id);
+    await userOps.deleteUser(id);
+    await reconcileLocalBypassAfterUserMutation();
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: "Failed to delete user", message: e.message });

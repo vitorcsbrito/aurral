@@ -44,7 +44,7 @@ export function registerFlows(router) {
         });
       }
 
-      const { token, tokenScope } = markFlowMutationToken(flowId);
+      const { token, tokenScope } = await markFlowMutationToken(flowId);
       const result = await weeklyFlowOperationQueue.enqueuePayload({
         kind: "manual-start-flow",
         label: `manual-start:${flowId}`,
@@ -191,7 +191,7 @@ export function registerFlows(router) {
       if (!getAccessibleFlow(req.user, flowId)) {
         return res.status(404).json({ error: "Flow not found" });
       }
-      const { token, tokenScope } = markFlowMutationToken(flowId);
+      const { token, tokenScope } = await markFlowMutationToken(flowId);
       const deleted = await weeklyFlowOperationQueue.enqueuePayload({
         kind: "delete-flow",
         label: `delete:${flowId}`,

@@ -67,6 +67,9 @@ function scheduleCanonicalLibraryReconciliation({ artistId = null } = {}) {
   return scheduleLibraryScan({
     includeLidarr: true,
     artistIds: Number.isSafeInteger(lidarrArtistId) && lidarrArtistId > 0 ? [lidarrArtistId] : null,
+  }).catch((error) => {
+    console.warn("[Library] Failed to schedule reconciliation scan:", error?.message || error);
+    return null;
   });
 }
 
@@ -403,7 +406,7 @@ export class LibraryManager {
         : options.monitorOption && options.monitorOption !== "none"
           ? options.monitorOption
           : defaultMonitorOption;
-    const currentUser = options.user?.id != null ? userOps.getUserById(options.user.id) : null;
+    const currentUser = options.user?.id != null ? await userOps.getUserById(options.user.id) : null;
     const preparedAddOptions = await lidarr.resolveArtistAddConfiguration({
       requestRootFolderPath: options.rootFolderPath,
       requestQualityProfileId: options.qualityProfileId,
@@ -1009,11 +1012,11 @@ export class LibraryManager {
     }
   }
 
-  mapLidarrArtist(lidarrArtist) {
+  async mapLidarrArtist(lidarrArtist) {
     const artistPath = lidarrArtist.path ?? null;
     const artistId = Number(lidarrArtist.id);
     const foreignArtistId = String(lidarrArtist.foreignArtistId || "").trim() || null;
-    const mappedMbid = dbOps.getLidarrArtistMbid(foreignArtistId);
+    const mappedMbid = await dbOps.getLidarrArtistMbid(foreignArtistId);
     const mbid =
       mappedMbid || (foreignArtistId && UUID_REGEX.test(foreignArtistId) ? foreignArtistId : null);
     const normalizedArtistId =
@@ -1048,7 +1051,7 @@ export class LibraryManager {
     const artistName = String(lidarrArtist?.artistName || "").trim();
     if (!providerId || !artistName || UUID_REGEX.test(providerId)) return null;
 
-    const existingMbid = dbOps.getLidarrArtistMbid(providerId);
+    const existingMbid = await dbOps.getLidarrArtistMbid(providerId);
     if (existingMbid) return existingMbid;
 
     const mbid = await musicbrainzResolveArtistMbidByName(artistName);
@@ -1071,7 +1074,7 @@ export class LibraryManager {
     }
 
     try {
-      dbOps.setLidarrArtistIdMap(mbid, providerId);
+      await dbOps.setLidarrArtistIdMap(mbid, providerId);
       return mbid;
     } catch (error) {
       if (error?.code !== "LIDARR_ARTIST_ID_CONFLICT") throw error;
@@ -1088,7 +1091,7 @@ export class LibraryManager {
         !providerId ||
         UUID_REGEX.test(providerId) ||
         seen.has(providerId) ||
-        dbOps.getLidarrArtistMbid(providerId)
+        await dbOps.getLidarrArtistMbid(providerId)
       ) {
         continue;
       }
@@ -1152,7 +1155,7 @@ export class LibraryManager {
       const lidarrArtist = await lidarr.getArtistByMbid(mbid);
       if (!lidarrArtist) return { success: false, error: "Artist not found in Lidarr" };
       await lidarr.deleteArtist(lidarrArtist.id, deleteFiles);
-      dbOps.deleteLidarrArtistIdMap(mbid);
+      await dbOps.deleteLidarrArtistIdMap(mbid);
       removeCachedArtistByMbid(mbid);
       clearCanonicalLidarrArtist(mbid);
       clearCanonicalLidarrArtist(lidarrArtist.foreignArtistId);

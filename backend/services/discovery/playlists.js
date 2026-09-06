@@ -111,7 +111,7 @@ export const runQueuedDiscoverPlaylistBuild = async (payload = {}) => {
         }
 
         discoveryCache.discoverPlaylists = discoverPlaylists;
-        dbOps.updateDiscoveryCache(
+        await dbOps.updateDiscoveryCache(
           { discoverPlaylists },
           cacheNamespace,
         );

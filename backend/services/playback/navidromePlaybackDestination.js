@@ -91,9 +91,9 @@ export class NavidromePlaybackDestination {
     return String(value || "").replace(/[<>:"/\\|?*]/g, "_").trim();
   }
 
-  getPlaylistNames({ entityId, ownerUserId = null, displayName } = {}) {
+  async getPlaylistNames({ entityId, ownerUserId = null, displayName } = {}) {
     const name = String(displayName || "").trim();
-    const owner = ownerUserId == null ? null : userOps.getUserById(ownerUserId);
+    const owner = ownerUserId == null ? null : await userOps.getUserById(ownerUserId);
     const current = owner?.username ? `${owner.username} - ${name}` : name;
     const shared = Boolean(flowPlaylistConfig.getSharedPlaylist(entityId));
     const legacy = shared
@@ -171,7 +171,7 @@ export class NavidromePlaybackDestination {
     const playlists = await this._loadPlaylists();
     for (const name of [...new Set((names || []).filter(Boolean))]) {
       const playlist = playlists.find((candidate) => candidate.name === name);
-      if (!playlist || navidromePlaylistPointerStore.hasPlaylistId(playlist.id)) continue;
+      if (!playlist || await navidromePlaylistPointerStore.hasPlaylistId(playlist.id)) continue;
       try {
         await this.client.deletePlaylist(playlist.id);
         this._playlists = this._playlists.filter((candidate) => candidate.id !== playlist.id);
@@ -226,7 +226,7 @@ export class NavidromePlaybackDestination {
       if (!this.isConfigured()) return playbackOperationSuccess();
       const entity = this._getEntity(entityId);
       const targetKey = this._targetKey(ownerUserId);
-      const pointer = navidromePlaylistPointerStore.getPointer(entityId, targetKey);
+      const pointer = await navidromePlaylistPointerStore.getPointer(entityId, targetKey);
       if (!entity || !pointer) return playbackOperationSuccess();
       await this._uploadPlaylistArtwork({
         entityId,
@@ -248,7 +248,7 @@ export class NavidromePlaybackDestination {
       if (!this.isConfigured() || typeof this.client?.deletePlaylistArtwork !== "function") {
         return playbackOperationSuccess();
       }
-      const pointer = navidromePlaylistPointerStore.getPointer(
+      const pointer = await navidromePlaylistPointerStore.getPointer(
         entityId,
         this._targetKey(ownerUserId),
       );
@@ -359,7 +359,7 @@ export class NavidromePlaybackDestination {
     const targetKey = this._targetKey(snapshot.ownerUserId);
     const syncKey = `${snapshot.entityId}:${targetKey}`;
     const syncHash = JSON.stringify(snapshot);
-    let pointer = navidromePlaylistPointerStore.getPointer(snapshot.entityId, targetKey);
+    let pointer = await navidromePlaylistPointerStore.getPointer(snapshot.entityId, targetKey);
     if (pointer && this._syncHashes.get(syncKey) === syncHash) {
       return playbackOperationSuccess();
     }
@@ -367,7 +367,7 @@ export class NavidromePlaybackDestination {
       const nativePlaylist = await this.client.getPlaylist(pointer.playlistId).catch(() => null);
       const importedSourceName = this._getImportedSourceName(nativePlaylist?.comment);
       if (importedSourceName && this._isActiveNameForOtherEntity(snapshot.entityId, importedSourceName)) {
-        navidromePlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
+        await navidromePlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
         pointer = null;
       }
     }
@@ -399,20 +399,23 @@ export class NavidromePlaybackDestination {
     let importedPlaylistName = null;
     if (!pointer) {
       const playlists = await this._loadPlaylists();
-      const importedPlaylist = playlists.find(
-        (playlist) => (
+      let importedPlaylist = null;
+      for (const playlist of playlists) {
+        const nameMatches =
           importedPlaylistNames.includes(playlist.name)
           || this._getImportedSourceName(playlist.comment) === this._sanitize(current)
           || legacy.some(
             (name) => this._getImportedSourceName(playlist.comment) === this._sanitize(name),
-          )
-        )
-          && !navidromePlaylistPointerStore.hasPlaylistId(playlist.id),
-      );
+          );
+        if (!nameMatches) continue;
+        if (await navidromePlaylistPointerStore.hasPlaylistId(playlist.id)) continue;
+        importedPlaylist = playlist;
+        break;
+      }
       if (importedPlaylist) {
         importedPlaylistName = importedPlaylist.name;
         pointer = { playlistId: importedPlaylist.id, title: importedPlaylist.name };
-        navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
+        await navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
       }
     }
     if (
@@ -422,7 +425,7 @@ export class NavidromePlaybackDestination {
     ) {
       await this.client.renamePlaylist(pointer.playlistId, current);
       pointer = { ...pointer, title: current };
-      navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
+      await navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
     }
     const songs = [];
     for (let index = 0; index < snapshot.tracks.length; index += SONG_LOOKUP_BATCH_SIZE) {
@@ -466,15 +469,17 @@ export class NavidromePlaybackDestination {
         }
       }
       if (!playlist) {
-        navidromePlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
+        await navidromePlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
       }
     }
     if (!playlist) {
       const playlists = await this._fetchPlaylists();
-      if (importedPlaylistNames.length) playlist = playlists.find((candidate) =>
-        importedPlaylistNames.includes(candidate.name)
-        && !navidromePlaylistPointerStore.hasPlaylistId(candidate.id),
-      );
+      for (const candidate of importedPlaylistNames.length ? playlists : []) {
+        if (!importedPlaylistNames.includes(candidate.name)) continue;
+        if (await navidromePlaylistPointerStore.hasPlaylistId(candidate.id)) continue;
+        playlist = candidate;
+        break;
+      }
       if (playlist) {
         await this.client.updatePlaylist(playlist.id, { name: current, songIds });
       } else {
@@ -483,7 +488,7 @@ export class NavidromePlaybackDestination {
       }
     }
     if (!playlist?.id) throw new Error("Navidrome did not return a playlist ID");
-    navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, {
+    await navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, {
       playlistId: playlist.id,
       title: current,
     });
@@ -546,7 +551,7 @@ export class NavidromePlaybackDestination {
       const targetKey = this._targetKey(identity.ownerUserId);
       const key = `${identity.entityId}:${targetKey}`;
       return await this._runPlaylistOperation(key, async () => {
-        const pointer = navidromePlaylistPointerStore.getPointer(identity.entityId, targetKey);
+        const pointer = await navidromePlaylistPointerStore.getPointer(identity.entityId, targetKey);
         let pointerError = null;
         let pointerResolved = !pointer;
         if (pointer && this.isConfigured()) {
@@ -558,7 +563,7 @@ export class NavidromePlaybackDestination {
           }
         }
         if (pointerResolved) {
-          navidromePlaylistPointerStore.deletePointer(identity.entityId, targetKey);
+          await navidromePlaylistPointerStore.deletePointer(identity.entityId, targetKey);
         }
         this._pendingSnapshots.delete(key);
         this._syncHashes.delete(key);

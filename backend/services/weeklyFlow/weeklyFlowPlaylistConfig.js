@@ -5,6 +5,13 @@ import { getDiscoverPlaylistPreset } from "../../config/discoverPlaylistPresets.
 import { EDITORIAL_PLAYLIST_POOL } from "../../config/editorialPlaylistPresets.js";
 
 const LEGACY_TYPES = ["discover", "mix", "trending"];
+
+// Accessors stay sync; settings mirror updates before the DB write lands.
+const persistSettings = async (settings) => {
+  await dbOps.updateSettings(settings).catch(async (error) => {
+    console.warn("[WeeklyFlow] Failed to persist playlist settings:", error?.message || error);
+  });
+};
 export const IMPORT_SOURCE_PROVIDERS = new Set([
   "spotify-playlist",
   "listenbrainz-playlist",
@@ -524,7 +531,7 @@ const getStoredFlows = () => {
       return normalizeFlow(flow);
     });
     if (idMap.size > 0 || needsSave) {
-      dbOps.updateSettings({
+      persistSettings({
         ...settings,
         flows: nextFlows,
       });
@@ -537,7 +544,7 @@ const getStoredFlows = () => {
     cachedFlows = [];
     return cachedFlows;
   }
-  dbOps.updateSettings({
+  persistSettings({
     ...settings,
     flows: [],
   });
@@ -548,7 +555,7 @@ const getStoredFlows = () => {
 const setFlows = (flows) => {
   cachedFlows = flows;
   const current = dbOps.getSettings();
-  dbOps.updateSettings({
+  persistSettings({
     ...current,
     flows,
   });
@@ -566,7 +573,7 @@ const getStoredSharedPlaylists = () => {
       next.length !== stored.length ||
       next.some((playlist, index) => JSON.stringify(playlist) !== JSON.stringify(stored[index]));
     if (needsSave) {
-      dbOps.updateSettings({
+      persistSettings({
         ...settings,
         sharedPlaylists: next,
       });
@@ -574,7 +581,7 @@ const getStoredSharedPlaylists = () => {
     cachedSharedPlaylists = next;
     return cachedSharedPlaylists;
   }
-  dbOps.updateSettings({
+  persistSettings({
     ...settings,
     sharedPlaylists: [],
   });
@@ -585,7 +592,7 @@ const getStoredSharedPlaylists = () => {
 const setSharedPlaylists = (playlists) => {
   cachedSharedPlaylists = playlists;
   const current = dbOps.getSettings();
-  dbOps.updateSettings({
+  persistSettings({
     ...current,
     sharedPlaylists: playlists,
   });

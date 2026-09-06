@@ -80,14 +80,14 @@ export async function repairInterruptedLibraryScans() {
   const pending = closed > 0 || dbOps.getJSONSetting(SEARCH_REPAIR_PENDING_KEY) === true;
   if (pending) {
     await repairLibrarySearchDocuments();
-    dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, false);
+    await dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, false);
   }
   return closed;
 }
 
-export function closeInterruptedLibraryScans() {
+export async function closeInterruptedLibraryScans() {
   const closed = failInterruptedLibraryScans();
-  if (closed > 0) dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, true);
+  if (closed > 0) await dbOps.setJSONSetting(SEARCH_REPAIR_PENDING_KEY, true);
   return closed;
 }
 

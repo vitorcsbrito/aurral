@@ -495,7 +495,7 @@ export function registerGeneral(router) {
         delete updatedSettings.integrations.musicbrainz;
       }
 
-      dbOps.updateSettings(updatedSettings);
+      await dbOps.updateSettings(updatedSettings);
       const { downloadClientRegistry } = await import(
         "../../../services/download/downloadClientSettings.js"
       );
@@ -537,7 +537,7 @@ export function registerGeneral(router) {
         }
         playlistManager.scheduleScanLibrary(true);
       }
-      const reconciled = reconcileLocalNetworkBypassSetting().settings;
+      const reconciled = (await reconcileLocalNetworkBypassSetting()).settings;
       if (
         localBypassWasEnabled &&
         reconciled?.security?.localNetworkBypass?.enabled !== true

@@ -236,12 +236,12 @@ async function buildSystemPayload(settings) {
   };
 }
 
-function buildBootstrapPayload(req) {
+async function buildBootstrapPayload(req) {
   lidarrClient.updateConfig();
   const settings = dbOps.getSettings();
   const onboardingDone = settings.onboardingComplete;
-  const authRequired = isAuthRequiredByConfig();
-  const currentUser = resolveRequestUser(req);
+  const authRequired = await isAuthRequiredByConfig();
+  const currentUser = await resolveRequestUser(req);
   const lidarrConfigured = lidarrClient.isConfigured();
 
   const oidcInfo = getOidcBootstrapInfo();
@@ -290,9 +290,9 @@ function buildBootstrapPayload(req) {
     payload.deemixConfigured = downloadSources.deemix.configured;
     payload.downloadSources = downloadSources;
     payload.metadataProviders = getMetadataProviderHealthSnapshot();
-    payload.localNetworkBypass = getLocalNetworkBypassStatus(req);
+    payload.localNetworkBypass = await getLocalNetworkBypassStatus(req);
     payload.proxyLogoutUrl = process.env.AUTH_PROXY_LOGOUT_URL || null;
-    const proxySession = issueProxySession(req);
+    const proxySession = await issueProxySession(req);
     if (proxySession) payload.token = proxySession.token;
   }
 
@@ -303,9 +303,9 @@ router.get("/live", noCache, (_req, res) => {
   res.json({ status: "ok" });
 });
 
-router.get("/bootstrap", noCache, (req, res) => {
+router.get("/bootstrap", noCache, async (req, res) => {
   try {
-    res.json(buildBootstrapPayload(req));
+    res.json(await buildBootstrapPayload(req));
   } catch (error) {
     logger.error("health", "Bootstrap check error:", { message: error.message });
     res.status(500).json({
@@ -314,20 +314,24 @@ router.get("/bootstrap", noCache, (req, res) => {
   }
 });
 
-router.post("/stream-token", noCache, (req, res) => {
-  const user = resolveRequestUser(req);
-  if (!user) {
-    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+router.post("/stream-token", noCache, async (req, res, next) => {
+  try {
+    const user = await resolveRequestUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+    }
+    const token = issueStreamToken(user);
+    return res.json({ token, expiresIn: 120 });
+  } catch (error) {
+    return next(error);
   }
-  const token = issueStreamToken(user);
-  return res.json({ token, expiresIn: 120 });
 });
 
 router.get("/", noCache, async (req, res) => {
   try {
     const settings = dbOps.getSettings();
-    const currentUser = resolveRequestUser(req);
-    const payload = buildBootstrapPayload(req);
+    const currentUser = await resolveRequestUser(req);
+    const payload = await buildBootstrapPayload(req);
     if (currentUser) {
       const discoveryCache = getDiscoveryCache();
       const wsStats = websocketService.getStats();
@@ -337,7 +341,7 @@ router.get("/", noCache, async (req, res) => {
         lastScan: null,
       };
       const discoveryUpdateStatus = getDiscoveryUpdateStatus();
-      const artworkLinkCount = dbOps.countImages();
+      const artworkLinkCount = await dbOps.countImages();
       const nativeImageCacheSizeBytes = await getImageProxyCacheSizeBytes();
       payload.discovery = {
         provider: getLastfmApiKey()

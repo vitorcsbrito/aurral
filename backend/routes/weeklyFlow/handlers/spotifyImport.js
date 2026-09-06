@@ -39,8 +39,8 @@ function sendSpotifyError(res, error, fallback) {
 }
 
 export function registerSpotifyImport(router) {
-  router.get("/import/spotify/status", (req, res) => {
-    res.json(spotifyConnectionStore.getPublicStatus(req.user.id));
+  router.get("/import/spotify/status", async (req, res) => {
+    res.json(await spotifyConnectionStore.getPublicStatus(req.user.id));
   });
 
   router.post("/import/spotify/oauth/start", (req, res) => {
@@ -78,7 +78,7 @@ export function registerSpotifyImport(router) {
           `Spotify profile lookup failed after OAuth complete: ${error?.message || "Unknown error"}`,
         );
       }
-      const saved = spotifyConnectionStore.saveConnection(req.user.id, {
+      const saved = await spotifyConnectionStore.saveConnection(req.user.id, {
         accessToken,
         refreshToken,
         expiresAt,
@@ -97,8 +97,8 @@ export function registerSpotifyImport(router) {
     }
   });
 
-  router.delete("/import/spotify", (req, res) => {
-    spotifyConnectionStore.clearConnection(req.user.id);
+  router.delete("/import/spotify", async (req, res) => {
+    await spotifyConnectionStore.clearConnection(req.user.id);
     spotifyClient.clearPlaylistTrackCache(req.user.id);
     res.json({ connected: false });
   });

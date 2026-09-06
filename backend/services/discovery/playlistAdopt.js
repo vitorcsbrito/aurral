@@ -15,8 +15,8 @@ import {
 import { flowPlaylistConfig } from "../weeklyFlow/weeklyFlowPlaylistConfig.js";
 import { weeklyFlowOperationQueue } from "../weeklyFlow/weeklyFlowOperationQueue.js";
 import { playlistManager } from "../weeklyFlow/weeklyFlowPlaylistManager.js";
-const resolveDiscoverAdoptContext = (user, presetId) => {
-  const reqUser = userOps.getUserById(user?.id);
+const resolveDiscoverAdoptContext = async (user, presetId) => {
+  const reqUser = await userOps.getUserById(user?.id);
   const listenHistoryProfile = getListenHistoryProfile(reqUser || user || {});
   const userCacheNamespace = getListenHistoryCacheNamespace(listenHistoryProfile);
   const effectiveCacheNamespace = getLastfmApiKey() ? userCacheNamespace : null;
@@ -46,7 +46,7 @@ export async function adoptDiscoverPresetAsFlow(user, presetId) {
     };
   }
 
-  const { cachedPlaylist } = resolveDiscoverAdoptContext(user, safePresetId);
+  const { cachedPlaylist } = await resolveDiscoverAdoptContext(user, safePresetId);
   if (!cachedPlaylist || cachedPlaylist.trackCount <= 0) {
     throw Object.assign(new Error("Run discovery refresh to generate this playlist first"), {
       statusCode: 404,
@@ -101,7 +101,7 @@ export async function adoptDiscoverPresetAsPlaylist(user, presetId) {
     };
   }
 
-  const { cachedPlaylist } = resolveDiscoverAdoptContext(user, safePresetId);
+  const { cachedPlaylist } = await resolveDiscoverAdoptContext(user, safePresetId);
   if (!cachedPlaylist || cachedPlaylist.trackCount <= 0) {
     throw Object.assign(new Error("Run discovery refresh to generate this playlist first"), {
       statusCode: 404,

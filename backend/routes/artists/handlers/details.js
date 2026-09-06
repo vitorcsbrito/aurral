@@ -54,7 +54,7 @@ export function registerDetails(router) {
         message: `"${mbid}" is not a valid MusicBrainz ID. MBIDs must be UUIDs.`,
       });
     }
-    const override = dbOps.getArtistOverride(mbid);
+    const override = await dbOps.getArtistOverride(mbid);
     return res.json({
       mbid,
       musicbrainzId: override?.musicbrainzId || null,
@@ -98,8 +98,8 @@ export function registerDetails(router) {
     }
 
     if (!musicbrainzId && !deezerArtistId) {
-      dbOps.deleteArtistOverride(mbid);
-      dbOps.deleteImage(mbid);
+      await dbOps.deleteArtistOverride(mbid);
+      await dbOps.deleteImage(mbid);
       return res.json({
         mbid,
         musicbrainzId: null,
@@ -107,11 +107,11 @@ export function registerDetails(router) {
       });
     }
 
-    const saved = dbOps.setArtistOverride(mbid, {
+    const saved = await dbOps.setArtistOverride(mbid, {
       musicbrainzId,
       deezerArtistId,
     });
-    dbOps.deleteImage(mbid);
+    await dbOps.deleteImage(mbid);
     return res.json(saved);
   });
 
@@ -159,7 +159,7 @@ export function registerDetails(router) {
       logger.info("api", "Fetching artist details", { mbid });
 
       let data = null;
-      const override = dbOps.getArtistOverride(mbid);
+      const override = await dbOps.getArtistOverride(mbid);
       const resolvedMbid = override?.musicbrainzId || mbid;
 
       const lidarrArtist =

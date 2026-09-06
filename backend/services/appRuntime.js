@@ -195,7 +195,7 @@ export function startBackgroundWorkers({ logger = console } = {}) {
     .then((closed) => {
       if (Number(closed || 0) > 0) {
         logger.info?.("system", `[AppRuntime] Closed ${closed} interrupted library scan(s) on startup`);
-        scheduleLibraryScan({ includeLidarr: false });
+        return scheduleLibraryScan({ includeLidarr: false });
       }
     })
     .catch((error) => {

@@ -31,7 +31,7 @@ export async function getUserDiscovery(userId, limit = 50, offset = 0) {
   const hasLastfmKey = !!getLastfmApiKey();
   const libraryArtists = getCanonicalArtistKeys();
 
-  const reqUser = userOps.getUserById(userId);
+  const reqUser = await userOps.getUserById(userId);
   const externalListenHistoryProfile = getListenHistoryProfile(reqUser || {});
   const localHistoryArtists = await getTopPlayedArtists(userId, { limit: 50 });
   const localOnlyProfile = externalListenHistoryProfile.listenHistoryProvider === "local";

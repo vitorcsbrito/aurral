@@ -67,7 +67,7 @@ export function registerShows(router) {
       const radiusMiles = Number.isFinite(configuredRadius)
         ? Math.max(5, Math.min(250, Math.floor(configuredRadius)))
         : undefined;
-      const reqUser = userOps.getUserById(req.user.id);
+      const reqUser = await userOps.getUserById(req.user.id);
       const userCacheNamespace = getLastfmApiKey()
         ? getListenHistoryCacheNamespace(getListenHistoryProfile(reqUser || {}))
         : null;

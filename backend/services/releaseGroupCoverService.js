@@ -39,20 +39,20 @@ const toPublicCoverUrl = (imageUrl) => {
   return buildStableImageProxyUrl(imageUrl);
 };
 
-const getCachedUrl = (cacheKey) => {
-  const cached = dbOps.getImage(cacheKey);
+const getCachedUrl = async (cacheKey) => {
+  const cached = await dbOps.getImage(cacheKey);
   if (
     cached?.imageUrl &&
     cached.imageUrl !== "NOT_FOUND" &&
     LEGACY_COVER_HOST_PATTERN.test(cached.imageUrl)
   ) {
-    dbOps.deleteImage(cacheKey);
+    await dbOps.deleteImage(cacheKey);
     return undefined;
   }
   if (cached?.imageUrl && cached.imageUrl !== "NOT_FOUND") {
     const imageUrl = toPublicCoverUrl(cached.imageUrl);
     if (imageUrl) return imageUrl;
-    dbOps.deleteImage(cacheKey);
+    await dbOps.deleteImage(cacheKey);
   }
   if (cached?.imageUrl === "NOT_FOUND") {
     return null;
@@ -60,14 +60,14 @@ const getCachedUrl = (cacheKey) => {
   return undefined;
 };
 
-const persistCover = (cacheKey, proxiedUrl) => {
-  dbOps.setImage(cacheKey, proxiedUrl);
+const persistCover = async (cacheKey, proxiedUrl) => {
+  await dbOps.setImage(cacheKey, proxiedUrl);
 };
 
 const acceptCoverUrl = async (cacheKey, imageUrl, { persist = true } = {}) => {
   const proxiedUrl = toPublicCoverUrl(imageUrl);
   if (!proxiedUrl) return null;
-  if (persist) persistCover(cacheKey, proxiedUrl);
+  if (persist) await persistCover(cacheKey, proxiedUrl);
   return {
     imageUrl: proxiedUrl,
     types: ["Front"],
@@ -128,7 +128,7 @@ const fetchReleaseGroupCoverUncached = async (
   { artistName = "", albumTitle = "", bypassCache = false } = {},
 ) => {
   const cacheKey = `${RG_CACHE_PREFIX}${releaseGroupMbid}`;
-  const cached = bypassCache ? undefined : getCachedUrl(cacheKey);
+  const cached = bypassCache ? undefined : await getCachedUrl(cacheKey);
   if (cached !== undefined) {
     return {
       imageUrl: cached,
@@ -175,7 +175,7 @@ const fetchReleaseGroupCoverUncached = async (
   if (sawTransientError) {
     return { imageUrl: null, types: [], notFound: false, transientError: true };
   }
-  dbOps.setImage(cacheKey, "NOT_FOUND");
+  await dbOps.setImage(cacheKey, "NOT_FOUND");
   return { imageUrl: null, types: [], notFound: true, transientError: false };
 };
 
@@ -215,17 +215,17 @@ const normalizeBatchItem = (item) => {
   };
 };
 
-export const attachCachedCoverUrls = (releaseGroups = [], limit = null) => {
+export const attachCachedCoverUrls = async (releaseGroups = [], limit = null) => {
   if (!Array.isArray(releaseGroups) || releaseGroups.length === 0) {
     return releaseGroups;
   }
   const targets =
     typeof limit === "number" && limit > 0 ? releaseGroups.slice(0, limit) : releaseGroups;
-  const targetIds = new Set(targets.map((releaseGroup) => releaseGroup?.id).filter(Boolean));
+  const targetIds = new Set(targets.map(async (releaseGroup) => releaseGroup?.id).filter(Boolean));
   if (targetIds.size === 0) {
     return releaseGroups;
   }
-  const cachedEntries = dbOps.getImages([...targetIds].map((id) => `${RG_CACHE_PREFIX}${id}`));
+  const cachedEntries = await dbOps.getImages([...targetIds].map((id) => `${RG_CACHE_PREFIX}${id}`));
   return releaseGroups.map((releaseGroup) => {
     if (!releaseGroup?.id || !targetIds.has(releaseGroup.id)) {
       return releaseGroup;
@@ -260,7 +260,7 @@ export const resolveReleaseGroupCoversBatch = async (
   }
 
   const covers = {};
-  const cachedEntries = dbOps.getImages(normalized.map((item) => `${RG_CACHE_PREFIX}${item.mbid}`));
+  const cachedEntries = await dbOps.getImages(normalized.map((item) => `${RG_CACHE_PREFIX}${item.mbid}`));
   const missing = [];
 
   for (const item of normalized) {

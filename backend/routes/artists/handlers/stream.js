@@ -49,7 +49,7 @@ export function registerStream(router) {
         });
       }
 
-      if (!verifyTokenAuth(req)) {
+      if (!(await verifyTokenAuth(req))) {
         return res.status(401).json({
           error: "Unauthorized",
           message: "Authentication required",
@@ -72,7 +72,7 @@ export function registerStream(router) {
 
       sendSSE(res, "connected", { mbid });
 
-      const override = dbOps.getArtistOverride(mbid);
+      const override = await dbOps.getArtistOverride(mbid);
       const resolvedMbid = override?.musicbrainzId || mbid;
       const initialName = streamArtistName || "Unknown Artist";
       const sendArtist = (payload) => {
@@ -136,7 +136,7 @@ export function registerStream(router) {
             releaseGroupsPromise,
           ]).then(async ([metadataArtist, name, releaseGroups]) => {
             if (!isClientConnected()) return null;
-            const releaseGroupsWithCovers = attachCachedCoverUrls(releaseGroups, 12);
+            const releaseGroupsWithCovers = await attachCachedCoverUrls(releaseGroups, 12);
             sendArtist({
               ...buildArtistBase(name, resolvedMbid, metadataArtist),
               "release-groups": releaseGroupsWithCovers,
@@ -155,7 +155,7 @@ export function registerStream(router) {
               { limit: appearsOnLimit, signal: requestController.signal },
             ).catch(() => []);
             if (!isClientConnected()) return appearsOnReleaseGroups;
-            const appearsOnWithCovers = attachCachedCoverUrls(
+            const appearsOnWithCovers = await attachCachedCoverUrls(
               appearsOnReleaseGroups,
               appearsOnLimit || 6,
             );
@@ -171,7 +171,7 @@ export function registerStream(router) {
         const coverTask = (async () => {
           if (!isClientConnected()) return;
           try {
-            const cachedImage = dbOps.getImage(mbid);
+            const cachedImage = await dbOps.getImage(mbid);
             if (cachedImage && cachedImage.imageUrl && cachedImage.imageUrl !== "NOT_FOUND") {
               const artistName = (await namePromise.catch(() => null)) || streamArtistName || null;
               if (!isClientConnected()) return;
@@ -207,7 +207,7 @@ export function registerStream(router) {
             }
 
             if (cover?.notFound) {
-              dbOps.setImage(mbid, "NOT_FOUND");
+              await dbOps.setImage(mbid, "NOT_FOUND");
             }
             sendSSE(res, "cover", { images: [] });
           } catch (e) {

@@ -40,10 +40,10 @@ export default function createHonkerWorker({
       }
     } catch {}
     if (typeof onJobError === "function") {
-      onJobError(error, job);
+      await onJobError(error, job);
     }
     if (typeof resolveRetry === "function") {
-      const decision = resolveRetry(error, job);
+      const decision = await resolveRetry(error, job);
       if (decision?.action === "fail") {
         job.fail(decision.message ?? message);
         if (typeof onFinalFailure === "function") {
@@ -80,7 +80,7 @@ export default function createHonkerWorker({
       })) {
         idleController.disarm();
         if (!running || stopRequested) break;
-        if (typeof filterJob === "function" && filterJob(job) === false) {
+        if (typeof filterJob === "function" && (await filterJob(job)) === false) {
           job.ack();
           idleController.arm();
           continue;
@@ -92,7 +92,7 @@ export default function createHonkerWorker({
           await withJobHeartbeat(job, queue, () => processJob(job.payload, job));
           job.ack();
           if (typeof onJobSuccess === "function") {
-            onJobSuccess(job.payload, job);
+            await onJobSuccess(job.payload, job);
           }
         } catch (error) {
           await handleJobFailure(error, job, queue);

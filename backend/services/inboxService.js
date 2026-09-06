@@ -71,8 +71,8 @@ const getStoredRefreshStatus = (userId) =>
     jobId: null,
   };
 
-const setStoredRefreshStatus = (userId, status) =>
-  dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
+const setStoredRefreshStatus = async (userId, status) =>
+  await dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
     ...getStoredRefreshStatus(userId),
     ...status,
     updatedAt: Date.now(),
@@ -477,7 +477,7 @@ export async function refreshInboxForAllUsers(options = {}) {
   return enqueueInboxRefreshForAllUsers({ reason: "scheduled", ...options });
 }
 
-export function getInboxForUser(userId, options = {}) {
+export async function getInboxForUser(userId, options = {}) {
   const kinds = getEnabledKinds(getInboxPreferences());
   const refreshStatus = getInboxRefreshStatus(userId);
   if (kinds.length === 0) {
@@ -489,19 +489,19 @@ export function getInboxForUser(userId, options = {}) {
     };
   }
   return {
-    items: dbOps.getInboxItems(userId, { limit: options.limit || 50, kinds }),
-    unreadCount: dbOps.getInboxUnreadCount(userId, kinds),
+    items: await dbOps.getInboxItems(userId, { limit: options.limit || 50, kinds }),
+    unreadCount: await dbOps.getInboxUnreadCount(userId, kinds),
     refreshing: refreshStatus.status === "queued" || refreshStatus.status === "running",
     refreshStatus,
   };
 }
 
-export const updateInboxItem = (userId, itemId, updates) =>
-  dbOps.updateInboxItem(userId, itemId, updates);
+export const updateInboxItem = async (userId, itemId, updates) =>
+  await dbOps.updateInboxItem(userId, itemId, updates);
 
-export const markAllInboxItemsRead = (userId) => {
-  dbOps.markAllInboxItemsRead(userId);
-  return dbOps.getInboxUnreadCount(userId);
+export const markAllInboxItemsRead = async (userId) => {
+  await dbOps.markAllInboxItemsRead(userId);
+  return await dbOps.getInboxUnreadCount(userId);
 };
 
 export const getInboxRefreshCooldownMs = () => REFRESH_COOLDOWN_MS;

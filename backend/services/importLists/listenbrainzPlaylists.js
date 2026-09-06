@@ -11,8 +11,8 @@ const GENERATED_PLAYLIST_NAMES = {
   "weekly-exploration": "Weekly Exploration",
 };
 
-const getConnection = (userId) => {
-  const connection = scrobbleConnectionStore.getConnection(userId, "listenbrainz");
+const getConnection = async (userId) => {
+  const connection = await scrobbleConnectionStore.getConnection(userId, "listenbrainz");
   if (connection) return connection;
   const error = new Error("ListenBrainz is not connected");
   error.statusCode = 401;
@@ -122,7 +122,7 @@ const getGeneratedPlaylistTypeOrThrow = (value) => {
 
 export const listenbrainzPlaylistClient = {
   async listPlaylists(userId) {
-    const connection = getConnection(userId);
+    const connection = await getConnection(userId);
     const username = String(connection.displayName || "").trim();
     if (!username) {
       const error = new Error("ListenBrainz connection has no username");
@@ -178,7 +178,7 @@ export const listenbrainzPlaylistClient = {
   },
 
   async getGeneratedPlaylistTracks(userId, sourceType) {
-    const connection = getConnection(userId);
+    const connection = await getConnection(userId);
     const username = String(connection.displayName || "").trim();
     if (!username) {
       const error = new Error("ListenBrainz connection has no username");
@@ -203,7 +203,7 @@ export const listenbrainzPlaylistClient = {
   },
 
   async getPlaylistTracks(userId, playlistId) {
-    const connection = getConnection(userId);
+    const connection = await getConnection(userId);
     const id = validatePlaylistId(playlistId);
     const payload = await listenbrainzRequest(
       `/1/playlist/${encodeURIComponent(id)}`,

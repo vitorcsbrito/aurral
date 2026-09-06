@@ -6,18 +6,18 @@ import { ensureDownloadFolderPath, listBrowseDirectory } from "../services/downl
 
 const router = express.Router();
 
-function canBrowseFilesystem(req) {
+async function canBrowseFilesystem(req) {
   const settings = dbOps.getSettings();
   if (!settings.onboardingComplete) {
     return true;
   }
-  const user = resolveRequestUser(req);
+  const user = await resolveRequestUser(req);
   return user?.role === "admin";
 }
 
-router.get("/browse", noCache, (req, res) => {
+router.get("/browse", noCache, async (req, res) => {
   try {
-    if (!canBrowseFilesystem(req)) {
+    if (!(await canBrowseFilesystem(req))) {
       return res.status(403).json({
         error: "Forbidden",
         message: "Admin access is required to browse storage paths.",
@@ -33,9 +33,9 @@ router.get("/browse", noCache, (req, res) => {
   }
 });
 
-router.post("/ensure", noCache, (req, res) => {
+router.post("/ensure", noCache, async (req, res) => {
   try {
-    if (!canBrowseFilesystem(req)) {
+    if (!(await canBrowseFilesystem(req))) {
       return res.status(403).json({
         error: "Forbidden",
         message: "Admin access is required to browse storage paths.",

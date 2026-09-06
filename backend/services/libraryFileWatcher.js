@@ -236,7 +236,11 @@ const clearDeferredFullScan = () => {
 };
 
 function applyWatcherPlan(plan, { logger, now, fullScanIntervalMs }) {
-  for (const request of plan.requests) scheduleLibraryScan(request);
+  for (const request of plan.requests) {
+    scheduleLibraryScan(request).catch((error) => {
+      logger.warn?.("library", "[Library] Failed to schedule watcher scan:", { error: error?.message || String(error) });
+    });
+  }
   if (plan.fullScheduled) {
     lastFullScanAt = now;
     clearDeferredFullScan();
@@ -248,7 +252,9 @@ function applyWatcherPlan(plan, { logger, now, fullScanIntervalMs }) {
     deferredFullScanTimer = setTimeout(() => {
       deferredFullScanTimer = null;
       lastFullScanAt = Date.now();
-      scheduleLibraryScan({ includeLidarr: true });
+      scheduleLibraryScan({ includeLidarr: true }).catch((error) => {
+        logger.warn?.("library", "[Library] Failed to schedule deferred full scan:", { error: error?.message || String(error) });
+      });
     }, delay);
     deferredFullScanTimer.unref?.();
   }

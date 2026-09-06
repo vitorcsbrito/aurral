@@ -157,8 +157,8 @@ export class WeeklyFlowWorker {
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   }
 
-  _setRetryJobRegistry(registry) {
-    dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
+  async _setRetryJobRegistry(registry) {
+    await dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
   }
 
   getScheduledRetryJobId(playlistType) {
@@ -200,7 +200,7 @@ export class WeeklyFlowWorker {
     return paused.includes(String(playlistType));
   }
 
-  setRetryCyclePaused(playlistType, paused) {
+  async setRetryCyclePaused(playlistType, paused) {
     const id = String(playlistType || "").trim();
     if (!id) return false;
     const current = dbOps.getSettings();
@@ -212,7 +212,7 @@ export class WeeklyFlowWorker {
     } else {
       pausedIds.delete(id);
     }
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...current,
       playlistWorker: {
         ...worker,
@@ -274,7 +274,7 @@ export class WeeklyFlowWorker {
     };
   }
 
-  updateWorkerSettings(nextSettings = {}) {
+  async updateWorkerSettings(nextSettings = {}) {
     const current = dbOps.getSettings();
     const base = this.getWorkerSettings();
     const normalized = {
@@ -288,7 +288,7 @@ export class WeeklyFlowWorker {
           ? base.existingFileMode
           : this._normalizeExistingFileMode(nextSettings.existingFileMode),
     };
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...current,
       playlistWorker: {
         concurrency: normalized.concurrency,
@@ -392,10 +392,10 @@ export class WeeklyFlowWorker {
     };
   }
 
-  _getFlowListenHistoryProfile(flow) {
+  async _getFlowListenHistoryProfile(flow) {
     const ownerUserId = Number(flow?.ownerUserId);
     if (!Number.isFinite(ownerUserId)) return null;
-    const owner = userOps.getUserById(ownerUserId);
+    const owner = await userOps.getUserById(ownerUserId);
     return owner ? getListenHistoryProfile(owner) : null;
   }
 

@@ -24,14 +24,14 @@ router.post("/login", async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: "Username and password are required" });
     }
-    const user = userOps.getUserByUsername(username);
+    const user = await userOps.getUserByUsername(username);
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
     if (needsRehash(user.passwordHash)) {
-      userOps.updateUser(user.id, { passwordHash: hashPassword(password) });
+      await userOps.updateUser(user.id, { passwordHash: hashPassword(password) });
     }
-    const session = createSession(user.id, req.ip || null, req.headers["user-agent"] || null);
+    const session = await createSession(user.id, req.ip || null, req.headers["user-agent"] || null);
     res.json({
       token: session.token,
       expiresAt: session.expiresAt,
@@ -43,46 +43,62 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (error) {
+    logger.error("auth", "Login failed", { message: error?.message || String(error) });
     res.status(500).json({ error: "Login failed" });
   }
 });
 
-router.post("/logout", requireAuth, (req, res) => {
-  const token = getBearerToken(req);
-  if (token) {
-    deleteSession(token);
+router.post("/logout", requireAuth, async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (token) {
+      await deleteSession(token);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
   }
-  res.json({ success: true });
 });
 
-router.get("/me", requireAuth, (req, res) => {
-  const token = getBearerToken(req);
-  if (!token) {
+router.get("/me", requireAuth, async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.json({
+        user: req.user,
+        expiresAt: null,
+      });
+    }
+    const session = await getSessionByToken(token);
+    if (!session?.user) {
+      return res.json({
+        user: req.user,
+        expiresAt: null,
+      });
+    }
     return res.json({
-      user: req.user,
-      expiresAt: null,
+      user: session.user,
+      expiresAt: session.expiresAt,
     });
+  } catch (error) {
+    return next(error);
   }
-  const session = getSessionByToken(token);
-  if (!session?.user) {
-    return res.json({
-      user: req.user,
-      expiresAt: null,
-    });
-  }
-  res.json({
-    user: session.user,
-    expiresAt: session.expiresAt,
-  });
 });
 
-router.get("/api-key", requireAuth, (req, res) => {
-  res.json({ apiKey: getApiKey() });
+router.get("/api-key", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ apiKey: await getApiKey() });
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.post("/api-key/rotate", requireAuth, (req, res) => {
-  const newKey = rotateApiKey();
-  res.json({ apiKey: newKey });
+router.post("/api-key/rotate", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ apiKey: await rotateApiKey() });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.get("/oidc/login", async (req, res) => {
@@ -96,9 +112,9 @@ router.get("/oidc/login", async (req, res) => {
   }
 });
 
-router.post("/oidc/exchange", (req, res) => {
+router.post("/oidc/exchange", async (req, res) => {
   try {
-    const result = exchangeOidcCallback(req.body?.code, req);
+    const result = await exchangeOidcCallback(req.body?.code, req);
     clearOidcTransactionCookie(req, res);
     res.json(result);
   } catch (error) {

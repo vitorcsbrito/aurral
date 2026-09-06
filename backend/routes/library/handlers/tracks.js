@@ -243,7 +243,7 @@ export function registerTracks(router) {
   });
 
   router.get("/canonical-stream/:albumId/:trackId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
@@ -262,7 +262,7 @@ export function registerTracks(router) {
   });
 
   router.get("/file-stream/:albumId/:trackId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 

@@ -334,7 +334,7 @@ export function registerMisc(router) {
         "../../../services/discovery/recentReleases.js"
       );      const recentMissing = await getRecentMissingReleases(24);
 
-      const cachedCovers = dbOps.getImages(
+      const cachedCovers = await dbOps.getImages(
         recentMissing
           .map((album) => album.mbid || album.foreignAlbumId)
           .filter(Boolean)

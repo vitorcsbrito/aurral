@@ -32,7 +32,7 @@ export function registerAdmin(router) {
 
   router.post("/clear", requireAuth, requireAdmin, async (req, res) => {
     try {
-      dbOps.clearImages();
+      await dbOps.clearImages();
       await clearImageProxyCache();
       clearApiCaches();
       res.json({ message: "Artwork cache cleared" });
@@ -44,7 +44,7 @@ export function registerAdmin(router) {
   });
 
   router.post("/clear-discovery", requireAuth, requireAdmin, async (req, res) => {
-    dbOps.updateDiscoveryCache({
+    await dbOps.updateDiscoveryCache({
       recommendations: [],
       globalTop: [],
       basedOn: [],

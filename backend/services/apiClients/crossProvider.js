@@ -19,7 +19,7 @@ export async function resolveDeezerAlbumToMbid(
   const dzKey = `dz:${String(deezerAlbumId || "").replace(/^dz-/, "")}`;
   const aaKey = normalizeArtistAlbumKey(artistName, albumName);
   const cached =
-    dbOps.getDeezerMbidCache(dzKey) || dbOps.getDeezerMbidCache(aaKey);
+    await dbOps.getDeezerMbidCache(dzKey) || await dbOps.getDeezerMbidCache(aaKey);
   if (cached) return cached;
 
   const artist = String(artistName || "").trim();
@@ -32,8 +32,8 @@ export async function resolveDeezerAlbumToMbid(
       albumTitle: album,
     });
     if (!id) return null;
-    dbOps.setDeezerMbidCache(dzKey, id);
-    dbOps.setDeezerMbidCache(aaKey, id);
+    await dbOps.setDeezerMbidCache(dzKey, id);
+    await dbOps.setDeezerMbidCache(aaKey, id);
     return id;
   } catch (e) {
     return null;

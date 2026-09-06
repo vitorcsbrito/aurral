@@ -18,7 +18,7 @@ export async function runScheduledRefresh() {
     try {
       const token = createWeeklyFlowOperationToken();
       const tokenScope = `flow:${flow.id}:scheduled`;
-      markLatestWeeklyFlowOperationToken(tokenScope, token);
+      await markLatestWeeklyFlowOperationToken(tokenScope, token);
       await weeklyFlowOperationQueue.enqueuePayload({
         kind: "scheduled-flow-refresh",
         label: `scheduled:${flow.id}`,

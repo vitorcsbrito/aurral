@@ -45,8 +45,8 @@ const getStoredState = () => {
   };
 };
 
-const saveState = (state) => {
-  dbOps.setJSONSetting(NEWS_STATE_KEY, {
+const saveState = async (state) => {
+  await dbOps.setJSONSetting(NEWS_STATE_KEY, {
     checkedAt: state.checkedAt || 0,
     articles: state.articles.slice(0, MAX_ARTICLES),
     failedFeeds: state.failedFeeds.slice(0, 50),
@@ -98,7 +98,7 @@ async function enrichArticleImages(articles, state) {
   state.articles = state.articles.map((article) => (
     images.has(article.id) ? { ...article, imageUrl: images.get(article.id) } : article
   ));
-  saveState(state);
+  await saveState(state);
   return articles.map((article) => (
     images.has(article.id) ? { ...article, imageUrl: images.get(article.id) } : article
   ));
@@ -116,7 +116,7 @@ async function refreshRssFeeds() {
     state.checkedAt = now;
     state.failedFeeds = [];
     state.articles = [];
-    saveState(state);
+    await saveState(state);
     return { state, attemptedCount: 0, warning: null };
   }
 
@@ -141,7 +141,7 @@ async function refreshRssFeeds() {
     .slice(0, MAX_ARTICLES);
   state.checkedAt = now;
   state.failedFeeds = failedFeeds;
-  saveState(state);
+  await saveState(state);
   return {
     state,
     attemptedCount: feeds.length,
@@ -184,28 +184,28 @@ export const getNewsPreferences = (userId) => {
   return { blockedPublishers: normalizeBlockedPublishers(stored?.blockedPublishers) };
 };
 
-export const updateNewsPreferences = (userId, preferences = {}) => {
+export const updateNewsPreferences = async (userId, preferences = {}) => {
   const next = { blockedPublishers: normalizeBlockedPublishers(preferences.blockedPublishers) };
-  dbOps.setJSONSetting(NEWS_PREFERENCES_KEY(userId), next);
+  await dbOps.setJSONSetting(NEWS_PREFERENCES_KEY(userId), next);
   newsResponseCache.flushAll();
   return next;
 };
 
-export const disableNewsFeed = (sourceUrl, sourceName) => {
+export const disableNewsFeed = async (sourceUrl, sourceName) => {
   const settings = dbOps.getSettings();
   const news = getNewsSettings();
   const url = String(sourceUrl || "").trim();
   const name = String(sourceName || "").trim().toLowerCase();
-  const feeds = news.feeds.map((feed) => (
+  const feeds = news.feeds.map(async (feed) => (
     (url && feed.url === url) || (!url && name && feed.name.toLowerCase() === name)
       ? { ...feed, enabled: false }
       : feed
   ));
-  if (!feeds.some((feed, index) => feed.enabled !== news.feeds[index]?.enabled)) {
+  if (!feeds.some(async (feed, index) => feed.enabled !== news.feeds[index]?.enabled)) {
     return news;
   }
   const nextNews = { ...news, feeds };
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     integrations: { ...(settings.integrations || {}), news: nextNews },
   });
   newsResponseCache.flushAll();

@@ -13,7 +13,7 @@ export function registerPreferences(router) {
     });
   });
 
-  router.post("/preferences", requireAuth, (req, res) => {
+  router.post("/preferences", requireAuth, async (req, res) => {
     try {
       const updates = req.body || {};
       const currentSettings = dbOps.getSettings();
@@ -38,7 +38,7 @@ export function registerPreferences(router) {
           },
         },
       };
-      dbOps.updateSettings(nextSettings);
+      await dbOps.updateSettings(nextSettings);
 
       res.json({
         success: true,
@@ -61,9 +61,9 @@ export function registerPreferences(router) {
     }
   });
 
-  router.post("/preferences/reset", requireAuth, (req, res) => {
+  router.post("/preferences/reset", requireAuth, async (req, res) => {
     const currentSettings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...currentSettings,
       integrations: {
         ...(currentSettings.integrations || {}),

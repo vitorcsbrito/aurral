@@ -992,11 +992,11 @@ export async function runStorageHealthCheck({ force = false } = {}) {
 
   storageHealthInflightKey = cacheKey;
   storageHealthInflight = buildStorageHealthCheck()
-    .then((result) => {
+    .then(async (result) => {
       storageHealthCache = result;
       storageHealthCacheKey = cacheKey;
       storageHealthCacheExpiresAt = Date.now() + STORAGE_HEALTH_CACHE_TTL_MS;
-      dbOps.setJSONSetting(STORAGE_HEALTH_SNAPSHOT_KEY, result);
+      await dbOps.setJSONSetting(STORAGE_HEALTH_SNAPSHOT_KEY, result);
       return result;
     })
     .finally(() => {

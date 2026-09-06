@@ -124,7 +124,10 @@ export class WeeklyFlowPlaylistManager {
   }
 
   scheduleScanLibrary(force = false) {
-    return scheduleLibraryScan({ force, includeLidarr: false });
+    return scheduleLibraryScan({ force, includeLidarr: false }).catch((error) => {
+      console.warn("[WeeklyFlow] Failed to schedule library scan:", error?.message || error);
+      return null;
+    });
   }
 
   async _ensureFlowArtwork(playlistType, playlistName, artworkKind) {

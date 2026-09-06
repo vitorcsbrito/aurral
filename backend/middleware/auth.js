@@ -43,11 +43,7 @@ export const getAuthPassword = () => {
 
 const API_KEY_SETTINGS_KEY = "apiKey";
 
-export const getApiKey = () => {
-  const settings = dbOps.getSettings();
-  const existing = settings.integrations?.general?.[API_KEY_SETTINGS_KEY];
-  if (existing && typeof existing === "string" && existing.length >= 32) return existing;
-  const key = crypto.randomBytes(32).toString("hex");
+const persistApiKey = async (settings, key) => {
   const next = {
     ...settings,
     integrations: {
@@ -58,26 +54,19 @@ export const getApiKey = () => {
       },
     },
   };
-  dbOps.updateSettings(next);
+  await dbOps.updateSettings(next);
   return key;
 };
 
-export const rotateApiKey = () => {
+export const getApiKey = async () => {
   const settings = dbOps.getSettings();
-  const key = crypto.randomBytes(32).toString("hex");
-  const next = {
-    ...settings,
-    integrations: {
-      ...(settings.integrations || {}),
-      general: {
-        ...(settings.integrations?.general || {}),
-        [API_KEY_SETTINGS_KEY]: key,
-      },
-    },
-  };
-  dbOps.updateSettings(next);
-  return key;
+  const existing = settings.integrations?.general?.[API_KEY_SETTINGS_KEY];
+  if (existing && typeof existing === "string" && existing.length >= 32) return existing;
+  return persistApiKey(settings, crypto.randomBytes(32).toString("hex"));
 };
+
+export const rotateApiKey = async () =>
+  persistApiKey(dbOps.getSettings(), crypto.randomBytes(32).toString("hex"));
 
 export const isProxyAuthEnabled = () => {
   if (process.env.AUTH_PROXY_ENABLED === "true") return true;
@@ -306,18 +295,18 @@ export function sendUnauthorizedResponse(req, res, { challenge = false, ...overr
   });
 }
 
-export const resolveSessionUserFromToken = (token) => {
+export const resolveSessionUserFromToken = async (token) => {
   if (!token) return null;
-  return toSessionUser(getSessionByToken(token));
+  return toSessionUser(await getSessionByToken(token));
 };
 
-function resolveApiKeyUser(req) {
+async function resolveApiKeyUser(req) {
   const headerKey = (req.headers["x-api-key"] || "").trim();
   const queryKey = (req.query?.api_key || "").trim();
   const incoming = headerKey || queryKey;
   if (!incoming) return null;
   try {
-    const storedKey = getApiKey();
+    const storedKey = await getApiKey();
     if (safeCompare(incoming, storedKey)) {
       return {
         id: -1,
@@ -334,25 +323,21 @@ function resolveApiKeyUser(req) {
 
 export const isOidcAuthEnabled = () => process.env.OIDC_ENABLED === "true";
 
-export const isAuthRequiredByConfig = () => {
+export const isAuthRequiredByConfig = async () => {
   const settings = dbOps.getSettings();
   const onboardingDone = settings.onboardingComplete;
   if (!onboardingDone) return false;
   const legacyPasswords = getAuthPassword();
-  return (
-    isProxyAuthEnabled() ||
-    isOidcAuthEnabled() ||
-    userOps.countUsers() > 0 ||
-    legacyPasswords.length > 0
-  );
+  if (isProxyAuthEnabled() || isOidcAuthEnabled() || legacyPasswords.length > 0) return true;
+  return (await userOps.countUsers()) > 0;
 };
 
 export const getLocalNetworkBypassConfig = (settings = dbOps.getSettings()) =>
   normalizeLocalNetworkBypassSettings(settings);
 
-export function getSoleAdminUser() {
-  if (userOps.countUsers() !== 1) return null;
-  const [user] = userOps.getAllUsers();
+export async function getSoleAdminUser() {
+  if ((await userOps.countUsers()) !== 1) return null;
+  const [user] = await userOps.getAllUsers();
   if (user?.role !== "admin") return null;
   return user;
 }
@@ -372,12 +357,12 @@ export function isRequestFromTrustedLocalSubnet(req) {
   });
 }
 
-export function getLocalNetworkBypassStatus(req) {
+export async function getLocalNetworkBypassStatus(req) {
   const settings = dbOps.getSettings();
   const config = getLocalNetworkBypassConfig(settings);
   const onboardingDone = settings?.onboardingComplete === true;
-  const userCount = userOps.countUsers();
-  const soleUser = userCount === 1 ? userOps.getAllUsers()[0] : null;
+  const userCount = await userOps.countUsers();
+  const soleUser = userCount === 1 ? (await userOps.getAllUsers())[0] : null;
   const soleAdminUser = soleUser?.role === "admin" ? soleUser : null;
   const subnet = inferTrustedLocalSubnet();
 
@@ -409,7 +394,7 @@ export function getLocalNetworkBypassStatus(req) {
   };
 }
 
-export function reconcileLocalNetworkBypassSetting() {
+export async function reconcileLocalNetworkBypassSetting() {
   const currentSettings = dbOps.getSettings();
   const current = getLocalNetworkBypassConfig(currentSettings);
   if (!current.enabled) {
@@ -418,7 +403,7 @@ export function reconcileLocalNetworkBypassSetting() {
       settings: withLocalNetworkBypassDefaults(currentSettings),
     };
   }
-  const status = getLocalNetworkBypassStatus({
+  const status = await getLocalNetworkBypassStatus({
     headers: {},
     socket: {},
     connection: {},
@@ -433,27 +418,27 @@ export function reconcileLocalNetworkBypassSetting() {
   }
   const nextSettings = withLocalNetworkBypassDefaults(currentSettings);
   nextSettings.security.localNetworkBypass.enabled = false;
-  dbOps.updateSettings(nextSettings);
+  await dbOps.updateSettings(nextSettings);
   return {
     changed: true,
     settings: nextSettings,
   };
 }
 
-export function ensureExternalUser(username, role) {
-  const existing = userOps.getUserByUsername(username);
+export async function ensureExternalUser(username, role) {
+  const existing = await userOps.getUserByUsername(username);
   if (existing) {
     if (existing.role !== role) {
-      const updated = userOps.updateUser(existing.id, { role });
+      const updated = await userOps.updateUser(existing.id, { role });
       return toResolvedUser(updated || existing);
     }
     return toResolvedUser(existing);
   }
   const passwordHash = hashPassword(crypto.randomBytes(32).toString("hex"));
-  const created = userOps.createUser(username, passwordHash, role, null);
+  const created = await userOps.createUser(username, passwordHash, role, null);
   return created
-    ? toResolvedUser(userOps.getUserByUsername(created.username) || created)
-    : toResolvedUser(userOps.getUserByUsername(username));
+    ? toResolvedUser((await userOps.getUserByUsername(created.username)) || created)
+    : toResolvedUser(await userOps.getUserByUsername(username));
 }
 
 function isProxyAdmin(req, username) {
@@ -482,7 +467,7 @@ function resolveProxyRole(req, username) {
   return isProxyAdmin(req, username) ? "admin" : defaultRole;
 }
 
-export function resolveProxyUser(req) {
+export async function resolveProxyUser(req) {
   if (!isProxyAuthEnabled()) return null;
   if (!isTrustedProxy(req)) return null;
   const headerName = getProxyHeaderName();
@@ -494,38 +479,38 @@ export function resolveProxyUser(req) {
   return ensureExternalUser(username, role);
 }
 
-export function issueProxySession(req) {
-  if (!isAuthRequiredByConfig()) return null;
-  if (resolveSessionUserFromToken(getBearerToken(req))) return null;
-  const proxyUser = resolveProxyUser(req);
+export async function issueProxySession(req) {
+  if (!(await isAuthRequiredByConfig())) return null;
+  if (await resolveSessionUserFromToken(getBearerToken(req))) return null;
+  const proxyUser = await resolveProxyUser(req);
   if (!proxyUser?.id || proxyUser.id < 0) return null;
   return createSession(proxyUser.id, req.ip || null, req.headers["user-agent"] || null);
 }
 
-function migrateLegacyAdmin() {
-  if (userOps.countUsers() > 0) return;
+async function migrateLegacyAdmin() {
+  if ((await userOps.countUsers()) > 0) return;
   const settings = dbOps.getSettings();
   const onboardingComplete = settings.onboardingComplete;
   const authUser = settings.integrations?.general?.authUser || "admin";
   const authPassword = settings.integrations?.general?.authPassword;
   if (!onboardingComplete || !authPassword) return;
   const hash = hashPassword(authPassword);
-  userOps.createUser(authUser, hash, "admin", null);
+  await userOps.createUser(authUser, hash, "admin", null);
 }
 
-export function resolveUser(username, password) {
-  if (userOps.countUsers() === 0) {
-    migrateLegacyAdmin();
-    if (userOps.countUsers() === 0) return null;
+export async function resolveUser(username, password) {
+  if ((await userOps.countUsers()) === 0) {
+    await migrateLegacyAdmin();
+    if ((await userOps.countUsers()) === 0) return null;
   }
   const un = String(username || "")
     .trim()
     .toLowerCase();
-  const u = userOps.getUserByUsername(un);
+  const u = await userOps.getUserByUsername(un);
   if (!u || !password) return null;
   if (!verifyPassword(password, u.passwordHash)) return null;
   if (needsRehash(u.passwordHash)) {
-    userOps.updateUser(u.id, { passwordHash: hashPassword(password) });
+    await userOps.updateUser(u.id, { passwordHash: hashPassword(password) });
   }
   const perms = buildPermissions(u.role, u.permissions);
   return {
@@ -536,7 +521,7 @@ export function resolveUser(username, password) {
   };
 }
 
-export function resolveSubsonicTokenUser(username, token, salt) {
+export async function resolveSubsonicTokenUser(username, token, salt) {
   if (!/^[a-f\d]{32}$/i.test(String(token || "")) || !String(salt || "")) return null;
   if (
     !safeCompare(
@@ -578,18 +563,18 @@ function legacyAuth(username, password) {
   };
 }
 
-export function resolveLocalNetworkBypassUser(req) {
-  const status = getLocalNetworkBypassStatus(req);
+export async function resolveLocalNetworkBypassUser(req) {
+  const status = await getLocalNetworkBypassStatus(req);
   if (!status.active) return null;
-  return toResolvedUser(getSoleAdminUser());
+  return toResolvedUser(await getSoleAdminUser());
 }
 
-export function resolveRequestUser(req) {
-  const sessionUser = resolveSessionUserFromToken(getBearerToken(req));
+export async function resolveRequestUser(req) {
+  const sessionUser = await resolveSessionUserFromToken(getBearerToken(req));
   if (sessionUser) return sessionUser;
-  const proxyUser = resolveProxyUser(req);
+  const proxyUser = await resolveProxyUser(req);
   if (proxyUser) return proxyUser;
-  const apiKeyUser = resolveApiKeyUser(req);
+  const apiKeyUser = await resolveApiKeyUser(req);
   if (apiKeyUser) return apiKeyUser;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Basic ")) {
@@ -599,7 +584,7 @@ export function resolveRequestUser(req) {
       const colon = decoded.indexOf(":");
       const username = colon >= 0 ? decoded.slice(0, colon) : decoded;
       const password = colon >= 0 ? decoded.slice(colon + 1) : "";
-      let user = resolveUser(username, password);
+      let user = await resolveUser(username, password);
       if (!user) user = legacyAuth(username, password);
       if (user) return user;
     } catch (e) {
@@ -647,7 +632,8 @@ function consumeStreamToken(rawToken) {
   return payload.user || null;
 }
 
-export const authMiddleware = (req, res, next) => {
+export const authMiddleware = async (req, res, next) => {
+  try {
     if (!req.path.startsWith("/api")) return next();
     if (
       req.path === "/api/health" ||
@@ -689,21 +675,24 @@ export const authMiddleware = (req, res, next) => {
 
     if (req.path.startsWith("/api/onboarding") && !onboardingDone) return next();
 
-    const authRequired = isAuthRequiredByConfig();
+    const authRequired = await isAuthRequiredByConfig();
 
     if (!authRequired) return next();
 
-    const user = resolveRequestUser(req);
+    const user = await resolveRequestUser(req);
     if (user) {
       req.user = user;
       return next();
     }
 
     return sendUnauthorizedResponse(req, res);
+  } catch (error) {
+    return next(error);
+  }
 };
 
-function getCredentialsFromRequest(req) {
-  const sessionUser = resolveSessionUserFromToken(req.query.token);
+async function getCredentialsFromRequest(req) {
+  const sessionUser = await resolveSessionUserFromToken(req.query.token);
   if (sessionUser) {
     return { type: "session", user: sessionUser };
   }
@@ -723,20 +712,20 @@ function getCredentialsFromRequest(req) {
   return null;
 }
 
-export const verifyTokenAuth = (req) => {
-  const user = resolveRequestUser(req);
+export const verifyTokenAuth = async (req) => {
+  const user = await resolveRequestUser(req);
   if (user) {
     req.user = user;
     return true;
   }
-  const creds = getCredentialsFromRequest(req);
+  const creds = await getCredentialsFromRequest(req);
   if (creds) {
     if (creds.type === "session" && creds.user) {
       req.user = creds.user;
       return true;
     }
     if (creds.type === "basic") {
-      let u = resolveUser(creds.username, creds.password);
+      let u = await resolveUser(creds.username, creds.password);
       if (!u) u = legacyAuth(creds.username, creds.password);
       if (u) {
         req.user = u;

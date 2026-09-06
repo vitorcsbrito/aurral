@@ -83,7 +83,7 @@ export function toPublicLibraryPage(page, favoriteKeys = null) {
 export function registerCanonical(router) {
   router.post("/refresh", requireAuth, async (_req, res, next) => {
     try {
-      const jobId = scheduleLibraryScan({ force: true });
+      const jobId = await scheduleLibraryScan({ force: true });
       res.status(202).json({
         queued: true,
         jobId,

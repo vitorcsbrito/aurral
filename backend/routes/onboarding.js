@@ -174,16 +174,16 @@ router.post("/complete", async (req, res) => {
       nextSettings.downloadFolderPath = validation.path;
     }
 
-    dbOps.updateSettings(nextSettings);
+    await dbOps.updateSettings(nextSettings);
 
     const authUserFinal = integrations?.general?.authUser || "admin";
     const authPasswordFinal = integrations?.general?.authPassword || "";
-    if (authPasswordFinal && userOps.getAllUsers().length === 0) {
+    if (authPasswordFinal && (await userOps.countUsers()) === 0) {
       const hash = hashPassword(authPasswordFinal);
-      userOps.createUser(authUserFinal, hash, "admin", null);
+      await userOps.createUser(authUserFinal, hash, "admin", null);
     }
 
-    reconcileLocalNetworkBypassSetting();
+    await reconcileLocalNetworkBypassSetting();
 
     if (integrations?.lidarr?.apiKey) {
       const { enqueueDiscoveryRefresh } = await import(

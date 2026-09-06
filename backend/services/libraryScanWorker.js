@@ -14,8 +14,8 @@ function getScanRegistry() {
   return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
 }
 
-function setScanRegistry(registry) {
-  dbOps.setJSONSetting(LIBRARY_SCAN_REGISTRY_KEY, registry);
+async function setScanRegistry(registry) {
+  await dbOps.setJSONSetting(LIBRARY_SCAN_REGISTRY_KEY, registry);
 }
 
 function normalizeJobId(value) {
@@ -44,7 +44,7 @@ export async function hasCompletedLibraryScan() {
   return Boolean(row);
 }
 
-export function clearScheduledLibraryScan(jobId = null) {
+export async function clearScheduledLibraryScan(jobId = null) {
   const registry = getScanRegistry();
   if (!("jobId" in registry)) return;
   if (jobId != null && Number(registry.jobId) !== Number(jobId)) return;
@@ -53,7 +53,7 @@ export function clearScheduledLibraryScan(jobId = null) {
   delete registry.artistIds;
   delete registry.includeLocal;
   delete registry.force;
-  setScanRegistry(registry);
+  await setScanRegistry(registry);
 }
 
 const normalizeArtistIds = (value) => [
@@ -82,7 +82,7 @@ const registryEntry = (jobId, includeLidarr, artistIds = null, force = false, in
 // scoped or local-only job to a full scan. A request that arrives while the
 // pending job is already running gets a fresh job, so nothing asked for after
 // the running scan captured its options is lost.
-export function scheduleLibraryScan({
+export async function scheduleLibraryScan({
   force = false,
   includeLidarr = true,
   artistIds = null,
@@ -99,48 +99,48 @@ export function scheduleLibraryScan({
     const pendingForce = registry.force === true || force === true;
     const pendingLocal = registry.includeLocal === true;
     if (force === true && registry.force !== true) {
-      setScanRegistry(registryEntry(existingJobId, true, null, true));
+      await setScanRegistry(registryEntry(existingJobId, true, null, true));
     } else if (scoped.length && pendingScope.length) {
       const merged = [...new Set([...pendingScope, ...scoped])];
       const mergedLocal = pendingLocal || includeLocal === true;
       if (merged.length !== pendingScope.length || mergedLocal !== pendingLocal) {
-        setScanRegistry(registryEntry(existingJobId, true, merged, pendingForce, mergedLocal));
+        await setScanRegistry(registryEntry(existingJobId, true, merged, pendingForce, mergedLocal));
       }
     } else if (pendingScope.length && localRequest) {
       if (!pendingLocal) {
-        setScanRegistry(registryEntry(existingJobId, true, pendingScope, pendingForce, true));
+        await setScanRegistry(registryEntry(existingJobId, true, pendingScope, pendingForce, true));
       }
     } else if (pendingScope.length) {
-      setScanRegistry(registryEntry(existingJobId, true, null, pendingForce));
+      await setScanRegistry(registryEntry(existingJobId, true, null, pendingForce));
     } else if (scoped.length && registry.includeLidarr !== true) {
       // Pending local-only scan plus a scoped request: scan the Aurral root
       // and the listed artists, not the whole Lidarr library.
-      setScanRegistry(registryEntry(existingJobId, true, scoped, pendingForce, true));
+      await setScanRegistry(registryEntry(existingJobId, true, scoped, pendingForce, true));
     } else if (includeLidarr === true && registry.includeLidarr !== true) {
-      setScanRegistry(registryEntry(existingJobId, true, null, pendingForce));
+      await setScanRegistry(registryEntry(existingJobId, true, null, pendingForce));
     }
     return existingJobId;
   }
-  if (existingJobId != null) clearScheduledLibraryScan(existingJobId);
+  if (existingJobId != null) await clearScheduledLibraryScan(existingJobId);
   const payload = { force: force === true, includeLidarr: includeLidarr === true || scoped.length > 0 };
   if (scoped.length) payload.artistIds = scoped;
   if (scoped.length && includeLocal === true) payload.includeLocal = true;
   const jobId = enqueueLibraryScanJob(payload);
-  setScanRegistry(registryEntry(jobId, payload.includeLidarr, scoped, force, includeLocal));
+  await setScanRegistry(registryEntry(jobId, payload.includeLidarr, scoped, force, includeLocal));
   return jobId;
 }
 
-export function claimScheduledLibraryScanJob(jobId) {
+export async function claimScheduledLibraryScanJob(jobId) {
   const normalizedJobId = normalizeJobId(jobId);
   if (normalizedJobId == null) return false;
   const registry = getScanRegistry();
   const scheduledJobId = getScheduledLibraryScanJobId();
   if (scheduledJobId != null && scheduledJobId !== normalizedJobId) {
     if (hasLiveScanJob(scheduledJobId)) return false;
-    clearScheduledLibraryScan(scheduledJobId);
+    await clearScheduledLibraryScan(scheduledJobId);
   }
   const owned = Number(registry.jobId) === normalizedJobId;
-  setScanRegistry(registryEntry(
+  await setScanRegistry(registryEntry(
     normalizedJobId,
     owned && registry.includeLidarr === true,
     owned ? registry.artistIds : null,
@@ -151,11 +151,11 @@ export function claimScheduledLibraryScanJob(jobId) {
 }
 
 export function onLibraryScanSuccess(_payload, job) {
-  clearScheduledLibraryScan(job.id);
+  return clearScheduledLibraryScan(job.id);
 }
 
 export function onLibraryScanFinalFailure(job) {
-  clearScheduledLibraryScan(job.id);
+  return clearScheduledLibraryScan(job.id);
 }
 
 export async function getLibraryScanStatus(jobId) {
@@ -242,7 +242,7 @@ const {
     await playlistManager.scanLibrary();
     websocketService.broadcast("library", { type: "library_scan_completed" });
   },
-  resolveRetry(error, job) {
+  async resolveRetry(error, job) {
     const message = error?.message || String(error);
     if (job.attempts >= 3) {
       return { action: "fail", message };
@@ -250,7 +250,7 @@ const {
     const registry = getScanRegistry();
     // A newer job may own the registry by now; its entry must survive.
     if (Number(registry.jobId) === Number(job.id)) {
-      setScanRegistry(registryEntry(
+      await setScanRegistry(registryEntry(
         job.id,
         registry.includeLidarr === true,
         registry.artistIds,

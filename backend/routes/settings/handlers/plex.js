@@ -25,7 +25,7 @@ export function registerPlex(router) {
       let clientId = plex.clientId;
       if (!clientId) {
         clientId = PlexClient.generateClientId();
-        dbOps.updateSettings({
+        await dbOps.updateSettings({
           ...settings,
           integrations: {
             ...settings.integrations,

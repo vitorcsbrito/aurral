@@ -188,8 +188,8 @@ async function handleSubsonicRequest(req, res) {
   const user = password
     ? decodedPassword == null
       ? null
-      : resolveUser(getParameter(req, "u"), decodedPassword)
-    : resolveSubsonicTokenUser(getParameter(req, "u"), token, salt);
+      : await resolveUser(getParameter(req, "u"), decodedPassword)
+    : await resolveSubsonicTokenUser(getParameter(req, "u"), token, salt);
   if (!user) {
     return sendError(
       res,

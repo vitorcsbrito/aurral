@@ -46,8 +46,8 @@ const getAccessiblePlaylistIds = (user) => [
 ];
 
 export function registerJobs(router) {
-  router.get("/status", noCache, (req, res) => {
-    res.json(getWeeklyFlowStatusSnapshot({ user: req.user }));
+  router.get("/status", noCache, async (req, res) => {
+    res.json(await getWeeklyFlowStatusSnapshot({ user: req.user }));
   });
 
   router.get("/jobs/:flowId", noCache, async (req, res) => {

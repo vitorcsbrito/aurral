@@ -218,10 +218,14 @@ export function schedulePlaylistMbidEnrichmentForMissingPlaylists({
     if (jobId != null) jobIds.push(jobId);
   }
   if (shouldReconcileArtistMbids) {
-    dbOps.setJSONSetting(
-      ARTIST_MBID_RECONCILIATION_KEY,
-      ARTIST_MBID_RECONCILIATION_VERSION,
-    );
+    dbOps
+      .setJSONSetting(ARTIST_MBID_RECONCILIATION_KEY, ARTIST_MBID_RECONCILIATION_VERSION)
+      .catch((error) => {
+        console.warn(
+          "[PlaylistMbidEnrichment] Failed to persist reconciliation marker:",
+          error?.message || error,
+        );
+      });
   }
   return jobIds;
 }

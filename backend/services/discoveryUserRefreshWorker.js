@@ -3,12 +3,12 @@ import { getDiscoveryUserRefreshQueue } from "./honkerDb.js";
 import { updateUserDiscoveryCache } from "./discovery/index.js";
 import { getListenHistoryCacheNamespace } from "./listeningHistory.js";
 import { dbOps } from "../db/helpers/index.js";
-function wasRefreshedSince(profile, requestedAt) {
+async function wasRefreshedSince(profile, requestedAt) {
   const cacheNamespace = getListenHistoryCacheNamespace(profile);
   if (!cacheNamespace || !Number.isFinite(requestedAt) || requestedAt <= 0) {
     return false;
   }
-  const lastUpdated = Date.parse(dbOps.getDiscoveryCache(cacheNamespace)?.lastUpdated || "");
+  const lastUpdated = Date.parse(await dbOps.getDiscoveryCache(cacheNamespace)?.lastUpdated || "");
   return Number.isFinite(lastUpdated) && lastUpdated >= requestedAt;
 }
 
@@ -17,7 +17,7 @@ async function processDiscoveryUserRefresh(payload = {}) {
   if (!profile) {
     return { skipped: true };
   }
-  if (wasRefreshedSince(profile, Number(payload?.requestedAt))) {
+  if (await wasRefreshedSince(profile, Number(payload?.requestedAt))) {
     return { skipped: true, reason: "already_refreshed" };
   }
   await updateUserDiscoveryCache(profile, {

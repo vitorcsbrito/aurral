@@ -28,7 +28,7 @@ export function registerSimilar(router) {
     }
 
     const limitInt = Math.min(Math.max(parseInt(limit, 10) || 7, 1), 20);
-    const override = dbOps.getArtistOverride(mbid);
+    const override = await dbOps.getArtistOverride(mbid);
     const resolvedMbid = override?.musicbrainzId || mbid;
     let data = await lastfmRequest("artist.getSimilar", {
       mbid: resolvedMbid,
