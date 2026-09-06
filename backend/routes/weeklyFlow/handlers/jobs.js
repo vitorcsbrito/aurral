@@ -177,7 +177,7 @@ export function registerJobs(router) {
       if (paused) {
         await pauseSharedPlaylistRetryCycle(playlistId);
       } else {
-        weeklyFlowWorker.setRetryCyclePaused(playlistId, false);
+        await weeklyFlowWorker.setRetryCyclePaused(playlistId, false);
         await weeklyFlowWorker.retryIncompletePlaylist(playlistId);
       }
       return res.json({

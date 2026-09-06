@@ -56,7 +56,17 @@ export class WeeklyFlowPlaylistManager {
     this._ensureInFlight = null;
     this._refreshInFlight = new Map();
     this._verifiedArtworkFiles = new Set();
-    this.updateConfig(triggerEnsureOnInit);
+    this._pendingInitEnsure = triggerEnsureOnInit;
+    // The settings mirror loads after import; initConfig() retries at startup.
+    try {
+      this.initConfig();
+    } catch {}
+  }
+
+  // Called again from initializeDataLayer once loadSettingsCache() has run.
+  initConfig() {
+    this.updateConfig(this._pendingInitEnsure);
+    this._pendingInitEnsure = false;
   }
 
   updateConfig(triggerEnsurePlaylists = true) {
@@ -213,7 +223,7 @@ export class WeeklyFlowPlaylistManager {
 
   async _publishPlaylist(entity, artworkKind) {
     const snapshot = await this._createPlaybackSnapshot(entity);
-    const playlistName = this.navidromeDestination.getPlaylistName(snapshot);
+    const playlistName = await this.navidromeDestination.getPlaylistName(snapshot);
     await this._ensureFlowArtwork(entity.id, playlistName, artworkKind);
     return this.destinationRegistry.run("publishPlaylist", snapshot);
   }
@@ -246,7 +256,7 @@ export class WeeklyFlowPlaylistManager {
             (result) => result.destination === this.navidromeDestination.name && result.ok,
           )
         ) {
-          const playlistName = this.navidromeDestination.getPlaylistName({
+          const playlistName = await this.navidromeDestination.getPlaylistName({
             entityId: flow.id,
             ownerUserId: flow.ownerUserId ?? null,
             displayName: flow.name,
@@ -358,7 +368,7 @@ export class WeeklyFlowPlaylistManager {
     }
   }
 
-  getPlaylistName(playlistType) {
+  async getPlaylistName(playlistType) {
     const entity =
       flowPlaylistConfig.getFlow(playlistType)
       || flowPlaylistConfig.getSharedPlaylist(playlistType);
@@ -383,8 +393,8 @@ export class WeeklyFlowPlaylistManager {
     return null;
   }
 
-  _resolveArtworkBase(playlistId) {
-    const playlistName = this.getPlaylistName(playlistId);
+  async _resolveArtworkBase(playlistId) {
+    const playlistName = await this.getPlaylistName(playlistId);
     if (!playlistName) return null;
     const baseName = this._getPlaylistBaseName(playlistName);
     const safeRoot = path.resolve(this.libraryRoot);
@@ -421,7 +431,7 @@ export class WeeklyFlowPlaylistManager {
   }
 
   async resolveArtworkFile(playlistId) {
-    const resolved = this._resolveArtworkBase(playlistId);
+    const resolved = await this._resolveArtworkBase(playlistId);
     if (!resolved) return null;
     for (const extension of ARTWORK_FILE_EXTENSIONS) {
       const safePath = path.resolve(resolved.safeRoot, `${resolved.baseName}${extension}`);
@@ -437,7 +447,7 @@ export class WeeklyFlowPlaylistManager {
   }
 
   async saveArtworkUpload(playlistId, buffer) {
-    const resolved = this._resolveArtworkBase(playlistId);
+    const resolved = await this._resolveArtworkBase(playlistId);
     if (!resolved) {
       throw new Error("Playlist not found");
     }
@@ -457,7 +467,7 @@ export class WeeklyFlowPlaylistManager {
   }
 
   async removeArtwork(playlistId) {
-    const resolved = this._resolveArtworkBase(playlistId);
+    const resolved = await this._resolveArtworkBase(playlistId);
     if (!resolved) {
       throw new Error("Playlist not found");
     }
@@ -476,7 +486,7 @@ export class WeeklyFlowPlaylistManager {
   }
 
   async generateArtwork(playlistId) {
-    const resolved = this._resolveArtworkBase(playlistId);
+    const resolved = await this._resolveArtworkBase(playlistId);
     if (!resolved) {
       throw new Error("Playlist not found");
     }

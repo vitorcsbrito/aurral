@@ -369,7 +369,7 @@ export class LibraryManager {
       logger.info('library', `[LibraryManager] Added artist "${artistName}" to Lidarr`);
       const mappedArtist = await this.mapLidarrArtist(lidarrArtist);
       upsertCachedArtist(mappedArtist);
-      scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist?.id });
+      await scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist?.id });
       import("./aurralHistoryService.js")
         .then(({ recordArtistAdded }) =>
           recordArtistAdded({
@@ -931,7 +931,7 @@ export class LibraryManager {
             lidarrArtists.map((a) => this.mapLidarrArtist(a)),
           );
           _artistsCachedAt = Date.now();
-          scheduleCanonicalLibraryReconciliation();
+          await scheduleCanonicalLibraryReconciliation();
           import("../../services/unifiedSearchService.js").then(({ clearSearchContextCache }) => clearSearchContextCache()).catch(() => {});
           return _cachedArtists;
         } catch (error) {
@@ -1147,7 +1147,7 @@ export class LibraryManager {
           monitor: normalizedMonitorOption,
         };
         upsertCachedArtist(mapped);
-        scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist.id });
+        await scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist.id });
         return mapped;
       }
       return await this.mapLidarrArtist(lidarrArtist);
@@ -1169,7 +1169,7 @@ export class LibraryManager {
       removeCachedArtistByMbid(mbid);
       await clearCanonicalLidarrArtist(mbid);
       await clearCanonicalLidarrArtist(lidarrArtist.foreignArtistId);
-      scheduleCanonicalLibraryReconciliation();
+      await scheduleCanonicalLibraryReconciliation();
       logger.info('library', `[LibraryManager] Deleted artist "${lidarrArtist.artistName}" from Lidarr`);
       return { success: true };
     } catch (error) {
@@ -1247,7 +1247,7 @@ export class LibraryManager {
         const refreshedArtist = await lidarr.getArtist(artistId).catch(() => fallbackArtist);
         if (!refreshedArtist) return null;
         const mapped = this.mapLidarrAlbum(refreshedExisting, refreshedArtist);
-        scheduleCanonicalLibraryReconciliation({ artistId });
+        await scheduleCanonicalLibraryReconciliation({ artistId });
         return mapped;
       };
       let lidarrArtist = null;
@@ -1349,7 +1349,7 @@ export class LibraryManager {
       }
       const updatedArtist = await lidarr.getArtist(artistId);
       const mapped = this.mapLidarrAlbum(lidarrAlbum, updatedArtist);
-      scheduleCanonicalLibraryReconciliation({ artistId });
+      await scheduleCanonicalLibraryReconciliation({ artistId });
       return mapped;
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to add album to Lidarr: ${error.message}`);      return { error: error.message };
@@ -1591,7 +1591,7 @@ export class LibraryManager {
         const updated = await lidarr.getAlbum(id);
         const lidarrArtist = await lidarr.getArtist(updated.artistId);
         const mapped = this.mapLidarrAlbum(updated, lidarrArtist);
-        scheduleCanonicalLibraryReconciliation({ artistId: updated.artistId });
+        await scheduleCanonicalLibraryReconciliation({ artistId: updated.artistId });
         return mapped;
       } catch (error) {
         const msg = error.message || "";
@@ -1620,7 +1620,7 @@ export class LibraryManager {
     try {
       await lidarr.deleteAlbum(id, deleteFiles);
       await clearCanonicalLidarrAlbum(id);
-      scheduleCanonicalLibraryReconciliation();
+      await scheduleCanonicalLibraryReconciliation();
       return { success: true };
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to delete album from Lidarr: ${error.message}`);      return { success: false, error: error.message };
@@ -1713,7 +1713,7 @@ export class LibraryManager {
       }
 
       await lidarr.deleteTrackFile(trackFileId);
-      scheduleCanonicalLibraryReconciliation({ artistId: metadata.artistId });
+      await scheduleCanonicalLibraryReconciliation({ artistId: metadata.artistId });
       return { success: true };
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to delete track file: ${error.message}`);

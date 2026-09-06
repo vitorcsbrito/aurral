@@ -154,7 +154,7 @@ export async function queueQualityUpgrade(job) {
   }
   downloadTracker.markQualityUpgradeChecked(current.id);
   const { recordTrackJobQueued } = await import("./aurralHistoryService.js");
-  recordTrackJobQueued(queuedUpgrade);
+  await recordTrackJobQueued(queuedUpgrade);
   return "queued";
 }
 

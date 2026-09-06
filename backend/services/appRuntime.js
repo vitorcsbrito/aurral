@@ -30,6 +30,7 @@ import { migrateDatabase } from "../db/pg/schema.js";
 import { loadSettingsCache } from "../db/helpers/settings.js";
 import { initDiscoveryPersistence } from "./discovery/persistence.js";
 import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
+import { playlistManager } from "./weeklyFlow/weeklyFlowPlaylistManager.js";
 
 let dataLayerReady = null;
 
@@ -43,6 +44,7 @@ export function initializeDataLayer({ logger = console } = {}) {
     await loadSettingsCache();
     await initDiscoveryPersistence();
     await downloadTracker.init();
+    playlistManager.initConfig();
     return true;
   })().catch((error) => {
     dataLayerReady = null;

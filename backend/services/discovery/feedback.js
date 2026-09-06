@@ -106,7 +106,7 @@ export const addDiscoveryFeedback = async (userId = "global", entry = {}) => {
     createdAt: now.toISOString(),
     expiresAt: null,
   };
-  const deduped = existing.filter(async (item) => {
+  const deduped = existing.filter((item) => {
     const sameArtist =
       (artistId && item.artistId && artistId === item.artistId) ||
       (artistName &&

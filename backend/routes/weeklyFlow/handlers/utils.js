@@ -135,7 +135,7 @@ export const markFlowMutationToken = async (flowId) => {
 };
 
 export const pauseSharedPlaylistRetryCycle = async (playlistId) => {
-  weeklyFlowWorker.setRetryCyclePaused(playlistId, true);
+  await weeklyFlowWorker.setRetryCyclePaused(playlistId, true);
   let cancelledJobs = 0;
   await withPlaylistMutation(playlistId, async () => {
     cancelledJobs = downloadTracker.failActiveJobsForPlaylist(

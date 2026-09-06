@@ -577,7 +577,7 @@ export const syncTrackDownloadHistory = async (historyEntries = null) => {
   );
   for (const job of downloadTracker.getByStatus("blocked")) {
     if (historyJobIds.has(job.id)) continue;
-    recordTrackJobBlocked(job, job.error || "Blocked for review");
+    await recordTrackJobBlocked(job, job.error || "Blocked for review");
   }
 
   for (const entry of trackEntries) {
@@ -587,32 +587,32 @@ export const syncTrackDownloadHistory = async (historyEntries = null) => {
     const fakeJob = buildHistoryJobFromEntry(entry);
 
     if (!jobId) {
-      if (stale) recordTrackJobFailed(fakeJob, "Download no longer active");
+      if (stale) await recordTrackJobFailed(fakeJob, "Download no longer active");
       continue;
     }
 
     const job = downloadTracker.getJob(jobId);
     if (!job) {
       if (isBlocked || stale) {
-        recordTrackJobFailed(fakeJob, "Download no longer active");
+        await recordTrackJobFailed(fakeJob, "Download no longer active");
       }
       continue;
     }
 
     if (job.status === "done") {
-      recordTrackJobCompleted(job);
+      await recordTrackJobCompleted(job);
       continue;
     }
     if (job.status === "failed") {
-      recordTrackJobFailed(job, job.error || "Download failed");
+      await recordTrackJobFailed(job, job.error || "Download failed");
       continue;
     }
     if (job.status === "blocked") {
-      recordTrackJobBlocked(job, job.error || "Blocked for review");
+      await recordTrackJobBlocked(job, job.error || "Blocked for review");
       continue;
     }
     if (isBlocked && (job.status === "pending" || job.status === "downloading")) {
-      recordTrackJobFailed(job, "Denied by user — will retry");
+      await recordTrackJobFailed(job, "Denied by user — will retry");
       continue;
     }
     if (isBlocked) continue;
@@ -628,7 +628,7 @@ export const syncTrackDownloadHistory = async (historyEntries = null) => {
 
     const message = "Download timed out";
     downloadTracker.setFailed(jobId, message);
-    recordTrackJobFailed(job, message);
+    await recordTrackJobFailed(job, message);
   }
 };
 
@@ -643,7 +643,7 @@ const syncDiscoveryRefreshHistory = async (historyEntries = null) => {
 
   for (const entry of pendingEntries) {
     if (Date.now() - Number(entry.createdAt || 0) < STALE_AURRAL_JOB_MS) continue;
-    recordDiscoveryRefreshFailed("Discovery refresh timed out");
+    await recordDiscoveryRefreshFailed("Discovery refresh timed out");
   }
 };
 
@@ -663,7 +663,7 @@ const syncFlowGenerationHistory = async (historyEntries = null) => {
         String(payload?.flowId || payload?.playlistId || "").trim() === flowId,
     );
     if (flowActive) continue;
-    upsertAurralHistory({
+    await upsertAurralHistory({
       referenceId: flowId,
       kind: "flow_generating",
       title: `Failed to generate playlist for ${resolvePlaylistName(flowId)}`,
@@ -739,11 +739,11 @@ export const syncAlbumSearchHistory = async (lidarrClient, historyEntries = null
     };
 
     if (outcome?.status === "completed" || albumHasFiles) {
-      recordAlbumSearchCompleted(patch);
+      await recordAlbumSearchCompleted(patch);
       continue;
     }
     if (entry.status === "processing" && outcome?.status === "failed") {
-      recordAlbumSearchFailed({
+      await recordAlbumSearchFailed({
         ...patch,
         statusLabel: outcome.statusLabel,
       });

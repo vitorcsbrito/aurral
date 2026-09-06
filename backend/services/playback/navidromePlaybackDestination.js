@@ -102,8 +102,8 @@ export class NavidromePlaybackDestination {
     return { current, legacy: legacy.filter((candidate) => candidate !== current) };
   }
 
-  getPlaylistName(playlist) {
-    return this.getPlaylistNames(playlist).current;
+  async getPlaylistName(playlist) {
+    return (await this.getPlaylistNames(playlist)).current;
   }
 
   _targetKey(ownerUserId) {
@@ -114,7 +114,7 @@ export class NavidromePlaybackDestination {
     return flowPlaylistConfig.getFlow(entityId) || flowPlaylistConfig.getSharedPlaylist(entityId);
   }
 
-  _getNamesForIdentity(identity) {
+  async _getNamesForIdentity(identity) {
     const entity = this._getEntity(identity.entityId);
     if (!entity) return null;
     return this.getPlaylistNames({
@@ -130,23 +130,25 @@ export class NavidromePlaybackDestination {
     return this._sanitize(path.basename(match[1], path.extname(match[1])));
   }
 
-  _isActiveNameForOtherEntity(entityId, name) {
+  async _isActiveNameForOtherEntity(entityId, name) {
     const expected = this._sanitize(name);
     const entities = [
       ...flowPlaylistConfig.getFlows(),
       ...flowPlaylistConfig.getSharedPlaylists(),
     ];
-    return entities.some((entity) => {
-      if (entity.id === entityId) return false;
-      const names = this.getPlaylistNames({
+    for (const entity of entities) {
+      if (entity.id === entityId) continue;
+      const names = await this.getPlaylistNames({
         entityId: entity.id,
         ownerUserId: entity.ownerUserId,
         displayName: entity.name,
       });
-      return [names.current, ...names.legacy].some(
+      const matched = [names.current, ...names.legacy].some(
         (candidate) => this._sanitize(candidate) === expected,
       );
-    });
+      if (matched) return true;
+    }
+    return false;
   }
 
   async _loadPlaylists(force = false) {
@@ -197,7 +199,7 @@ export class NavidromePlaybackDestination {
 
   async _uploadPlaylistArtwork(snapshot, playlistId) {
     if (typeof this.client?.uploadPlaylistArtwork !== "function") return;
-    const { current } = this.getPlaylistNames(snapshot);
+    const { current } = await this.getPlaylistNames(snapshot);
     for (const extension of ARTWORK_FILE_EXTENSIONS) {
       const artworkPath = path.join(this.libraryRoot, `${this._sanitize(current)}${extension}`);
       const data = await fs.readFile(artworkPath).catch(() => null);
@@ -263,14 +265,14 @@ export class NavidromePlaybackDestination {
     }
   }
 
-  _expectedFiles() {
+  async _expectedFiles() {
     const expected = new Set();
     const addArtwork = (name) => {
       const baseName = this._sanitize(name);
       for (const extension of ARTWORK_FILE_EXTENSIONS) expected.add(`${baseName}${extension}`);
     };
-    const addPlaylist = (entity) => {
-      const names = this.getPlaylistNames({
+    const addPlaylist = async (entity) => {
+      const names = await this.getPlaylistNames({
         entityId: entity.id,
         ownerUserId: entity.ownerUserId,
         displayName: entity.name,
@@ -281,19 +283,19 @@ export class NavidromePlaybackDestination {
       addArtwork(names.current);
     };
     for (const flow of flowPlaylistConfig.getFlows()) {
-      if (flow.enabled) addPlaylist(flow);
-      else addArtwork(this.getPlaylistName({
+      if (flow.enabled) await addPlaylist(flow);
+      else addArtwork(await this.getPlaylistName({
         entityId: flow.id,
         ownerUserId: flow.ownerUserId,
         displayName: flow.name,
       }));
     }
-    for (const playlist of flowPlaylistConfig.getSharedPlaylists()) addPlaylist(playlist);
+    for (const playlist of flowPlaylistConfig.getSharedPlaylists()) await addPlaylist(playlist);
     return expected;
   }
 
   async _cleanupStaleFiles() {
-    const expected = this._expectedFiles();
+    const expected = await this._expectedFiles();
     const files = await fs.readdir(this.libraryRoot).catch(() => []);
     for (const file of files) {
       const extension = path.extname(file).toLowerCase();
@@ -355,7 +357,7 @@ export class NavidromePlaybackDestination {
 
   async _publishPlaylist(snapshot) {
     await fs.mkdir(this.libraryRoot, { recursive: true });
-    const { current, legacy } = this.getPlaylistNames(snapshot);
+    const { current, legacy } = await this.getPlaylistNames(snapshot);
     const targetKey = this._targetKey(snapshot.ownerUserId);
     const syncKey = `${snapshot.entityId}:${targetKey}`;
     const syncHash = JSON.stringify(snapshot);
@@ -366,7 +368,7 @@ export class NavidromePlaybackDestination {
     if (pointer && typeof this.client.getPlaylist === "function") {
       const nativePlaylist = await this.client.getPlaylist(pointer.playlistId).catch(() => null);
       const importedSourceName = this._getImportedSourceName(nativePlaylist?.comment);
-      if (importedSourceName && this._isActiveNameForOtherEntity(snapshot.entityId, importedSourceName)) {
+      if (importedSourceName && (await this._isActiveNameForOtherEntity(snapshot.entityId, importedSourceName))) {
         await navidromePlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
         pointer = null;
       }
@@ -546,7 +548,7 @@ export class NavidromePlaybackDestination {
   async deletePlaylist(value) {
     try {
       const identity = createPlaybackPlaylistIdentity(value);
-      const names = this._getNamesForIdentity(identity);
+      const names = await this._getNamesForIdentity(identity);
       if (!names) return playbackOperationSuccess();
       const targetKey = this._targetKey(identity.ownerUserId);
       const key = `${identity.entityId}:${targetKey}`;

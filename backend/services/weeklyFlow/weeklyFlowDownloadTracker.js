@@ -478,6 +478,7 @@ export class WeeklyFlowDownloadTracker {
       if (job.status === "pending" && job.upgradeForJobId) this.removeJob(job.id);
     }
     this._rebuildStatsByPlaylistType();
+    return this;
   }
 
   _insert(job) {

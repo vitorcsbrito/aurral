@@ -210,7 +210,10 @@ export class LidarrClient {
       maxFreeSockets: 2,
       timeout: 60000,
     });
-    this.updateConfig();
+    // Settings load after import; every request refreshes the config anyway.
+    try {
+      this.updateConfig();
+    } catch {}
   }
 
   _setArtistByMbidCacheEntry(mbid, artist) {

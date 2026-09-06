@@ -610,7 +610,7 @@ export async function getCanonicalTrackPath(albumReference, trackReference) {
      WHERE media.track_id = ?
        AND media.available = 1
        AND (media.album_id = ? OR media.album_id IS NULL)
-     ORDER BY (media.album_id = ?) DESC,
+     ORDER BY (media.album_id IS NOT DISTINCT FROM ?) DESC,
               (media.source = 'lidarr') DESC,
               lower(media.path)
      LIMIT 1`,
