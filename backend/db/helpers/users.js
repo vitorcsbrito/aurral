@@ -1,4 +1,4 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
+import { db, dbHelpers } from "../../config/database.js";
 import {
   DEFAULT_LISTEN_HISTORY_PROVIDER,
   getListenHistoryProfile,
@@ -7,27 +7,8 @@ import {
   normalizeListenHistoryUrl,
 } from "../../services/listeningHistory.js";
 
-const getUserByUsernameStmt = db.prepare(
-  "SELECT * FROM users WHERE username = ?"
-);
-const getAllUsersStmt = db.prepare(
-  "SELECT id, username, role, permissions, lastfm_username, listen_history_provider, listen_history_username, listen_history_url, lidarr_root_folder_path, lidarr_quality_profile_id FROM users ORDER BY username"
-);
-const getUserByIdStmt = db.prepare("SELECT * FROM users WHERE id = ?");
-const getUserAuthByIdStmt = db.prepare(
-  "SELECT id, username, role, permissions FROM users WHERE id = ?"
-);
-const countUsersStmt = db.prepare("SELECT COUNT(*) AS count FROM users");
-const insertUserStmt = db.prepare(
-  "INSERT INTO users (username, password_hash, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id) VALUES (?, ?, ?, ?, ?, ?)"
-);
-const updateUserStmt = db.prepare(
-  "UPDATE users SET username = ?, password_hash = ?, role = ?, permissions = ?, lastfm_username = ?, listen_history_provider = ?, listen_history_username = ?, listen_history_url = ?, lidarr_root_folder_path = ?, lidarr_quality_profile_id = ? WHERE id = ?"
-);
-const deleteUserStmt = db.prepare("DELETE FROM users WHERE id = ?");
-const getAllListeningHistoryUsersStmt = db.prepare(
-  "SELECT id, username, lastfm_username, listen_history_provider, listen_history_username, listen_history_url FROM users WHERE (listen_history_username IS NOT NULL AND TRIM(listen_history_username) != '') OR (listen_history_url IS NOT NULL AND TRIM(listen_history_url) != '')"
-);
+const USER_LIST_COLUMNS =
+  "id, username, role, permissions, lastfm_username, listen_history_provider, listen_history_username, listen_history_url, lidarr_root_folder_path, lidarr_quality_profile_id";
 
 const DEFAULT_PERMISSIONS = {
   accessFlow: false,
@@ -39,101 +20,75 @@ const DEFAULT_PERMISSIONS = {
   deleteTrack: false,
 };
 
+const toUser = (row) => {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    passwordHash: row.password_hash,
+    role: row.role || "user",
+    permissions: dbHelpers.parseJSON(row.permissions) || { ...DEFAULT_PERMISSIONS },
+    lidarrRootFolderPath: row.lidarr_root_folder_path || null,
+    lidarrQualityProfileId:
+      row.lidarr_quality_profile_id != null ? Number(row.lidarr_quality_profile_id) : null,
+    ...getListenHistoryProfile(row),
+  };
+};
+
 export const userOps = {
   getDefaultPermissions() {
     return { ...DEFAULT_PERMISSIONS };
   },
-  getUserByUsername(username) {
-    const row = getUserByUsernameStmt.get(
-      String(username).trim().toLowerCase()
-    );
+  async getUserByUsername(username) {
+    const row = await db.get("SELECT * FROM users WHERE username = ?", [
+      String(username).trim().toLowerCase(),
+    ]);
+    return toUser(row);
+  },
+  async getUserById(id) {
+    const row = await db.get("SELECT * FROM users WHERE id = ?", [parseInt(id, 10)]);
+    return toUser(row);
+  },
+  async getUserAuthById(id) {
+    const row = await db.get("SELECT id, username, role, permissions FROM users WHERE id = ?", [
+      parseInt(id, 10),
+    ]);
     if (!row) return null;
-    const history = getListenHistoryProfile(row);
     return {
       id: row.id,
       username: row.username,
-      passwordHash: row.password_hash,
       role: row.role || "user",
-      permissions: dbHelpers.parseJSON(row.permissions) || {
-        ...DEFAULT_PERMISSIONS,
-      },
+      permissions: dbHelpers.parseJSON(row.permissions) || { ...DEFAULT_PERMISSIONS },
+    };
+  },
+  async countUsers() {
+    return (await db.get("SELECT COUNT(*) AS count FROM users")).count;
+  },
+  async getAllUsers() {
+    const rows = await db.all(`SELECT ${USER_LIST_COLUMNS} FROM users ORDER BY username`);
+    return rows.map((row) => ({
+      ...getListenHistoryProfile(row),
+      id: row.id,
+      username: row.username,
+      role: row.role || "user",
+      permissions: dbHelpers.parseJSON(row.permissions) || { ...DEFAULT_PERMISSIONS },
       lidarrRootFolderPath: row.lidarr_root_folder_path || null,
       lidarrQualityProfileId:
-        row.lidarr_quality_profile_id != null
-          ? Number(row.lidarr_quality_profile_id)
-          : null,
-      ...history,
-    };
-  },
-  getUserById(id) {
-    const row = getUserByIdStmt.get(parseInt(id, 10));
-    if (!row) return null;
-    const history = getListenHistoryProfile(row);
-    return {
-      id: row.id,
-      username: row.username,
-      passwordHash: row.password_hash,
-      role: row.role || "user",
-      permissions: dbHelpers.parseJSON(row.permissions) || {
-        ...DEFAULT_PERMISSIONS,
-      },
-      lidarrRootFolderPath: row.lidarr_root_folder_path || null,
-      lidarrQualityProfileId:
-        row.lidarr_quality_profile_id != null
-          ? Number(row.lidarr_quality_profile_id)
-          : null,
-      ...history,
-    };
-  },
-  getUserAuthById(id) {
-    const row = getUserAuthByIdStmt.get(parseInt(id, 10));
-    if (!row) return null;
-    return {
-      id: row.id,
-      username: row.username,
-      role: row.role || "user",
-      permissions: dbHelpers.parseJSON(row.permissions) || {
-        ...DEFAULT_PERMISSIONS,
-      },
-    };
-  },
-  countUsers() {
-    return countUsersStmt.get().count;
-  },
-  getAllUsers() {
-    const rows = getAllUsersStmt.all();
-    return rows.map((r) => ({
-      ...getListenHistoryProfile(r),
-      id: r.id,
-      username: r.username,
-      role: r.role || "user",
-      permissions: dbHelpers.parseJSON(r.permissions) || {
-        ...DEFAULT_PERMISSIONS,
-      },
-      lidarrRootFolderPath: r.lidarr_root_folder_path || null,
-      lidarrQualityProfileId:
-        r.lidarr_quality_profile_id != null
-          ? Number(r.lidarr_quality_profile_id)
-          : null,
+        row.lidarr_quality_profile_id != null ? Number(row.lidarr_quality_profile_id) : null,
     }));
   },
-  createUser(username, passwordHash, role = "user", permissions = null) {
+  async createUser(username, passwordHash, role = "user", permissions = null) {
     const un = String(username).trim();
     if (!un) return null;
-    const perms = permissions
-      ? { ...DEFAULT_PERMISSIONS, ...permissions }
-      : { ...DEFAULT_PERMISSIONS };
+    const perms = permissions ? { ...DEFAULT_PERMISSIONS, ...permissions } : { ...DEFAULT_PERMISSIONS };
     try {
-      const result = insertUserStmt.run(
-        un.toLowerCase(),
-        passwordHash,
-        role,
-        dbHelpers.stringifyJSON(perms),
-        null,
-        null,
+      const row = await db.get(
+        `INSERT INTO users (username, password_hash, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id)
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+        [un.toLowerCase(), passwordHash, role, dbHelpers.stringifyJSON(perms), null, null],
       );
       return {
-        id: result.lastInsertRowid,
+        id: row.id,
         username: un,
         role,
         permissions: perms,
@@ -144,21 +99,15 @@ export const userOps = {
         lidarrRootFolderPath: null,
         lidarrQualityProfileId: null,
       };
-    } catch (e) {
+    } catch {
       return null;
     }
   },
-  updateUser(id, data) {
-    const existing = userOps.getUserById(id);
+  async updateUser(id, data) {
+    const existing = await userOps.getUserById(id);
     if (!existing) return null;
-    const username =
-      data.username !== undefined
-        ? String(data.username).trim()
-        : existing.username;
-    const passwordHash =
-      data.passwordHash !== undefined
-        ? data.passwordHash
-        : existing.passwordHash;
+    const username = data.username !== undefined ? String(data.username).trim() : existing.username;
+    const passwordHash = data.passwordHash !== undefined ? data.passwordHash : existing.passwordHash;
     const role = data.role !== undefined ? data.role : existing.role;
     const permissions =
       data.permissions !== undefined
@@ -179,16 +128,13 @@ export const userOps = {
           : existing.listenHistoryUsername,
     );
     const listenHistoryUrl = normalizeListenHistoryUrl(
-      data.listenHistoryUrl !== undefined
-        ? data.listenHistoryUrl
-        : existing.listenHistoryUrl,
+      data.listenHistoryUrl !== undefined ? data.listenHistoryUrl : existing.listenHistoryUrl,
     );
-    const resolvedUsername =
-      ["koito", "local"].includes(listenHistoryProvider) ? null : listenHistoryUsername;
-    const resolvedUrl =
-      listenHistoryProvider === "koito" ? listenHistoryUrl : null;
-    const lastfmUsername =
-      listenHistoryProvider === "lastfm" ? resolvedUsername : null;
+    const resolvedUsername = ["koito", "local"].includes(listenHistoryProvider)
+      ? null
+      : listenHistoryUsername;
+    const resolvedUrl = listenHistoryProvider === "koito" ? listenHistoryUrl : null;
+    const lastfmUsername = listenHistoryProvider === "lastfm" ? resolvedUsername : null;
     const lidarrRootFolderPath =
       data.lidarrRootFolderPath !== undefined
         ? data.lidarrRootFolderPath
@@ -196,32 +142,36 @@ export const userOps = {
           : null
         : existing.lidarrRootFolderPath;
     const parsedLidarrQualityProfileId =
-      data.lidarrQualityProfileId !== undefined &&
-      data.lidarrQualityProfileId !== null
+      data.lidarrQualityProfileId !== undefined && data.lidarrQualityProfileId !== null
         ? Number(data.lidarrQualityProfileId)
         : data.lidarrQualityProfileId === null
           ? null
           : existing.lidarrQualityProfileId;
     const lidarrQualityProfileId =
-      parsedLidarrQualityProfileId != null &&
-      Number.isFinite(parsedLidarrQualityProfileId)
+      parsedLidarrQualityProfileId != null && Number.isFinite(parsedLidarrQualityProfileId)
         ? Math.trunc(parsedLidarrQualityProfileId)
         : parsedLidarrQualityProfileId === null
           ? null
           : existing.lidarrQualityProfileId;
     try {
-      updateUserStmt.run(
-        username.toLowerCase(),
-        passwordHash,
-        role,
-        dbHelpers.stringifyJSON(permissions),
-        lastfmUsername,
-        listenHistoryProvider,
-        resolvedUsername,
-        resolvedUrl,
-        lidarrRootFolderPath,
-        lidarrQualityProfileId,
-        parseInt(id, 10)
+      await db.run(
+        `UPDATE users SET username = ?, password_hash = ?, role = ?, permissions = ?, lastfm_username = ?,
+           listen_history_provider = ?, listen_history_username = ?, listen_history_url = ?,
+           lidarr_root_folder_path = ?, lidarr_quality_profile_id = ?
+         WHERE id = ?`,
+        [
+          username.toLowerCase(),
+          passwordHash,
+          role,
+          dbHelpers.stringifyJSON(permissions),
+          lastfmUsername,
+          listenHistoryProvider,
+          resolvedUsername,
+          resolvedUrl,
+          lidarrRootFolderPath,
+          lidarrQualityProfileId,
+          parseInt(id, 10),
+        ],
       );
       return {
         id: parseInt(id, 10),
@@ -235,23 +185,29 @@ export const userOps = {
         lidarrRootFolderPath,
         lidarrQualityProfileId,
       };
-    } catch (e) {
+    } catch {
       return null;
     }
   },
-  deleteUser(id) {
+  async deleteUser(id) {
     try {
-      deleteUserStmt.run(parseInt(id, 10));
+      await db.run("DELETE FROM users WHERE id = ?", [parseInt(id, 10)]);
       return true;
-    } catch (e) {
+    } catch {
       return false;
     }
   },
-  getAllListeningHistoryUsers() {
-    return getAllListeningHistoryUsersStmt.all().map((r) => ({
-      id: r.id,
-      username: r.username,
-      ...getListenHistoryProfile(r),
+  async getAllListeningHistoryUsers() {
+    const rows = await db.all(
+      `SELECT id, username, lastfm_username, listen_history_provider, listen_history_username, listen_history_url
+       FROM users
+       WHERE (listen_history_username IS NOT NULL AND TRIM(listen_history_username) != '')
+          OR (listen_history_url IS NOT NULL AND TRIM(listen_history_url) != '')`,
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      ...getListenHistoryProfile(row),
     }));
   },
 };

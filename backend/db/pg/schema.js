@@ -2,9 +2,23 @@
 // and is recorded in schema_migrations. Append new migrations; never edit an
 // applied one.
 
-const INITIAL_TABLES = `
-  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+// Extensions live in public so every search_path (including per-process test
+// schemas) resolves gin_trgm_ops.
+const EXTENSIONS = `
+  CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+      WHERE e.extname = 'pg_trgm' AND n.nspname <> 'public'
+    ) THEN
+      ALTER EXTENSION pg_trgm SET SCHEMA public;
+    END IF;
+  END
+  $$;
+`;
 
+const INITIAL_TABLES = `
   -- NULL instead of an error for text that is not valid JSON, so index and
   -- trigger expressions tolerate legacy rows.
   CREATE OR REPLACE FUNCTION aurral_json(input TEXT) RETURNS JSONB
@@ -594,6 +608,7 @@ export const MIGRATIONS = [
 ];
 
 export async function migrateDatabase(db, { logger = console } = {}) {
+  await db.exec(EXTENSIONS);
   await db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id TEXT PRIMARY KEY,

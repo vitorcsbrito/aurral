@@ -19,10 +19,15 @@ export function resolveDatabaseConfig(env = process.env) {
     );
   }
   const max = Number.parseInt(String(env.AURRAL_PG_POOL_MAX || ""), 10);
+  const schema = String(env.AURRAL_PG_SCHEMA || "").trim();
+  if (schema && !/^[a-z_][a-z0-9_]*$/i.test(schema)) {
+    throw new Error(`AURRAL_PG_SCHEMA must be a plain identifier, got "${schema}"`);
+  }
   return {
     connectionString,
     max: Number.isFinite(max) && max > 0 ? max : DEFAULT_POOL_MAX,
     applicationName: env.AURRAL_PG_APPLICATION_NAME || "aurral",
+    schema: schema || null,
   };
 }
 
@@ -130,12 +135,28 @@ function getPool() {
       connectionString: poolConfig.connectionString,
       max: poolConfig.max,
       application_name: poolConfig.applicationName,
+      // Test processes each get their own schema on a shared database.
+      ...(poolConfig.schema ? { options: `-c search_path=${poolConfig.schema},public` } : {}),
     });
     pool.on("error", (error) => {
       console.error(`[db] Idle Postgres client error: ${error?.message || error}`);
     });
   }
   return pool;
+}
+
+export async function ensureDatabaseSchemaNamespace() {
+  const config = poolConfig || resolveDatabaseConfig();
+  if (!config.schema) return null;
+  await getPool().query(`CREATE SCHEMA IF NOT EXISTS "${config.schema}"`);
+  return config.schema;
+}
+
+export async function dropDatabaseSchemaNamespace() {
+  const config = poolConfig || resolveDatabaseConfig();
+  if (!config.schema) return null;
+  await getPool().query(`DROP SCHEMA IF EXISTS "${config.schema}" CASCADE`);
+  return config.schema;
 }
 
 const executeOnPool = (sql, params) => getPool().query(sql, params);
