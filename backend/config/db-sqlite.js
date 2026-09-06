@@ -31,7 +31,30 @@ applySqliteTuning(db, { worker: !isMainThread });
 // transaction takes the write lock up front. Read-only callers that must not
 // wait on a writer can still use `db.transaction(fn).deferred`.
 const deferredTransaction = db.transaction.bind(db);
-db.transaction = (fn) => deferredTransaction(fn).immediate;
+// Elapsed includes busy_timeout wait. Long main-thread writes freeze the UI.
+const SLOW_MAIN_WRITE_MS = 500;
+const definitionSite = () =>
+  (new Error().stack || "").split("\n").slice(3, 6).map((line) => line.trim()).join(" <- ");
+db.transaction = (fn) => {
+  const immediate = deferredTransaction(fn).immediate;
+  if (!isMainThread) return immediate;
+  const definedAt = definitionSite();
+  const timed = function (...args) {
+    const startedAt = performance.now();
+    try {
+      return immediate.apply(this, args);
+    } finally {
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      if (elapsedMs >= SLOW_MAIN_WRITE_MS) {
+        console.warn(`[db] Slow main-thread write transaction (${elapsedMs}ms) defined at ${definedAt}`);
+      }
+    }
+  };
+  timed.immediate = timed;
+  timed.deferred = immediate.deferred;
+  timed.exclusive = immediate.exclusive;
+  return timed;
+};
 
 function tryAddColumn(sql) {
   try {
