@@ -1,5 +1,5 @@
-import { db } from "../config/db-sqlite.js";
-import { SCHEDULED_SYSTEM_TASKS } from "./honkerDb.js";
+import { db } from "../config/database.js";
+import { getHonkerDb, SCHEDULED_SYSTEM_TASKS } from "./honkerDb.js";
 
 export const QUEUE_DEFINITIONS = [
   {
@@ -175,81 +175,51 @@ const PAYLOAD_DETAIL_KEY = {
       : desc,
 };
 
-let schemaEnsured = false;
-let insertRunStatement = null;
-let updateRunStatement = null;
-let pruneRunsStatement = null;
-let pruneDeadJobsStatement = null;
-
-function ensureRunSchema() {
-  if (schemaEnsured) return;
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS honker_task_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      job_id INTEGER NOT NULL,
-      queue TEXT NOT NULL,
-      name TEXT,
-      payload TEXT,
-      worker_id TEXT,
-      attempt INTEGER,
-      status TEXT NOT NULL,
-      error TEXT,
-      queued_at INTEGER,
-      run_at INTEGER,
-      started_at INTEGER NOT NULL,
-      ended_at INTEGER,
-      duration_ms INTEGER,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_honker_task_runs_started_at ON honker_task_runs(started_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_honker_task_runs_queue_started ON honker_task_runs(queue, started_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_honker_task_runs_job ON honker_task_runs(job_id, queue);
-  `);
-  insertRunStatement = db.prepare(`
-    INSERT INTO honker_task_runs (
-      job_id,
-      queue,
-      name,
-      payload,
-      worker_id,
-      attempt,
-      status,
-      queued_at,
-      run_at,
-      started_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
-  `);
-  updateRunStatement = db.prepare(`
-    UPDATE honker_task_runs
-    SET status = ?,
-        error = ?,
-        ended_at = ?,
-        duration_ms = ?
-    WHERE id = ?
-  `);
-  pruneRunsStatement = db.prepare(`
-    DELETE FROM honker_task_runs
-    WHERE status != 'running'
-      AND COALESCE(ended_at, started_at) < ?
-  `);
-  pruneDeadJobsStatement = db.prepare(`
-    DELETE FROM _honker_dead
-    WHERE COALESCE(died_at, created_at) < ?
-  `);
-  schemaEnsured = true;
-}
+// honker_task_runs lives in Postgres; _honker_* tables stay in honker.db.
+const INSERT_RUN_SQL = `
+  INSERT INTO honker_task_runs (
+    job_id,
+    queue,
+    name,
+    payload,
+    worker_id,
+    attempt,
+    status,
+    queued_at,
+    run_at,
+    started_at
+  ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+  RETURNING id
+`;
+const UPDATE_RUN_SQL = `
+  UPDATE honker_task_runs
+  SET status = ?,
+      error = ?,
+      ended_at = ?,
+      duration_ms = ?
+  WHERE id = ?
+`;
+const PRUNE_RUNS_SQL = `
+  DELETE FROM honker_task_runs
+  WHERE status != 'running'
+    AND COALESCE(ended_at, started_at) < ?
+`;
+const PRUNE_DEAD_JOBS_SQL = `
+  DELETE FROM _honker_dead
+  WHERE COALESCE(died_at, created_at) < ?
+`;
 
 function getRunLedgerCutoffUnix() {
   return Math.floor((Date.now() - RUN_LEDGER_MAX_AGE_MS) / 1000);
 }
 
 async function pruneExpiredRuns() {
-  ensureRunSchema();
   const cutoff = getRunLedgerCutoffUnix();
-  pruneRunsStatement.run(cutoff);
   try {
-    pruneDeadJobsStatement.run(cutoff);
+    await db.run(PRUNE_RUNS_SQL, [cutoff]);
+  } catch {}
+  try {
+    getHonkerDb().query(PRUNE_DEAD_JOBS_SQL, [cutoff]);
   } catch {}
   try {
     const { pruneDuplicateScheduledDiscoveryRefreshes } = await import(
@@ -269,20 +239,32 @@ function isWithinTaskHistoryWindow(row) {
   return sortAt >= getRunLedgerCutoffUnix();
 }
 
-function safeQuery(sql, params = []) {
+async function safeQuery(sql, params = []) {
   try {
-    return db.prepare(sql).all(...params);
+    return await db.all(sql, params);
   } catch {
     return [];
   }
 }
 
-function safeGet(sql, params = []) {
+async function safeGet(sql, params = []) {
   try {
-    return db.prepare(sql).get(...params) || null;
+    return (await db.get(sql, params)) || null;
   } catch {
     return null;
   }
+}
+
+function honkerQuery(sql, params = []) {
+  try {
+    return getHonkerDb().query(sql, params) || [];
+  } catch {
+    return [];
+  }
+}
+
+function honkerGet(sql, params = []) {
+  return honkerQuery(sql, params)[0] || null;
 }
 
 function parsePayload(value) {
@@ -529,9 +511,8 @@ function normalizeRunRow(row) {
   };
 }
 
-function readRunningStartsByJobId() {
-  ensureRunSchema();
-  const rows = safeQuery(`
+async function readRunningStartsByJobId() {
+  const rows = await safeQuery(`
     SELECT job_id, queue, started_at
     FROM honker_task_runs
     WHERE status = 'running'
@@ -662,7 +643,7 @@ function normalizeDeadJobRow(row) {
 }
 
 function readScheduledRows() {
-  const rows = safeQuery(`
+  const rows = honkerQuery(`
     SELECT name, queue, cron_expr, payload, priority, expires_s, next_fire_at
     FROM _honker_scheduler_tasks
     ORDER BY next_fire_at ASC, name ASC
@@ -680,8 +661,7 @@ function readScheduledRows() {
   }));
 }
 
-function readRecentRuns() {
-  ensureRunSchema();
+async function readRecentRuns() {
   const cutoff = getRunLedgerCutoffUnix();
   return safeQuery(
     `
@@ -695,9 +675,9 @@ function readRecentRuns() {
   );
 }
 
-function readLatestRunsByTask() {
+async function readLatestRunsByTask() {
   const cutoff = getRunLedgerCutoffUnix();
-  const rows = safeQuery(
+  const rows = await safeQuery(
     `
       SELECT *
       FROM honker_task_runs
@@ -717,7 +697,7 @@ function readLatestRunsByTask() {
 }
 
 function readLiveJobs() {
-  return safeQuery(
+  return honkerQuery(
     `
       SELECT id, queue, payload, state, priority, run_at, worker_id,
              claim_expires_at, attempts, max_attempts, created_at, expires_at
@@ -734,7 +714,7 @@ function readLiveJobs() {
 
 function readDeadJobs() {
   const cutoff = getRunLedgerCutoffUnix();
-  return safeQuery(
+  return honkerQuery(
     `
       SELECT id, queue, payload, priority, run_at, attempts, max_attempts,
              last_error, created_at, died_at
@@ -747,9 +727,9 @@ function readDeadJobs() {
   );
 }
 
-function readQueueStats(liveRows = []) {
+async function readQueueStats(liveRows = []) {
   const currentTime = nowUnix();
-  const deadStats = safeQuery(
+  const deadStats = honkerQuery(
     `
     SELECT queue, COUNT(*) AS failed_count
     FROM _honker_dead
@@ -758,7 +738,7 @@ function readQueueStats(liveRows = []) {
   `,
     [getRunLedgerCutoffUnix()],
   );
-  const runStats = safeQuery(
+  const runStats = await safeQuery(
     `
     SELECT queue, MAX(started_at) AS last_run_at
     FROM honker_task_runs
@@ -1005,12 +985,11 @@ function groupQueueRows(rows) {
   return grouped;
 }
 
-export function recordHonkerTaskRunStarted(job, queue) {
+export async function recordHonkerTaskRunStarted(job, queue) {
   try {
-    ensureRunSchema();
     const queueName = String(job?.queue || queue?.name || "").trim();
     if (!job?.id || !queueName) return null;
-    const liveRow = safeGet(
+    const liveRow = honkerGet(
       `
         SELECT created_at, run_at
         FROM _honker_live
@@ -1020,7 +999,7 @@ export function recordHonkerTaskRunStarted(job, queue) {
     );
     const startedAt = nowUnix();
     const payloadText = JSON.stringify(job.payload ?? null);
-    const info = insertRunStatement.run(
+    const inserted = await db.get(INSERT_RUN_SQL, [
       job.id,
       queueName,
       describeHonkerTask(queueName, job.payload),
@@ -1030,38 +1009,35 @@ export function recordHonkerTaskRunStarted(job, queue) {
       liveRow?.created_at || null,
       liveRow?.run_at || null,
       startedAt,
-    );
-    return Number(info.lastInsertRowid);
+    ]);
+    return inserted?.id != null ? Number(inserted.id) : null;
   } catch {
     return null;
   }
 }
 
-export function recordHonkerTaskRunFinished(runId, status, error = null) {
+export async function recordHonkerTaskRunFinished(runId, status, error = null) {
   try {
-    ensureRunSchema();
     const id = Number(runId);
     if (!Number.isFinite(id) || id <= 0) return;
-    const row = safeGet("SELECT started_at FROM honker_task_runs WHERE id = ?", [id]);
+    const row = await safeGet("SELECT started_at FROM honker_task_runs WHERE id = ?", [id]);
     const endedAt = nowUnix();
     const durationMs = row?.started_at
       ? Math.max(0, (endedAt - Number(row.started_at)) * 1000)
       : null;
-    updateRunStatement.run(
+    await db.run(UPDATE_RUN_SQL, [
       status || "completed",
       error ? String(error).slice(0, 2000) : null,
       endedAt,
       durationMs,
       id,
-    );
+    ]);
     void pruneExpiredRuns();
   } catch {}
 }
 
 export async function clearStaleHonkerJobs() {
-  ensureRunSchema();
-  const { sweepAllHonkerQueues, getHonkerDb, getHonkerQueueByName } = await import("./honkerDb.js");
-  const honkerDb = getHonkerDb();
+  const { sweepAllHonkerQueues, getHonkerQueueByName } = await import("./honkerDb.js");
   const now = nowUnix();
   const staleCutoff = now - Math.floor(STALE_RUNNING_MS / 1000);
   const clearedReason = "Cleared stuck background job";
@@ -1070,20 +1046,28 @@ export async function clearStaleHonkerJobs() {
   let cleared = 0;
   const errors = [];
 
-  const staleRows = honkerDb.query(
-    `
-      SELECT live.id, live.queue, live.worker_id, live.state, live.created_at,
-             runs.id AS run_id, runs.started_at
-      FROM _honker_live live
-      LEFT JOIN honker_task_runs runs
-        ON runs.job_id = live.id
-       AND runs.queue = live.queue
-       AND runs.status = 'running'
-      WHERE live.state = 'processing'
-        AND COALESCE(runs.started_at, live.created_at) < ?
-    `,
-    [staleCutoff],
+  const runningRuns = await safeQuery(
+    "SELECT id, job_id, queue, started_at FROM honker_task_runs WHERE status = 'running'",
   );
+  const runningRunByJob = new Map();
+  for (const run of runningRuns) {
+    runningRunByJob.set(`${run.queue}:${run.job_id}`, run);
+  }
+  const processingRows = honkerQuery(
+    `
+      SELECT id, queue, worker_id, state, created_at
+      FROM _honker_live
+      WHERE state = 'processing'
+    `,
+  );
+  const staleRows = [];
+  for (const live of processingRows) {
+    const run = runningRunByJob.get(`${live.queue}:${live.id}`) || null;
+    const startedAt = Number(run?.started_at ?? live.created_at);
+    if (Number.isFinite(startedAt) && startedAt < staleCutoff) {
+      staleRows.push({ ...live, run_id: run?.id ?? null, started_at: run?.started_at ?? null });
+    }
+  }
 
   for (const row of staleRows) {
     try {
@@ -1094,7 +1078,7 @@ export async function clearStaleHonkerJobs() {
       queue.cancel(row.id);
 
       if (row.run_id) {
-        recordHonkerTaskRunFinished(Number(row.run_id), "failed", clearedReason);
+        await recordHonkerTaskRunFinished(Number(row.run_id), "failed", clearedReason);
       }
       cleared += 1;
     } catch (error) {
@@ -1106,23 +1090,17 @@ export async function clearStaleHonkerJobs() {
     }
   }
 
-  const orphanRuns = honkerDb.query(
-    `
-      SELECT runs.id
-      FROM honker_task_runs runs
-      LEFT JOIN _honker_live live
-        ON live.id = runs.job_id
-       AND live.queue = runs.queue
-      WHERE runs.status = 'running'
-        AND live.id IS NULL
-        AND runs.started_at < ?
-    `,
-    [staleCutoff],
+  const liveKeys = new Set(
+    honkerQuery("SELECT id, queue FROM _honker_live").map((live) => `${live.queue}:${live.id}`),
+  );
+  const orphanRuns = runningRuns.filter(
+    (run) =>
+      Number(run.started_at) < staleCutoff && !liveKeys.has(`${run.queue}:${run.job_id}`),
   );
 
   for (const run of orphanRuns) {
     try {
-      recordHonkerTaskRunFinished(Number(run.id), "failed", clearedReason);
+      await recordHonkerTaskRunFinished(Number(run.id), "failed", clearedReason);
       cleared += 1;
     } catch (error) {
       errors.push({
@@ -1137,15 +1115,16 @@ export async function clearStaleHonkerJobs() {
 }
 
 export async function getHonkerTaskStatus() {
-  ensureRunSchema();
   await pruneExpiredRuns();
   const scheduledRows = readScheduledRows();
-  const latestRunsByTask = readLatestRunsByTask();
   const liveRows = readLiveJobs();
   const deadRows = readDeadJobs();
-  const runRows = readRecentRuns();
-  const runningStartsByJobId = readRunningStartsByJobId();
-  const queueStats = readQueueStats(liveRows);
+  const [latestRunsByTask, runRows, runningStartsByJobId, queueStats] = await Promise.all([
+    readLatestRunsByTask(),
+    readRecentRuns(),
+    readRunningStartsByJobId(),
+    readQueueStats(liveRows),
+  ]);
   const workerStatuses = await readWorkerStatuses();
   const workers = normalizeWorkerRows(workerStatuses, queueStats);
   const queue = normalizeQueueRows(liveRows, deadRows, runRows, runningStartsByJobId);

@@ -314,7 +314,6 @@ function getStorageHealthCacheKey() {
       DOWNLOAD_FOLDER: process.env.DOWNLOAD_FOLDER || "",
       FILE_BROWSE_ROOTS: process.env.FILE_BROWSE_ROOTS || "",
       PATH_MAPPINGS: process.env.PATH_MAPPINGS || "",
-      AURRAL_DB_PATH: process.env.AURRAL_DB_PATH || "",
     },
   });
 }

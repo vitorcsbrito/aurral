@@ -21,11 +21,11 @@ resolve_data_dir() {
 
   mkdir -p "$canonical" "$legacy"
 
-  if [ -f "$canonical/aurral.db" ]; then
+  if [ -f "$canonical/honker.db" ] || [ -f "$canonical/aurral.db" ]; then
     printf '%s' "$canonical"
     return
   fi
-  if [ -f "$legacy/aurral.db" ]; then
+  if [ -f "$legacy/honker.db" ] || [ -f "$legacy/aurral.db" ]; then
     printf '%s' "$legacy"
     return
   fi

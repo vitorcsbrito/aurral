@@ -22,16 +22,37 @@ services:
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - DATABASE_URL=postgres://aurral:${POSTGRES_PASSWORD:-aurral}@postgres:5432/aurral
     volumes:
       - ${MEDIA_ROOT:-/srv/media}:/data
       - ./config:/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=aurral
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aurral}
+      - POSTGRES_DB=aurral
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurral -d aurral"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 ```
+
+Aurral keeps settings, users, the library index, and job history in Postgres. The `postgres` service above is enough for a home install; to use a server you already run, drop it and set `DATABASE_URL` to that server instead. Postgres 14 or newer with the `pg_trgm` extension is required (Aurral creates the extension on first start, which needs a superuser or the `CREATE` privilege on the database).
 
 Replace `/srv/media` with the host directory that Lidarr already uses. Keep `:/data` as the container side of the mount so every media service sees the same paths.
 
 For example, the host folder `/srv/media/downloads/aurral` is `/data/downloads/aurral` inside Aurral. Set the Downloads Folder to the container path in **Settings > Download clients**, not to the host path.
 
-`/config` is only for Aurral. Do not share it with another service.
+`/config` holds Aurral's background job queue, cached images, and logs. Do not share it with another service.
 
 ## Start Aurral
 

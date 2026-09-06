@@ -78,7 +78,7 @@ ARG APP_VERSION=unknown
 ENV APP_VERSION=$APP_VERSION
 # Cap the V8 heap so a runaway process exits (and restarts) instead of taking
 # the host's memory with it. Override NODE_OPTIONS in the compose file to
-# change it; SQLite caches and buffers live outside this limit.
+# change it.
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 EXPOSE 3001

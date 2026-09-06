@@ -25,6 +25,31 @@ import {
 } from "./libraryFileWatcher.js";
 import { registerHonkerShutdownHandler } from "./honkerWorkerRuntime.js";
 import { HONKER_QUEUE_NAMES } from "./honkerDb.js";
+import { db, pingDatabase } from "../config/database.js";
+import { migrateDatabase } from "../db/pg/schema.js";
+import { loadSettingsCache } from "../db/helpers/settings.js";
+import { initDiscoveryPersistence } from "./discovery/persistence.js";
+import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
+
+let dataLayerReady = null;
+
+// Runs migrations and loads the sync mirrors; must finish before listen().
+export function initializeDataLayer({ logger = console } = {}) {
+  if (dataLayerReady) return dataLayerReady;
+  dataLayerReady = (async () => {
+    const info = await pingDatabase();
+    logger.info?.("system", `[AppRuntime] Connected to ${info?.version || "Postgres"}`);
+    await migrateDatabase(db, { logger });
+    await loadSettingsCache();
+    await initDiscoveryPersistence();
+    await downloadTracker.init();
+    return true;
+  })().catch((error) => {
+    dataLayerReady = null;
+    throw error;
+  });
+  return dataLayerReady;
+}
 
 let backgroundWorkersStarted = false;
 let workerSupervisorStarted = false;
@@ -224,7 +249,8 @@ export function startBackgroundWorkers({ logger = console } = {}) {
   return true;
 }
 
-export function initializeAppRuntime({ logger = console } = {}) {
+export async function initializeAppRuntime({ logger = console } = {}) {
+  await initializeDataLayer({ logger });
   startHonkerScheduler();
   startBackgroundWorkers({ logger });
 }

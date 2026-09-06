@@ -15,13 +15,27 @@ Use the web UI for most settings. Use these variables for Docker deployment sett
 
 ## Database
 
+Aurral stores everything except the background job queue in Postgres.
+
 | Variable | Purpose |
 | -------- | ------- |
-| `AURRAL_SQLITE_CACHE_MB` | SQLite page cache for the main connection, in megabytes. Default `64`. Worker connections use a quarter of this value. Raise it on hosts with RAM to spare; lower it if the process is over budget. |
+| `DATABASE_URL` | **Required.** Postgres connection string, for example `postgres://aurral:secret@postgres:5432/aurral`. The database must exist; Aurral creates its tables and the `pg_trgm` extension on first start. |
+| `AURRAL_PG_POOL_MAX` | Maximum pooled connections per process. Default `10`. The library scan worker thread opens its own pool. |
+| `AURRAL_PG_APPLICATION_NAME` | `application_name` reported to Postgres. Default `aurral`. |
+| `AURRAL_HONKER_DB_PATH` | Location of the SQLite file backing the background job queue. Default `<data dir>/honker.db`. |
 | `AURRAL_MEMORY_WARN_MB` | Log a warning when the process RSS passes this many megabytes (at most every ten minutes). Default `1536`. The image also sets `NODE_OPTIONS=--max-old-space-size=2048` so the Node heap cannot grow without bound; override `NODE_OPTIONS` to change it. |
 | `LIDARR_BULK_TIMEOUT_MS` | Timeout for the bulk Lidarr reads a library scan makes (the full album list, per-artist track and file lists). Default `180000`. These reads do not retry, and a failure keeps Aurral off Lidarr for ten minutes. |
 | `LIBRARY_WATCH_FULL_SCAN_INTERVAL_MS` | Minimum time between full Lidarr pulls triggered by the file watcher. Default `3600000` (one hour). Changes the watcher can map to known artists re-index only those artists; everything else waits for the next allowed full pull or a Lidarr webhook. |
-| `AURRAL_SQLITE_MMAP_MB` | Size of the memory-mapped window over the database file, in megabytes. Default `256`. Mapped pages are shared with the OS file cache and can be reclaimed under pressure, but they are counted in the process RSS. Set `0` to disable. |
+
+### Migrating from SQLite
+
+Installs created before the Postgres switch keep their data in `aurral.db` inside the data directory. Copy it into Postgres once, with Aurral stopped:
+
+```bash
+docker compose run --rm aurral node backend/scripts/migrateSqliteToPostgres.js
+```
+
+The script reads `aurral.db` from the data directory (override with `--sqlite <path>`), applies the Postgres schema, and inserts every row it finds, skipping rows that already exist. Add `--dry-run` to see row counts without writing, or `--truncate` to empty the Postgres tables first. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
 
 ## Path mappings
 

@@ -31,7 +31,7 @@ import healthRouter from "./routes/health.js";
 import filesystemRouter from "./routes/filesystem.js";
 import weeklyFlowRouter from "./routes/weeklyFlow/index.js";
 import { bootstrapHonkerSchedules } from "./services/honkerDb.js";
-import { initializeAppRuntime } from "./services/appRuntime.js";
+import { initializeAppRuntime, initializeDataLayer } from "./services/appRuntime.js";
 import {
   registerHonkerShutdownHandler,
   shutdownHonkerInfrastructure,
@@ -402,10 +402,22 @@ process.once("SIGINT", () => {
   void gracefulShutdown("SIGINT");
 });
 
+try {
+  await initializeDataLayer({ logger });
+} catch (error) {
+  logger.error("system", "Database initialization failed:", error);
+  process.exit(1);
+}
+
 httpServer.listen(PORT, async () => {
   logger.info("system", `Server running on port ${PORT}`);
   bootstrapHonkerSchedules();
-  initializeAppRuntime({ logger });
+  try {
+    await initializeAppRuntime({ logger });
+  } catch (error) {
+    logger.error("system", "Runtime initialization failed:", error);
+    process.exit(1);
+  }
 });
 
 httpServer.on("error", (error) => {

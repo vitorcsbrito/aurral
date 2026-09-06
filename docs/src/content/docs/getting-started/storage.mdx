@@ -145,7 +145,7 @@ services:
       - ${MEDIA_ROOT:-/srv/media}:/data:ro
 ```
 
-`./config:/config` is only for Aurral's database, settings, users, and jobs. Do not share `/config` with Lidarr, Navidrome, Plex, or a download client.
+`./config:/config` is only for Aurral's job queue, cached images, and logs (settings, users, and the library index live in Postgres). Do not share `/config` with Lidarr, Navidrome, Plex, or a download client.
 
 The containers can use different Docker networks and service URLs. They must still be able to see the media files through compatible mounts.
 
