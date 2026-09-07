@@ -11,20 +11,20 @@ import {
 
 const isolatedState = await createIsolatedStateDir("artist-blocklist");
 applyIsolatedBackendEnv(isolatedState);
+await resetDatabase();
 
-const [{ db }, discovery, playlistSourceModule] = await Promise.all([
-  importFromRepo("backend/config/db-sqlite.js"),
+const [discovery, playlistSourceModule] = await Promise.all([
   importFromRepo("backend/services/discovery/index.js"),
   importFromRepo("backend/services/weeklyFlow/weeklyFlowPlaylistSource.js"),
 ]);
 
 const { WeeklyFlowPlaylistSource } = playlistSourceModule;
 
-test.beforeEach(() => resetDatabase(db));
+test.beforeEach(() => resetDatabase());
 test.after(async () => cleanupIsolatedState(isolatedState));
 
-test("artist blocks are per-user and match ids, names, and track aliases", () => {
-  discovery.addDiscoveryFeedback("7", {
+test("artist blocks are per-user and match ids, names, and track aliases", async () => {
+  await discovery.addDiscoveryFeedback("7", {
     artistId: "11111111-1111-1111-1111-111111111111",
     artistName: "Blocked Artist",
     action: "block_artist",
@@ -41,31 +41,31 @@ test("artist blocks are per-user and match ids, names, and track aliases", () =>
   assert.equal(discovery.filterBlockedArtistsForUser("8", [{ name: "Blocked Artist" }]).length, 1);
 });
 
-test("resetting discovery tastes preserves artist blocks", () => {
-  discovery.addDiscoveryFeedback("7", {
+test("resetting discovery tastes preserves artist blocks", async () => {
+  await discovery.addDiscoveryFeedback("7", {
     artistName: "Blocked Artist",
     action: "block_artist",
   });
-  discovery.addDiscoveryFeedback("7", {
+  await discovery.addDiscoveryFeedback("7", {
     artistName: "Taste Artist",
     action: "less_like_this",
   });
 
-  const remaining = discovery.resetDiscoveryFeedback("7");
+  const remaining = await discovery.resetDiscoveryFeedback("7");
 
   assert.deepEqual(remaining.map((entry) => entry.action), ["block_artist"]);
 });
 
 test("flows exclude only hard-blocked artists, including editorial flows", async () => {
-  discovery.addDiscoveryFeedback("7", {
+  await discovery.addDiscoveryFeedback("7", {
     artistName: "Blocked Artist",
     action: "block_artist",
   });
-  discovery.addDiscoveryFeedback("7", {
+  await discovery.addDiscoveryFeedback("7", {
     artistId: "11111111-1111-1111-1111-111111111111",
     action: "block_artist",
   });
-  discovery.addDiscoveryFeedback("7", {
+  await discovery.addDiscoveryFeedback("7", {
     artistName: "Soft Dislike",
     action: "less_like_this",
   });

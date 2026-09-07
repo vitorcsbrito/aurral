@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { registerStream as registerArtistStream } from "../../backend/routes/artists/handlers/stream.js";
 import { registerMisc } from "../../backend/routes/library/handlers/misc.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
@@ -15,6 +16,11 @@ import {
   upsertLibraryMediaFile,
   upsertLibraryTrack,
 } from "../../backend/services/libraryMediaStore.js";
+
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
 
 test("artist batch lookup rejects oversized batches", async () => {
   const routes = new Map();
@@ -48,25 +54,25 @@ test("artist batch lookup rejects oversized batches", async () => {
 
 test("artist lookup follows fresh Lidarr artist and album membership while the canonical index catches up", async (t) => {
   const mbid = "55555555-5555-4555-8555-555555555555";
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `artist-lookup-stale-${process.pid}-${Date.now()}`,
     mbid,
     name: "Stale Artist",
     metadata: { id: 41, foreignArtistId: mbid, monitored: true },
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `artist-lookup-stale-album-${process.pid}-${Date.now()}`,
     mbid: "77777777-7777-4777-8777-777777777777",
     artistId: artist.id,
     title: "Stale Artist Album",
     metadata: { id: 43, artistId: 41, monitored: true },
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `artist-lookup-stale-track-${process.pid}-${Date.now()}`,
     title: "Stale Artist Track",
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-  invalidateCanonicalLibraryCache();
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await invalidateCanonicalLibraryCache();
   const routes = new Map();
   registerMisc({
     get(path, handler) {
@@ -132,7 +138,7 @@ test("artist lookup follows fresh Lidarr artist and album membership while the c
         end() {},
       },
     );
-    const deadline = Date.now() + 1000;
+    const deadline = Date.now() + 5000;
     let libraryEventIndex = writes.indexOf("event: library\n");
     while (libraryEventIndex === -1 && Date.now() < deadline) {
       await new Promise((resolve) => setImmediate(resolve));
@@ -142,11 +148,11 @@ test("artist lookup follows fresh Lidarr artist and album membership while the c
     assert.equal(JSON.parse(writes[libraryEventIndex + 1].slice(6)).exists, false);
     closeStream();
   } finally {
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    invalidateCanonicalLibraryCache();
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
@@ -280,33 +286,33 @@ test("album batch lookup bypasses stale cache and unrelated broken albums", asyn
 
 test("canonical album lookup reports partial ownership and the complete track count", async () => {
   const key = `album-lookup-partial-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     mbid: "11111111-1111-4111-8111-111111111111",
     name: "Partial Lookup Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     mbid: "22222222-2222-4222-8222-222222222222",
     artistId: artist.id,
     title: "Partial Lookup Album",
   });
-  const ownedTrack = upsertLibraryTrack({
+  const ownedTrack = await upsertLibraryTrack({
     identityKey: `${key}:owned-track`,
     mbid: "33333333-3333-4333-8333-333333333333",
     title: "Owned Track",
     artistName: artist.name,
   });
-  const missingTrack = upsertLibraryTrack({
+  const missingTrack = await upsertLibraryTrack({
     identityKey: `${key}:missing-track`,
     mbid: "44444444-4444-4444-8444-444444444444",
     title: "Missing Track",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
   const ownedPath = `/tmp/${key}/owned.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: ownedTrack.id,
     albumId: album.id,
     source: "aurral",
@@ -346,34 +352,38 @@ test("canonical album lookup reports partial ownership and the complete track co
     assert.equal(result?.percentOfTracks, 50);
     assert.deepEqual(result?.ownedTrackMbids, [ownedTrack.mbid]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path = ?").run(ownedPath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(ownedTrack.id, missingTrack.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE path = ?", [ownedPath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?)", [
+      ownedTrack.id,
+      missingTrack.id,
+    ]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
 test("album lookup follows fresh Lidarr removal while the canonical index catches up", async (t) => {
   const key = `album-lookup-stale-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     name: "Stale Album Artist",
     metadata: { id: 51, monitored: true },
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     mbid: `${key}-album`,
     artistId: artist.id,
     title: "Stale Album",
     metadata: { id: 52, artistId: 51, monitored: true },
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${key}:track`,
     title: "Stale Album Track",
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-  invalidateCanonicalLibraryCache();
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await invalidateCanonicalLibraryCache();
   const routes = new Map();
   registerMisc({
     get() {},
@@ -396,47 +406,47 @@ test("album lookup follows fresh Lidarr removal while the canonical index catche
     );
     assert.deepEqual(body, {});
   } finally {
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    invalidateCanonicalLibraryCache();
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
 test("canonical album lookup includes owned tracks after the first track page", async () => {
   const key = `album-lookup-pagination-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     name: "Paginated Lookup Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     mbid: `${key}-album`,
     artistId: artist.id,
     title: "Paginated Lookup Album",
   });
   const trackIds = [];
-  const ownedTrack = upsertLibraryTrack({
+  const ownedTrack = await upsertLibraryTrack({
     identityKey: `${key}:owned-track`,
     mbid: `${key}-owned`,
     title: "Track 101",
     artistName: artist.name,
   });
   for (let index = 1; index <= 100; index += 1) {
-    const track = upsertLibraryTrack({
+    const track = await upsertLibraryTrack({
       identityKey: `${key}:track-${index}`,
       mbid: `${key}-track-${index}`,
       title: `Track ${String(index).padStart(3, "0")}`,
       artistName: artist.name,
     });
     trackIds.push(track.id);
-    linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: index });
+    await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: index });
   }
   trackIds.push(ownedTrack.id);
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 101 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 101 });
   const ownedPath = `/tmp/${key}/owned.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: ownedTrack.id,
     albumId: album.id,
     source: "aurral",
@@ -471,11 +481,14 @@ test("canonical album lookup includes owned tracks after the first track page", 
     assert.equal(result?.trackFileCount, 1);
     assert.deepEqual(result?.ownedTrackMbids, [ownedTrack.mbid]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path = ?").run(ownedPath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare(`DELETE FROM library_tracks WHERE id IN (${trackIds.map(() => "?").join(",")})`).run(...trackIds);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    invalidateCanonicalLibraryCache();
+    await db.run("DELETE FROM library_media_files WHERE path = ?", [ownedPath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run(
+      `DELETE FROM library_tracks WHERE id IN (${trackIds.map(() => "?").join(",")})`,
+      trackIds,
+    );
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });

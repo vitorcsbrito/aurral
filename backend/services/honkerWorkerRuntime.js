@@ -28,7 +28,7 @@ export async function withJobHeartbeat(job, queue, fn, extendSeconds = null) {
   let recordFinished = null;
   try {
     const taskStatus = await import("./honkerTaskStatus.js");
-    runId = taskStatus.recordHonkerTaskRunStarted(job, queue);
+    runId = await taskStatus.recordHonkerTaskRunStarted(job, queue);
     recordFinished = taskStatus.recordHonkerTaskRunFinished;
   } catch {}
 
@@ -46,12 +46,12 @@ export async function withJobHeartbeat(job, queue, fn, extendSeconds = null) {
   try {
     const result = await Promise.resolve(fn());
     if (recordFinished) {
-      recordFinished(runId, "completed");
+      await recordFinished(runId, "completed");
     }
     return result;
   } catch (error) {
     if (recordFinished) {
-      recordFinished(runId, "failed", error?.message || String(error));
+      await recordFinished(runId, "failed", error?.message || String(error));
     }
     throw error;
   } finally {

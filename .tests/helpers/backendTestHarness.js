@@ -4,6 +4,9 @@ import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { spawn } from "child_process";
 import http from "http";
+import net from "net";
+import { db } from "../../backend/config/database.js";
+import { migrateDatabase } from "../../backend/db/pg/schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
@@ -42,18 +45,16 @@ export async function createIsolatedStateDir(
     join(tmpdir(), `aurral-${String(name || "test")}-`),
   );
   const dataDir = join(baseDir, dataDirRelativePath);
-  const dbPath = join(dataDir, "aurral.test.db");
   await mkdir(dataDir, { recursive: true });
   return {
     baseDir,
     dataDir,
-    dbPath,
   };
 }
 
 export function applyIsolatedBackendEnv(paths) {
   process.env.AURRAL_DATA_DIR = paths.dataDir;
-  process.env.AURRAL_DB_PATH = paths.dbPath;
+  process.env.AURRAL_HONKER_DB_PATH = join(paths.dataDir, "honker.db");
   process.env.WEEKLY_FLOW_FOLDER = join(paths.baseDir, "weekly-flow");
   process.env.DOWNLOAD_FOLDER = join(paths.baseDir, "downloads");
   process.env.NODE_ENV = "test";
@@ -72,7 +73,8 @@ export async function cleanupIsolatedState(paths) {
     const honkerDb = await importFromRepo("backend/services/honkerDb.js");
     honkerDb.closeHonkerDb();
   } catch {}
-  await rm(paths.baseDir, { recursive: true, force: true });
+  // Workers may still write here; retry ENOTEMPTY/EBUSY briefly.
+  await rm(paths.baseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 export async function importFromRepo(relativePath) {
@@ -83,14 +85,41 @@ export async function importFromRepo(relativePath) {
 export async function setupIsolatedBackend(name, ...modulePaths) {
   const paths = await createIsolatedStateDir(name);
   applyIsolatedBackendEnv(paths);
+  await ensureTestDatabase();
+  await reloadMirrors();
   const modules = await Promise.all(modulePaths.map(importFromRepo));
   return [paths, ...modules];
 }
 
-export function resetDatabase(db) {
-  for (const table of RESET_TABLES) {
-    db.prepare(`DELETE FROM ${table}`).run();
+let schemaReady = null;
+
+// Applies the Postgres schema once per test process (schema from setup-env).
+export function ensureTestDatabase() {
+  if (!schemaReady) schemaReady = migrateDatabase(db, { logger: { info() {} } });
+  return schemaReady;
+}
+
+// Reloads the sync mirrors so callers see the reset state immediately.
+export async function reloadMirrors() {
+  const settings = await importFromRepo("backend/db/helpers/settings.js");
+  await settings.loadSettingsCache();
+  const helpers = await importFromRepo("backend/db/helpers/index.js");
+  await helpers.dbOps.loadDiscoveryCacheMirror();
+}
+
+export async function resetDatabase() {
+  await ensureTestDatabase();
+  // TRUNCATE needs ACCESS EXCLUSIVE; background pollers deadlock it (40P01).
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await db.exec(`TRUNCATE ${RESET_TABLES.join(", ")} CASCADE`);
+      break;
+    } catch (error) {
+      if (error?.code !== "40P01" || attempt >= 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
   }
+  await reloadMirrors();
 }
 
 export function createMockHttpServer(handler) {
@@ -150,14 +179,24 @@ async function waitForServer(port, child) {
   throw new Error(`Timed out waiting for server on port ${port}: ${lastError}`);
 }
 
+// Asks the OS for a free port; concurrent test processes stop colliding.
+async function findFreePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
 export async function startServerProcess({
   port,
   extraEnv = {},
 } = {}) {
   const chosenPort =
-    Number.isInteger(port) && port > 0
-      ? port
-      : 4100 + Math.floor(Math.random() * 1000);
+    Number.isInteger(port) && port > 0 ? port : await findFreePort();
   const child = spawn("node", ["backend/server.js"], {
     cwd: repoRoot,
     env: {

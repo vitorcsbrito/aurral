@@ -67,6 +67,9 @@ function scheduleCanonicalLibraryReconciliation({ artistId = null } = {}) {
   return scheduleLibraryScan({
     includeLidarr: true,
     artistIds: Number.isSafeInteger(lidarrArtistId) && lidarrArtistId > 0 ? [lidarrArtistId] : null,
+  }).catch((error) => {
+    console.warn("[Library] Failed to schedule reconciliation scan:", error?.message || error);
+    return null;
   });
 }
 
@@ -364,9 +367,9 @@ export class LibraryManager {
           options.metadataProfileId || lidarrSettings.integrations?.lidarr?.metadataProfileId,
       });
       logger.info('library', `[LibraryManager] Added artist "${artistName}" to Lidarr`);
-      const mappedArtist = this.mapLidarrArtist(lidarrArtist);
+      const mappedArtist = await this.mapLidarrArtist(lidarrArtist);
       upsertCachedArtist(mappedArtist);
-      scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist?.id });
+      await scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist?.id });
       import("./aurralHistoryService.js")
         .then(({ recordArtistAdded }) =>
           recordArtistAdded({
@@ -403,7 +406,7 @@ export class LibraryManager {
         : options.monitorOption && options.monitorOption !== "none"
           ? options.monitorOption
           : defaultMonitorOption;
-    const currentUser = options.user?.id != null ? userOps.getUserById(options.user.id) : null;
+    const currentUser = options.user?.id != null ? await userOps.getUserById(options.user.id) : null;
     const preparedAddOptions = await lidarr.resolveArtistAddConfiguration({
       requestRootFolderPath: options.rootFolderPath,
       requestQualityProfileId: options.qualityProfileId,
@@ -791,7 +794,7 @@ export class LibraryManager {
     try {
       const lidarrArtist = await lidarr.getArtistByMbid(mbid, { forceRefresh });
       if (!lidarrArtist) return null;
-      const mappedArtist = this.mapLidarrArtist(lidarrArtist);
+      const mappedArtist = await this.mapLidarrArtist(lidarrArtist);
       upsertCachedArtist(mappedArtist);
       return mappedArtist;
     } catch {
@@ -807,7 +810,7 @@ export class LibraryManager {
     try {
       const lidarrArtist = await lidarr.getArtist(id);
       await this.backfillLidarrArtistMappings([lidarrArtist]);
-      return this.mapLidarrArtist(lidarrArtist);
+      return await this.mapLidarrArtist(lidarrArtist);
     } catch (error) {
       return null;
     }
@@ -884,7 +887,11 @@ export class LibraryManager {
   }
 
   async getAllArtists() {
-    return [...iterateCanonicalArtistProjection({ pageSize: 100 })];
+    const artists = [];
+    for await (const artist of iterateCanonicalArtistProjection({ pageSize: 100 })) {
+      artists.push(artist);
+    }
+    return artists;
   }
 
   async syncLidarrArtists({ forceRefresh = false } = {}) {
@@ -920,9 +927,11 @@ export class LibraryManager {
             return _cachedArtists;
           }
           await this.backfillLidarrArtistMappings(lidarrArtists);
-          _cachedArtists = lidarrArtists.map((a) => this.mapLidarrArtist(a));
+          _cachedArtists = await Promise.all(
+            lidarrArtists.map((a) => this.mapLidarrArtist(a)),
+          );
           _artistsCachedAt = Date.now();
-          scheduleCanonicalLibraryReconciliation();
+          await scheduleCanonicalLibraryReconciliation();
           import("../../services/unifiedSearchService.js").then(({ clearSearchContextCache }) => clearSearchContextCache()).catch(() => {});
           return _cachedArtists;
         } catch (error) {
@@ -979,7 +988,9 @@ export class LibraryManager {
             const lidarrArtists = await lidarr.request("/artist");
             if (Array.isArray(lidarrArtists)) {
               await this.backfillLidarrArtistMappings(lidarrArtists);
-              _cachedArtists = lidarrArtists.map((a) => this.mapLidarrArtist(a));
+              _cachedArtists = await Promise.all(
+                lidarrArtists.map((a) => this.mapLidarrArtist(a)),
+              );
               _lastFullArtistFetchAt = Date.now();
             }
           } catch {}
@@ -989,7 +1000,9 @@ export class LibraryManager {
       const picked = artistIds.sort(() => 0.5 - Math.random()).slice(0, normalizedLimit);
       const artists = await Promise.all(picked.map((id) => lidarr.getArtist(id).catch(() => null)));
       await this.backfillLidarrArtistMappings(artists.filter(Boolean));
-      const mapped = artists.filter(Boolean).map((artist) => this.mapLidarrArtist(artist));
+      const mapped = await Promise.all(
+        artists.filter(Boolean).map((artist) => this.mapLidarrArtist(artist)),
+      );
       if (mapped.length >= normalizedLimit) return mapped;
       if (Array.isArray(_cachedArtists) && _cachedArtists.length > 0) {
         const existing = new Set(
@@ -1009,11 +1022,11 @@ export class LibraryManager {
     }
   }
 
-  mapLidarrArtist(lidarrArtist) {
+  async mapLidarrArtist(lidarrArtist) {
     const artistPath = lidarrArtist.path ?? null;
     const artistId = Number(lidarrArtist.id);
     const foreignArtistId = String(lidarrArtist.foreignArtistId || "").trim() || null;
-    const mappedMbid = dbOps.getLidarrArtistMbid(foreignArtistId);
+    const mappedMbid = await dbOps.getLidarrArtistMbid(foreignArtistId);
     const mbid =
       mappedMbid || (foreignArtistId && UUID_REGEX.test(foreignArtistId) ? foreignArtistId : null);
     const normalizedArtistId =
@@ -1048,7 +1061,7 @@ export class LibraryManager {
     const artistName = String(lidarrArtist?.artistName || "").trim();
     if (!providerId || !artistName || UUID_REGEX.test(providerId)) return null;
 
-    const existingMbid = dbOps.getLidarrArtistMbid(providerId);
+    const existingMbid = await dbOps.getLidarrArtistMbid(providerId);
     if (existingMbid) return existingMbid;
 
     const mbid = await musicbrainzResolveArtistMbidByName(artistName);
@@ -1071,7 +1084,7 @@ export class LibraryManager {
     }
 
     try {
-      dbOps.setLidarrArtistIdMap(mbid, providerId);
+      await dbOps.setLidarrArtistIdMap(mbid, providerId);
       return mbid;
     } catch (error) {
       if (error?.code !== "LIDARR_ARTIST_ID_CONFLICT") throw error;
@@ -1088,7 +1101,7 @@ export class LibraryManager {
         !providerId ||
         UUID_REGEX.test(providerId) ||
         seen.has(providerId) ||
-        dbOps.getLidarrArtistMbid(providerId)
+        await dbOps.getLidarrArtistMbid(providerId)
       ) {
         continue;
       }
@@ -1127,17 +1140,17 @@ export class LibraryManager {
         await lidarr.updateArtistMonitoring(lidarrArtist.id, monitorOption);
         logger.info('library', `[LibraryManager] Updated Lidarr monitoring for "${lidarrArtist.artistName}" to "${monitorOption}"`);
         const updated = await lidarr.getArtist(lidarrArtist.id);
-        const mapped = this.mapLidarrArtist(updated);
+        const mapped = await this.mapLidarrArtist(updated);
         mapped.monitorOption = normalizedMonitorOption;
         mapped.addOptions = {
           ...(mapped.addOptions || {}),
           monitor: normalizedMonitorOption,
         };
         upsertCachedArtist(mapped);
-        scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist.id });
+        await scheduleCanonicalLibraryReconciliation({ artistId: lidarrArtist.id });
         return mapped;
       }
-      return this.mapLidarrArtist(lidarrArtist);
+      return await this.mapLidarrArtist(lidarrArtist);
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to update artist in Lidarr: ${error.message}`);      return { error: error.message };
     }
@@ -1152,11 +1165,11 @@ export class LibraryManager {
       const lidarrArtist = await lidarr.getArtistByMbid(mbid);
       if (!lidarrArtist) return { success: false, error: "Artist not found in Lidarr" };
       await lidarr.deleteArtist(lidarrArtist.id, deleteFiles);
-      dbOps.deleteLidarrArtistIdMap(mbid);
+      await dbOps.deleteLidarrArtistIdMap(mbid);
       removeCachedArtistByMbid(mbid);
-      clearCanonicalLidarrArtist(mbid);
-      clearCanonicalLidarrArtist(lidarrArtist.foreignArtistId);
-      scheduleCanonicalLibraryReconciliation();
+      await clearCanonicalLidarrArtist(mbid);
+      await clearCanonicalLidarrArtist(lidarrArtist.foreignArtistId);
+      await scheduleCanonicalLibraryReconciliation();
       logger.info('library', `[LibraryManager] Deleted artist "${lidarrArtist.artistName}" from Lidarr`);
       return { success: true };
     } catch (error) {
@@ -1234,7 +1247,7 @@ export class LibraryManager {
         const refreshedArtist = await lidarr.getArtist(artistId).catch(() => fallbackArtist);
         if (!refreshedArtist) return null;
         const mapped = this.mapLidarrAlbum(refreshedExisting, refreshedArtist);
-        scheduleCanonicalLibraryReconciliation({ artistId });
+        await scheduleCanonicalLibraryReconciliation({ artistId });
         return mapped;
       };
       let lidarrArtist = null;
@@ -1336,7 +1349,7 @@ export class LibraryManager {
       }
       const updatedArtist = await lidarr.getArtist(artistId);
       const mapped = this.mapLidarrAlbum(lidarrAlbum, updatedArtist);
-      scheduleCanonicalLibraryReconciliation({ artistId });
+      await scheduleCanonicalLibraryReconciliation({ artistId });
       return mapped;
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to add album to Lidarr: ${error.message}`);      return { error: error.message };
@@ -1578,7 +1591,7 @@ export class LibraryManager {
         const updated = await lidarr.getAlbum(id);
         const lidarrArtist = await lidarr.getArtist(updated.artistId);
         const mapped = this.mapLidarrAlbum(updated, lidarrArtist);
-        scheduleCanonicalLibraryReconciliation({ artistId: updated.artistId });
+        await scheduleCanonicalLibraryReconciliation({ artistId: updated.artistId });
         return mapped;
       } catch (error) {
         const msg = error.message || "";
@@ -1606,8 +1619,8 @@ export class LibraryManager {
     }
     try {
       await lidarr.deleteAlbum(id, deleteFiles);
-      clearCanonicalLidarrAlbum(id);
-      scheduleCanonicalLibraryReconciliation();
+      await clearCanonicalLidarrAlbum(id);
+      await scheduleCanonicalLibraryReconciliation();
       return { success: true };
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to delete album from Lidarr: ${error.message}`);      return { success: false, error: error.message };
@@ -1616,7 +1629,7 @@ export class LibraryManager {
 
   async deleteTrack(id) {
     try {
-      const library = getCanonicalTrack({
+      const library = await getCanonicalTrack({
         trackId: id,
         availableOnly: false,
       });
@@ -1642,7 +1655,7 @@ export class LibraryManager {
             .filter((result) => result.status === "fulfilled")
             .map((result) => result.value);
           if (reconciledPaths.length > 0) {
-            markLibraryMediaFilesUnavailable("aurral", reconciledPaths);
+            await markLibraryMediaFilesUnavailable("aurral", reconciledPaths);
           }
           const failure = deletionResults.find((result) => result.status === "rejected");
           if (failure) {
@@ -1650,7 +1663,7 @@ export class LibraryManager {
             logger.error("library", `[LibraryManager] Failed to delete Aurral track file: ${error.message}`);
             return { success: false, code: "failed", error: error.message };
           }
-          removeLibraryTrackIfNoAvailableMedia(id);
+          await removeLibraryTrackIfNoAvailableMedia(id);
           return { success: true };
         } catch (error) {
           logger.error("library", `[LibraryManager] Failed to delete Aurral track file: ${error.message}`);
@@ -1662,7 +1675,7 @@ export class LibraryManager {
       if (!lidarr || !lidarr.isConfigured()) {
         return { success: false, code: "lidarr_unavailable", error: "Lidarr is not configured" };
       }
-      const lidarrLibrary = getCanonicalTrack({
+      const lidarrLibrary = await getCanonicalTrack({
         trackId: id,
         source: "lidarr",
         availableOnly: false,
@@ -1700,7 +1713,7 @@ export class LibraryManager {
       }
 
       await lidarr.deleteTrackFile(trackFileId);
-      scheduleCanonicalLibraryReconciliation({ artistId: metadata.artistId });
+      await scheduleCanonicalLibraryReconciliation({ artistId: metadata.artistId });
       return { success: true };
     } catch (error) {
       logger.error('library', `[LibraryManager] Failed to delete track file: ${error.message}`);
@@ -1857,7 +1870,7 @@ export class LibraryManager {
 
   async getPlaybackQueue({ page = 1, pageSize = 100 } = {}) {
     return buildPlaybackQueueFromCanonicalLibrary(
-      getCanonicalLibraryPage({
+      await getCanonicalLibraryPage({
         source: "lidarr",
         availableOnly: true,
         kind: "tracks",

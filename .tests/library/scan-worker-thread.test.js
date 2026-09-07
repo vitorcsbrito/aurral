@@ -6,13 +6,12 @@ import path from "node:path";
 import {
   cleanupIsolatedState,
   importFromRepo,
+  resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }] = await setupIsolatedBackend(
-  "scan-worker-thread",
-  "backend/config/db-sqlite.js",
-);
+const [isolatedState] = await setupIsolatedBackend("scan-worker-thread");
+const { db } = await import("../../backend/config/database.js");
 const queryService = await importFromRepo("backend/services/libraryQueryService.js");
 const { runLibraryScanInWorker, isLibraryScanRunning } =
   await importFromRepo("backend/services/libraryScanRunner.js");
@@ -20,6 +19,7 @@ const { runLibraryScanInWorker, isLibraryScanRunning } =
 let musicRoot;
 
 test.before(async () => {
+  await resetDatabase();
   musicRoot = await mkdtemp(path.join(tmpdir(), "aurral-scan-thread-"));
   const filePath = path.join(musicRoot, "Thread Artist", "Thread Album", "01 Thread Track.flac");
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -33,7 +33,7 @@ test.after(async () => {
 
 test("a library scan runs in a worker thread and invalidates main-thread caches", async () => {
   // Warm the main-thread cache with the empty library first.
-  assert.deepEqual(queryService.getCanonicalArtistKeys(), []);
+  assert.deepEqual(await queryService.getCanonicalArtistKeys(), []);
 
   const scan = runLibraryScanInWorker({ includeLidarr: false, musicRoot });
   assert.equal(isLibraryScanRunning(), true);
@@ -44,17 +44,22 @@ test("a library scan runs in a worker thread and invalidates main-thread caches"
   assert.equal(result.local.filesIndexed, 1);
   assert.equal(result.lidarr.skipped, true);
   assert.equal(
-    db.prepare("SELECT status FROM library_scan_runs WHERE source = 'aurral' ORDER BY id DESC LIMIT 1")
-      .get()?.status,
+    (
+      await db.get(
+        "SELECT status FROM library_scan_runs WHERE source = 'aurral' ORDER BY id DESC LIMIT 1",
+      )
+    )?.status,
     "complete",
   );
   assert.deepEqual(
-    queryService.getCanonicalArtistKeys().map((artist) => artist.name),
+    (await queryService.getCanonicalArtistKeys()).map((artist) => artist.name),
     ["Thread Artist"],
   );
-  assert.ok(db.prepare(
-    "SELECT 1 FROM library_search_documents WHERE entity_kind = 'track' AND title = 'Thread Track'",
-  ).get());
+  assert.ok(
+    await db.get(
+      "SELECT 1 FROM library_search_documents WHERE entity_kind = 'track' AND title = 'Thread Track'",
+    ),
+  );
 });
 
 test("a second scan waits for the running one instead of overlapping", async () => {
@@ -65,7 +70,13 @@ test("a second scan waits for the running one instead of overlapping", async () 
   assert.equal(firstResult.local.changed, false);
   assert.equal(secondResult.local.changed, false);
   assert.equal(
-    db.prepare("SELECT COUNT(*) AS count FROM library_scan_runs WHERE source = 'aurral'").get().count,
+    Number(
+      (
+        await db.get(
+          "SELECT COUNT(*) AS count FROM library_scan_runs WHERE source = 'aurral'",
+        )
+      ).count,
+    ),
     3,
   );
 });

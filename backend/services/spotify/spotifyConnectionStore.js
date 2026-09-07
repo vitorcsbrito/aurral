@@ -1,21 +1,8 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
 import { decryptWithKey, encryptWithKey } from "../../config/encryption.js";
+import { createJsonSettingStore } from "../../db/helpers/jsonSettingStore.js";
 import { getSettingsEncryptionKey } from "../../db/helpers/settings.js";
 
-const SETTINGS_KEY = "spotifyConnections";
-const getSettingStmt = db.prepare("SELECT value FROM settings WHERE key = ?");
-const upsertSettingStmt = db.prepare(
-  "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-);
-
-const readStore = () => {
-  const parsed = dbHelpers.parseJSON(getSettingStmt.get(SETTINGS_KEY)?.value);
-  return parsed && typeof parsed === "object" ? parsed : {};
-};
-
-const writeStore = (store) => {
-  upsertSettingStmt.run(SETTINGS_KEY, dbHelpers.stringifyJSON(store));
-};
+const store = createJsonSettingStore("spotifyConnections");
 
 const userKey = (userId) => String(Math.trunc(Number(userId)));
 
@@ -48,13 +35,13 @@ const normalizeConnection = (raw) => {
 };
 
 export const spotifyConnectionStore = {
-  getConnection(userId) {
-    const store = readStore();
-    return normalizeConnection(store[userKey(userId)] || null);
+  async getConnection(userId) {
+    const connections = await store.read();
+    return normalizeConnection(connections[userKey(userId)] || null);
   },
 
-  getPublicStatus(userId) {
-    const connection = this.getConnection(userId);
+  async getPublicStatus(userId) {
+    const connection = await this.getConnection(userId);
     if (!connection) {
       return { connected: false, displayName: null, connectedAt: null };
     }
@@ -65,16 +52,16 @@ export const spotifyConnectionStore = {
     };
   },
 
-  saveConnection(userId, { accessToken, refreshToken, expiresAt, displayName = null } = {}) {
+  async saveConnection(userId, { accessToken, refreshToken, expiresAt, displayName = null } = {}) {
     const safeAccessToken = String(accessToken || "").trim();
     const safeRefreshToken = String(refreshToken || "").trim();
     if (!safeAccessToken || !safeRefreshToken) {
       throw new Error("Spotify tokens are required");
     }
-    const store = readStore();
+    const connections = await store.read();
     const now = Date.now();
     const parsedExpiresAt = Number(expiresAt);
-    store[userKey(userId)] = {
+    connections[userKey(userId)] = {
       accessToken: encryptToken(safeAccessToken),
       refreshToken: encryptToken(safeRefreshToken),
       expiresAt:
@@ -84,12 +71,12 @@ export const spotifyConnectionStore = {
       displayName: String(displayName || "").trim() || null,
       connectedAt: now,
     };
-    writeStore(store);
+    await store.write(connections);
     return this.getConnection(userId);
   },
 
-  updateTokens(userId, { accessToken, refreshToken, expiresAt } = {}) {
-    const current = this.getConnection(userId);
+  async updateTokens(userId, { accessToken, refreshToken, expiresAt } = {}) {
+    const current = await this.getConnection(userId);
     if (!current) return null;
     return this.saveConnection(userId, {
       accessToken: accessToken || current.accessToken,
@@ -99,19 +86,19 @@ export const spotifyConnectionStore = {
     });
   },
 
-  clearConnection(userId) {
-    const store = readStore();
+  async clearConnection(userId) {
+    const connections = await store.read();
     const key = userKey(userId);
-    if (!store[key]) return false;
-    delete store[key];
-    writeStore(store);
+    if (!connections[key]) return false;
+    delete connections[key];
+    await store.write(connections);
     return true;
   },
 
-  clearConnectionIfMatches(userId, expected = {}) {
-    const store = readStore();
+  async clearConnectionIfMatches(userId, expected = {}) {
+    const connections = await store.read();
     const key = userKey(userId);
-    const current = normalizeConnection(store[key] || null);
+    const current = normalizeConnection(connections[key] || null);
     if (
       !current ||
       current.accessToken !== expected.accessToken ||
@@ -119,8 +106,8 @@ export const spotifyConnectionStore = {
     ) {
       return false;
     }
-    delete store[key];
-    writeStore(store);
+    delete connections[key];
+    await store.write(connections);
     return true;
   },
 };

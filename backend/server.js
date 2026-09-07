@@ -31,7 +31,7 @@ import healthRouter from "./routes/health.js";
 import filesystemRouter from "./routes/filesystem.js";
 import weeklyFlowRouter from "./routes/weeklyFlow/index.js";
 import { bootstrapHonkerSchedules } from "./services/honkerDb.js";
-import { initializeAppRuntime } from "./services/appRuntime.js";
+import { initializeAppRuntime, initializeDataLayer } from "./services/appRuntime.js";
 import {
   registerHonkerShutdownHandler,
   shutdownHonkerInfrastructure,
@@ -319,28 +319,34 @@ const broadcastWeeklyFlowStatus = async () => {
     if (!hasWsSubscribers("weekly-flow") && !hasWsSubscribers("playlists")) {
       return;
     }
+    const audienceKey = (client) =>
+      client?.user?.role === "admin"
+        ? "admin"
+        : client?.user?.id != null
+          ? `user:${client.user.id}`
+          : `anon:${client?.id || "unknown"}`;
+    // Snapshot is async; resolve one per audience, then broadcast synchronously.
+    const audiences = new Map();
+    for (const channel of ["weekly-flow", "playlists"]) {
+      websocketService.broadcastPerClient(channel, (client) => {
+        const key = audienceKey(client);
+        if (!audiences.has(key)) audiences.set(key, client?.user || null);
+        return null;
+      });
+    }
     const payloadByAudience = new Map();
-    const buildPayload = (channel) => (client) => {
-      const cacheKey =
-        client?.user?.role === "admin"
-          ? "admin"
-          : client?.user?.id != null
-            ? `user:${client.user.id}`
-            : `anon:${client?.id || "unknown"}`;
-      let cached = payloadByAudience.get(cacheKey);
-      if (!cached) {
-        const status = getWeeklyFlowStatusSnapshot({
-          user: client?.user || null,
-        });
-        cached = {
+    await Promise.all(
+      [...audiences].map(async ([key, user]) => {
+        const status = await getWeeklyFlowStatusSnapshot({ user });
+        payloadByAudience.set(key, {
           payload: JSON.stringify(status),
-          message: {
-            type: "playlist_status",
-            status,
-          },
-        };
-        payloadByAudience.set(cacheKey, cached);
-      }
+          message: { type: "playlist_status", status },
+        });
+      }),
+    );
+    const buildPayload = (channel) => (client) => {
+      const cached = payloadByAudience.get(audienceKey(client));
+      if (!cached) return null;
       if (!client._lastWeeklyFlowStatusPayloadByChannel) {
         client._lastWeeklyFlowStatusPayloadByChannel = new Map();
       }
@@ -396,10 +402,22 @@ process.once("SIGINT", () => {
   void gracefulShutdown("SIGINT");
 });
 
+try {
+  await initializeDataLayer({ logger });
+} catch (error) {
+  logger.error("system", "Database initialization failed:", error);
+  process.exit(1);
+}
+
 httpServer.listen(PORT, async () => {
   logger.info("system", `Server running on port ${PORT}`);
   bootstrapHonkerSchedules();
-  initializeAppRuntime({ logger });
+  try {
+    await initializeAppRuntime({ logger });
+  } catch (error) {
+    logger.error("system", "Runtime initialization failed:", error);
+    process.exit(1);
+  }
 });
 
 httpServer.on("error", (error) => {

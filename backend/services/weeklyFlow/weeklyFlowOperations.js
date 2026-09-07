@@ -45,12 +45,12 @@ export function createWeeklyFlowOperationToken() {
   return `${Date.now()}-${randomUUID()}`;
 }
 
-export function markLatestWeeklyFlowOperationToken(scope, token) {
+export async function markLatestWeeklyFlowOperationToken(scope, token) {
   const safeScope = String(scope || "").trim();
   const safeToken = String(token || "").trim();
   if (!safeScope || !safeToken) return;
   const current = dbOps.getJSONSetting(OPERATION_TOKENS_KEY) || {};
-  dbOps.setJSONSetting(OPERATION_TOKENS_KEY, {
+  await dbOps.setJSONSetting(OPERATION_TOKENS_KEY, {
     ...current,
     [safeScope]: safeToken,
   });
@@ -115,7 +115,7 @@ const syncSharedPlaylistConfigFromJobs = async (playlistId) => {
   if (sharedPlaylistTracksMatchJobs(playlist, jobs)) {
     return playlist;
   }
-  const updatedPlaylist = flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
+  const updatedPlaylist = await flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
     tracks: rebuildSharedPlaylistTracksFromJobs(playlist.tracks, jobs),
   });
   playlistManager.updateConfig(false);
@@ -269,7 +269,7 @@ async function runFlowSeed({
     });
     await playlistManager.refreshPlaylist(safeFlowId);
     if (scheduleNext) {
-      flowPlaylistConfig.scheduleNextRun(safeFlowId);
+      await flowPlaylistConfig.scheduleNextRun(safeFlowId);
     }
     return {
       jobIds: seeded?.jobIds || [],
@@ -332,7 +332,7 @@ async function deleteFlow({ flowId, tokenScope = null, token = null } = {}) {
     await playlistManager.weeklyReset([safeFlowId]);
     downloadTracker.clearByPlaylistType(safeFlowId);
     await playlistManager.cleanupEntityPlexPlaylists(safeFlowId);
-    didDelete = flowPlaylistConfig.deleteFlow(safeFlowId);
+    didDelete = await flowPlaylistConfig.deleteFlow(safeFlowId);
     await playlistManager.ensureSmartPlaylists();
   });
   await restartWorkerIfPending();
@@ -387,7 +387,7 @@ async function createSharedPlaylist({
   );
   let playlist = flowPlaylistConfig.getSharedPlaylist(safePlaylistId);
   if (!playlist) {
-    playlist = flowPlaylistConfig.createSharedPlaylist({
+    playlist = await flowPlaylistConfig.createSharedPlaylist({
       id: safePlaylistId,
       name,
       sourceName,
@@ -431,7 +431,7 @@ export async function appendSharedPlaylistTracks({ playlistId, tracks = [] } = {
   const tracksToAdd = filterMissingSharedTracks(playlist.tracks, allowedTracks);
   const updatedPlaylist =
     tracksToAdd.length > 0
-      ? flowPlaylistConfig.appendSharedPlaylistTracks(safePlaylistId, tracksToAdd)
+      ? await flowPlaylistConfig.appendSharedPlaylistTracks(safePlaylistId, tracksToAdd)
       : playlist;
   const queued =
     tracksToAdd.length > 0
@@ -479,7 +479,7 @@ export async function updateSharedPlaylist({
         mergeImportSource && hasImportSourceUpdate
           ? { ...lockedImportSource, ...(importSource || {}) }
           : importSource;
-      playlist = flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
+      playlist = await flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
         ...(hasNameUpdate ? { name: safeName } : {}),
         ...(hasImportSourceUpdate ? { importSource: importSourceToStore } : {}),
       });
@@ -543,7 +543,7 @@ export async function updateSharedPlaylist({
         mergeImportSource && hasImportSourceUpdate
           ? { ...(latestImportSource || lockedImportSource), ...(importSource || {}) }
           : importSource;
-      playlist = flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
+      playlist = await flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
         ...(hasNameUpdate ? { name: safeName } : {}),
         tracks: normalizedTracks,
         ...(hasImportSourceUpdate ? { importSource: importSourceToStore } : {}),
@@ -584,7 +584,7 @@ async function deleteSharedPlaylistTrack({ playlistId, jobId } = {}) {
     safePlaylistId,
     async () => {
       if (isCanonicalReference) {
-        const updated = flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
+        const updated = await flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
           tracks: playlist.tracks.filter(
             (track) => String(track?.canonicalJobId || "") !== safeJobId,
           ),
@@ -688,7 +688,7 @@ async function deleteSharedPlaylist({ playlistId } = {}) {
     await playlistManager.weeklyReset([safePlaylistId]);
     downloadTracker.clearByPlaylistType(safePlaylistId);
     await playlistManager.cleanupEntityPlexPlaylists(safePlaylistId);
-    deleted = flowPlaylistConfig.deleteSharedPlaylist(safePlaylistId);
+    deleted = await flowPlaylistConfig.deleteSharedPlaylist(safePlaylistId);
     await playlistManager.ensureSmartPlaylists();
   });
   await restartWorkerIfPending();

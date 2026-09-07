@@ -688,7 +688,7 @@ export class SlskdClient {
         try {
           const { getSlskdCleanupTargets, markSlskdCleanupTargetsCleaned } =
             await import("./slskdTransferHistory.js");
-          const targets = getSlskdCleanupTargets();
+          const targets = await getSlskdCleanupTargets();
           searchIds = targets.searchIds;
           transfers = targets.transfers;
           markCleaned = markSlskdCleanupTargetsCleaned;
@@ -727,7 +727,7 @@ export class SlskdClient {
         : await this.removeCompletedDownloads();
 
       if (typeof markCleaned === "function") {
-        markCleaned();
+        await markCleaned();
       }
       logger.info("slskd", "Cleaned up slskd after run", {
         ownedOnly,

@@ -17,7 +17,7 @@ function isDirectory(dir) {
 
 function hasDatabaseFile(dir) {
   try {
-    return fs.existsSync(path.join(dir, "aurral.db"));
+    return fs.existsSync(path.join(dir, "honker.db")) || fs.existsSync(path.join(dir, "aurral.db"));
   } catch {
     return false;
   }

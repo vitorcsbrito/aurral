@@ -6,13 +6,12 @@ import path from "node:path";
 import {
   cleanupIsolatedState,
   importFromRepo,
+  resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }] = await setupIsolatedBackend(
-  "scan-search-sync",
-  "backend/config/db-sqlite.js",
-);
+const [isolatedState] = await setupIsolatedBackend("scan-search-sync");
+const { db } = await import("../../backend/config/database.js");
 const { indexLidarrLibrary } = await importFromRepo("backend/services/libraryLidarrIndexer.js");
 const { scanConfiguredLibrary } = await importFromRepo("backend/services/libraryIndexService.js");
 const queryService = await importFromRepo("backend/services/libraryQueryService.js");
@@ -52,18 +51,21 @@ const buildClient = ({ artistName, albumTitle, trackTitle, genres = ["Rock"] }) 
   getRootFolders: async () => [{ path: root }],
 });
 
-const searchDocument = (kind, mbidColumn, table, mbid) => db.prepare(
+const searchDocument = (kind, mbidColumn, table, mbid) => db.get(
   `SELECT document.title, document.artist_name, document.album_name
    FROM library_search_documents AS document
    JOIN ${table} AS entity ON entity.id = document.entity_id
    WHERE document.entity_kind = ? AND entity.${mbidColumn} = ?`,
-).get(kind, mbid);
+  [kind, mbid],
+);
 
-const searchTitles = (query) => queryService
-  .getCanonicalSearchPage({ query, songLimit: 20 })
-  .tracks.tracks.map((track) => track.title);
+const searchTitles = async (query) =>
+  (await queryService.getCanonicalSearchPage({ query, songLimit: 20 })).tracks.tracks.map(
+    (track) => track.title,
+  );
 
 test.before(async () => {
+  await resetDatabase();
   root = await mkdtemp(path.join(tmpdir(), "aurral-scan-search-sync-"));
   filePath = path.join(root, "Sync Artist", "Sync Album", "01 Sync Track.flac");
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -76,9 +78,11 @@ test.after(async () => {
 });
 
 test("a scan with syncSearch disabled syncs documents for the rows it wrote", async () => {
-  const unrelated = db.prepare(
-    "INSERT INTO library_search_documents (entity_kind, entity_id, title) VALUES ('track', 999999, 'Unrelated')",
-  ).run().lastInsertRowid;
+  const unrelated = (
+    await db.get(
+      "INSERT INTO library_search_documents (entity_kind, entity_id, title) VALUES ('track', 999999, 'Unrelated') RETURNING id",
+    )
+  ).id;
   const result = await indexLidarrLibrary({
     client: buildClient({ artistName: "Sync Artist", albumTitle: "Sync Album", trackTitle: "Sync Track" }),
     syncSearch: false,
@@ -86,24 +90,24 @@ test("a scan with syncSearch disabled syncs documents for the rows it wrote", as
 
   assert.equal(result.changed, true);
   // A full rebuild would have dropped this row; incremental sync leaves it.
-  assert.ok(db.prepare("SELECT 1 FROM library_search_documents WHERE id = ?").get(unrelated));
-  db.prepare("DELETE FROM library_search_documents WHERE id = ?").run(unrelated);
-  assert.deepEqual(searchDocument("artist", "mbid", "library_artists", ARTIST_MBID), {
+  assert.ok(await db.get("SELECT 1 FROM library_search_documents WHERE id = ?", [unrelated]));
+  await db.run("DELETE FROM library_search_documents WHERE id = ?", [unrelated]);
+  assert.deepEqual(await searchDocument("artist", "mbid", "library_artists", ARTIST_MBID), {
     title: "Sync Artist",
     artist_name: "",
     album_name: "",
   });
-  assert.deepEqual(searchDocument("album", "release_group_mbid", "library_albums", ALBUM_MBID), {
+  assert.deepEqual(await searchDocument("album", "release_group_mbid", "library_albums", ALBUM_MBID), {
     title: "Sync Album",
     artist_name: "Sync Artist Sync Artist",
     album_name: "",
   });
-  assert.deepEqual(searchDocument("track", "mbid", "library_tracks", TRACK_MBID), {
+  assert.deepEqual(await searchDocument("track", "mbid", "library_tracks", TRACK_MBID), {
     title: "Sync Track",
     artist_name: "Sync Artist Sync Artist",
     album_name: "Sync Album Sync Artist",
   });
-  assert.deepEqual(searchTitles("Sync Track"), ["Sync Track"]);
+  assert.deepEqual(await searchTitles("Sync Track"), ["Sync Track"]);
 });
 
 test("renaming an artist during a scan cascades to album and track documents", async () => {
@@ -113,76 +117,93 @@ test("renaming an artist during a scan cascades to album and track documents", a
   });
 
   assert.equal(result.changed, true);
-  assert.equal(searchDocument("artist", "mbid", "library_artists", ARTIST_MBID).title, "Renamed Artist");
   assert.equal(
-    searchDocument("album", "release_group_mbid", "library_albums", ALBUM_MBID).artist_name,
+    (await searchDocument("artist", "mbid", "library_artists", ARTIST_MBID)).title,
+    "Renamed Artist",
+  );
+  assert.equal(
+    (await searchDocument("album", "release_group_mbid", "library_albums", ALBUM_MBID)).artist_name,
     "Renamed Artist Renamed Artist",
   );
   assert.equal(
-    searchDocument("track", "mbid", "library_tracks", TRACK_MBID).artist_name,
+    (await searchDocument("track", "mbid", "library_tracks", TRACK_MBID)).artist_name,
     "Renamed Artist Renamed Artist",
   );
-  assert.deepEqual(searchTitles("Renamed Artist"), ["Sync Track"]);
+  assert.deepEqual(await searchTitles("Renamed Artist"), ["Sync Track"]);
 });
+
+// xmin is the writing transaction id; untouched rows keep theirs.
+const documentVersions = async () =>
+  (
+    await db.all("SELECT id, xmin::TEXT AS version FROM library_search_documents ORDER BY id")
+  ).map((row) => `${row.id}:${row.version}`);
 
 test("an unchanged scan writes no search documents", async () => {
   const client = buildClient({ artistName: "Renamed Artist", albumTitle: "Sync Album", trackTitle: "Sync Track" });
-  const documentsBefore = db.prepare("SELECT total_changes() AS count").get().count;
+  const before = await documentVersions();
   const configured = await scanConfiguredLibrary({
     musicRoot: path.join(root, "empty-aurral-root"),
     lidarrClient: client,
   });
-  const documentsAfter = db.prepare("SELECT total_changes() AS count").get().count;
+  const after = await documentVersions();
 
   assert.equal(configured.lidarr.changed, false);
-  // Two scan runs, each with a begin and a finish row write.
-  assert.equal(documentsAfter - documentsBefore, 4);
+  assert.ok(before.length > 0);
+  assert.deepEqual(after, before);
 });
 
 test("a scan closes an interrupted run and repairs documents it left stale", async () => {
   const mediaStore = await importFromRepo("backend/services/libraryMediaStore.js");
   const searchIndex = await importFromRepo("backend/services/librarySearchIndex.js");
   assert.deepEqual(
-    searchIndex.findLibrarySearchDocumentGaps(),
+    await searchIndex.findLibrarySearchDocumentGaps(),
     { artist: [], album: [], track: [] },
     "a consistent index reports nothing to repair",
   );
   // A worker killed mid-scan committed the rename but never synced documents.
-  const interrupted = mediaStore.beginLibraryScan({ source: "lidarr" });
-  db.prepare("UPDATE library_artists SET name = 'Ghost Rename' WHERE name = 'Renamed Artist'").run();
+  const interrupted = await mediaStore.beginLibraryScan({ source: "lidarr" });
+  await db.run("UPDATE library_artists SET name = 'Ghost Rename' WHERE name = 'Renamed Artist'");
   assert.equal(
-    db.prepare("SELECT title FROM library_search_documents WHERE entity_kind = 'artist'").get().title,
+    (await db.get("SELECT title FROM library_search_documents WHERE entity_kind = 'artist'")).title,
     "Renamed Artist",
   );
-  assert.deepEqual(searchIndex.findLibrarySearchDocumentGaps().artist.length, 1);
+  assert.equal((await searchIndex.findLibrarySearchDocumentGaps()).artist.length, 1);
 
   const client = buildClient({ artistName: "Ghost Rename", albumTitle: "Sync Album", trackTitle: "Sync Track" });
   await scanConfiguredLibrary({ musicRoot: path.join(root, "empty-aurral-root"), lidarrClient: client });
 
-  const run = db.prepare("SELECT status, error FROM library_scan_runs WHERE id = ?").get(interrupted);
+  const run = await db.get("SELECT status, error FROM library_scan_runs WHERE id = ?", [
+    interrupted,
+  ]);
   assert.deepEqual(run, { status: "failed", error: "interrupted" });
   assert.equal(
-    db.prepare("SELECT title FROM library_search_documents WHERE entity_kind = 'artist'").get().title,
+    (await db.get("SELECT title FROM library_search_documents WHERE entity_kind = 'artist'")).title,
     "Ghost Rename",
   );
   assert.match(
-    db.prepare("SELECT artist_name FROM library_search_documents WHERE entity_kind = 'track'").get().artist_name,
+    (await db.get("SELECT artist_name FROM library_search_documents WHERE entity_kind = 'track'"))
+      .artist_name,
     /Ghost Rename/,
   );
-  assert.deepEqual(searchIndex.findLibrarySearchDocumentGaps(), { artist: [], album: [], track: [] });
+  assert.deepEqual(await searchIndex.findLibrarySearchDocumentGaps(), {
+    artist: [],
+    album: [],
+    track: [],
+  });
 });
 
 test("library changes keep the stored genre snapshot until the background refresh lands", async () => {
-  queryService.rebuildCanonicalGenreStats();
-  const storedKeys = () => db.prepare(
-    "SELECT key FROM settings WHERE key LIKE 'libraryGenre%' ORDER BY key",
-  ).all().map((row) => row.key);
-  assert.deepEqual(storedKeys(), [
+  await queryService.rebuildCanonicalGenreStats();
+  const storedKeys = async () =>
+    (
+      await db.all("SELECT key FROM settings WHERE key LIKE 'libraryGenre%' ORDER BY key")
+    ).map((row) => row.key);
+  assert.deepEqual(await storedKeys(), [
     "libraryGenreList:all:all",
     "libraryGenreStats:all:all",
     "libraryGenreStats:all:available",
   ]);
-  assert.deepEqual(queryService.getCanonicalGenres({ source: "all" }), [
+  assert.deepEqual(await queryService.getCanonicalGenres({ source: "all" }), [
     { albumCount: 1, songCount: 1, value: "Rock" },
   ]);
 
@@ -197,25 +218,30 @@ test("library changes keep the stored genre snapshot until the background refres
   });
 
   // The mutation invalidated caches, but the persisted snapshot is still served.
-  assert.deepEqual(storedKeys().length, 3);
-  assert.deepEqual(queryService.getCanonicalGenres({ source: "all" }).map((genre) => genre.value), ["Rock"]);
+  assert.equal((await storedKeys()).length, 3);
   assert.deepEqual(
-    queryService.getCanonicalLibraryPage({ kind: "artists", page: 1, pageSize: 10 }).genres
+    (await queryService.getCanonicalGenres({ source: "all" })).map((genre) => genre.value),
+    ["Rock"],
+  );
+  assert.deepEqual(
+    (await queryService.getCanonicalLibraryPage({ kind: "artists", page: 1, pageSize: 10 })).genres
       .map((genre) => genre.name),
     ["Rock"],
   );
 
   await genreCache.runLibraryGenreRefresh();
 
-  assert.deepEqual(queryService.getCanonicalGenres({ source: "all" }), [
+  assert.deepEqual(await queryService.getCanonicalGenres({ source: "all" }), [
     { albumCount: 1, songCount: 1, value: "Jazz" },
   ]);
   assert.deepEqual(
-    queryService.getCanonicalLibraryPage({ kind: "artists", page: 1, pageSize: 10 }).genres,
+    (await queryService.getCanonicalLibraryPage({ kind: "artists", page: 1, pageSize: 10 })).genres,
     [{ name: "Jazz", artists: 1, albums: 0, tracks: 0 }],
   );
   assert.equal(
-    JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'libraryGenreList:all:all'").get().value)[0].value,
+    JSON.parse(
+      (await db.get("SELECT value FROM settings WHERE key = 'libraryGenreList:all:all'")).value,
+    )[0].value,
     "Jazz",
   );
 });

@@ -5,7 +5,7 @@ import { dbOps } from "../../../db/helpers/index.js";
 
 export function registerStream(router) {
   router.get("/stream/:songId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const { songId } = req.params;

@@ -14,6 +14,22 @@ jobs:
   validate:
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'lklynet' && 'aurral-personal' || 'ubuntu-latest' }}
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: aurral
+          POSTGRES_PASSWORD: aurral
+          POSTGRES_DB: aurral_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aurral -d aurral_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://aurral:aurral@localhost:5433/aurral_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -113,7 +129,11 @@ jobs:
             --build-arg "APP_VERSION=ci-${GITHUB_SHA}" \
             --tag "$IMAGE" \
             .
-          docker run --detach --name "$CONTAINER" --env PUID=3007 --env PGID=3001 "$IMAGE"
+          # Host networking reaches the postgres service published on localhost:5433.
+          docker run --detach --name "$CONTAINER" --network host \
+            --env PUID=3007 --env PGID=3001 \
+            --env DATABASE_URL="$DATABASE_URL" --env AURRAL_PG_SCHEMA=ci_container \
+            "$IMAGE"
 
           ready=0
           for i in {1..30}; do

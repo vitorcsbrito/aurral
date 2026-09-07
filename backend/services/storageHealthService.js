@@ -314,7 +314,6 @@ function getStorageHealthCacheKey() {
       DOWNLOAD_FOLDER: process.env.DOWNLOAD_FOLDER || "",
       FILE_BROWSE_ROOTS: process.env.FILE_BROWSE_ROOTS || "",
       PATH_MAPPINGS: process.env.PATH_MAPPINGS || "",
-      AURRAL_DB_PATH: process.env.AURRAL_DB_PATH || "",
     },
   });
 }
@@ -824,7 +823,7 @@ async function checkNavidromeSection() {
 }
 
 async function checkNativePlaybackSection() {
-  const trackCount = getCanonicalTrackCount({ availableOnly: true });
+  const trackCount = await getCanonicalTrackCount({ availableOnly: true });
   if (trackCount === 0) {
     return buildSection("native-playback", "Aurral-native playback", [
       healthStep("indexed", "warn", "Canonical media is ready for native playback", {
@@ -833,10 +832,10 @@ async function checkNativePlaybackSection() {
     ]);
   }
 
-  const sample = getCanonicalTrackSample({
+  const sample = (await getCanonicalTrackSample({
     availableOnly: true,
     limit: MEDIA_HEALTH_SAMPLE_LIMIT,
-  }).tracks;
+  })).tracks;
   const missing = [];
   for (const track of sample) {
     let readable = false;
@@ -992,11 +991,11 @@ export async function runStorageHealthCheck({ force = false } = {}) {
 
   storageHealthInflightKey = cacheKey;
   storageHealthInflight = buildStorageHealthCheck()
-    .then((result) => {
+    .then(async (result) => {
       storageHealthCache = result;
       storageHealthCacheKey = cacheKey;
       storageHealthCacheExpiresAt = Date.now() + STORAGE_HEALTH_CACHE_TTL_MS;
-      dbOps.setJSONSetting(STORAGE_HEALTH_SNAPSHOT_KEY, result);
+      await dbOps.setJSONSetting(STORAGE_HEALTH_SNAPSHOT_KEY, result);
       return result;
     })
     .finally(() => {

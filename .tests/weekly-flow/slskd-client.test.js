@@ -18,17 +18,15 @@ const [
   },
   { recordSlskdTransferOutcome },
   { dbOps },
-  { db },
 ] = await setupIsolatedBackend(
   "slskd-client",
   "backend/services/slskdClient.js",
   "backend/services/slskdTransferHistory.js",
   "backend/db/helpers/index.js",
-  "backend/config/db-sqlite.js",
 );
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
@@ -66,7 +64,7 @@ test("testConnection explains an unavailable Soulseek connection without leaking
     response.end();
   });
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -81,7 +79,7 @@ test("testConnection explains an unavailable Soulseek connection without leaking
       "slskd is reachable, but it is not connected to Soulseek. Open slskd and connect to the Soulseek server.",
     );
   } finally {
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
     assert.equal(slskdClient.getStatus().downloadPath, null);
   }
@@ -134,7 +132,7 @@ test("testConnection does not let an older request replace the active cache", as
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...originalSettings,
       integrations: {
         ...(originalSettings.integrations || {}),
@@ -144,7 +142,7 @@ test("testConnection does not let an older request replace the active cache", as
     oldResultPromise = slskdClient.testConnection({ force: true });
     await oldRequestsReady;
 
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...originalSettings,
       integrations: {
         ...(originalSettings.integrations || {}),
@@ -166,7 +164,7 @@ test("testConnection does not let an older request replace the active cache", as
   } finally {
     releaseOldRequests();
     if (oldResultPromise) await oldResultPromise.catch(() => {});
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
   }
 });
@@ -265,7 +263,7 @@ test("createSearch sends slskd search timeout in milliseconds", async () => {
     });
   });
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -283,7 +281,7 @@ test("createSearch sends slskd search timeout in milliseconds", async () => {
     });
     assert.equal(requestBody.searchTimeout, 120000);
   } finally {
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
   }
 });
@@ -309,7 +307,7 @@ test("enqueueBatch rejects slskd all-failed enqueue responses", async () => {
     response.end();
   });
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -330,7 +328,7 @@ test("enqueueBatch rejects slskd all-failed enqueue responses", async () => {
       /Artist\/Album\/Locked\.flac/,
     );
   } finally {
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
   }
 });
@@ -371,7 +369,7 @@ test("enqueueBatch uses current slskd download endpoint", async () => {
     });
   });
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -398,14 +396,14 @@ test("enqueueBatch uses current slskd download endpoint", async () => {
       { filename: "Artist/Album/Open.flac", size: 123 },
     ]);
   } finally {
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
   }
 });
 
-test("isSlskdCleanupAfterRunsEnabled reads the integrations setting", () => {
+test("isSlskdCleanupAfterRunsEnabled reads the integrations setting", async () => {
   const originalSettings = dbOps.getSettings();
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -416,7 +414,7 @@ test("isSlskdCleanupAfterRunsEnabled reads the integrations setting", () => {
     },
   });
   assert.equal(isSlskdCleanupAfterRunsEnabled(), true);
-  dbOps.updateSettings(originalSettings);
+  await dbOps.updateSettings(originalSettings);
 });
 
 test("cleanupAfterRun removes Aurral-owned searches and transfers", async () => {
@@ -444,7 +442,7 @@ test("cleanupAfterRun removes Aurral-owned searches and transfers", async () => 
     response.end();
   });
 
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...(originalSettings.integrations || {}),
@@ -456,7 +454,7 @@ test("cleanupAfterRun removes Aurral-owned searches and transfers", async () => 
   });
 
   try {
-    recordSlskdTransferOutcome({
+    await recordSlskdTransferOutcome({
       job: {
         id: "job-owned",
         artistName: "Artist",
@@ -485,7 +483,7 @@ test("cleanupAfterRun removes Aurral-owned searches and transfers", async () => 
       ],
     );
   } finally {
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await mock.close();
   }
 });

@@ -11,7 +11,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { userOps },
   { flowPlaylistConfig },
   { createPlaybackPlaylistIdentity, createPlaybackPlaylistSnapshot },
@@ -19,7 +18,6 @@ const [
   { NavidromePlaybackDestination },
 ] = await setupIsolatedBackend(
   "navidrome-playback-destination",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/playback/playbackDestination.js",
@@ -91,7 +89,7 @@ function createClient({ configured = true, playlists = [], songs = {} } = {}) {
 }
 
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   await fs.rm(weeklyFlowRoot, { recursive: true, force: true });
 });
 
@@ -100,8 +98,8 @@ test.after(async () => {
 });
 
 test("ensures the Navidrome library without creating an M3U playlist", async () => {
-  const owner = userOps.createUser("jody", "hash", "user");
-  const flow = flowPlaylistConfig.createFlow({ name: "Morning Mix", ownerUserId: owner.id });
+  const owner = await userOps.createUser("jody", "hash", "user");
+  const flow = await flowPlaylistConfig.createFlow({ name: "Morning Mix", ownerUserId: owner.id });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
 
@@ -132,8 +130,8 @@ test("ensures the Navidrome library without creating an M3U playlist", async () 
 });
 
 test("publishes resolved tracks through the Subsonic API and stores the playlist ID", async () => {
-  const owner = userOps.createUser("casey", "hash", "user");
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const owner = await userOps.createUser("casey", "hash", "user");
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "API Mix",
     ownerUserId: owner.id,
   });
@@ -164,7 +162,7 @@ test("publishes resolved tracks through the Subsonic API and stores the playlist
     { name: "casey - API Mix", songIds: ["song-1", "song-2"] },
   ]);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, String(owner.id)).playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, String(owner.id))).playlistId,
     "created",
   );
   await assert.rejects(
@@ -173,7 +171,7 @@ test("publishes resolved tracks through the Subsonic API and stores the playlist
 });
 
 test("uploads generated artwork for API playlists", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Art Mix" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Art Mix" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
   await fs.mkdir(destination.libraryRoot, { recursive: true });
@@ -196,12 +194,12 @@ test("uploads generated artwork for API playlists", async () => {
 });
 
 test("does not re-upload artwork when republishing an existing API playlist", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Existing Art" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Existing Art" });
   const client = createClient({
     playlists: [{ id: "existing", name: playlist.name }],
     songs: { Song: { id: "song-1" } },
   });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "existing",
     title: playlist.name,
   });
@@ -227,7 +225,7 @@ test("does not re-upload artwork when republishing an existing API playlist", as
 });
 
 test("syncs and clears artwork for an existing API playlist", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Artwork Sync" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Artwork Sync" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
   await fs.mkdir(destination.libraryRoot, { recursive: true });
@@ -253,7 +251,7 @@ test("syncs and clears artwork for an existing API playlist", async () => {
 });
 
 test("bounds concurrent Navidrome song lookups and preserves track order", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Large API Mix" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Large API Mix" });
   const tracks = Array.from({ length: 6 }, (_, index) => ({
     path: `/music/song-${index}.flac`,
     title: `Song ${index}`,
@@ -290,7 +288,7 @@ test("bounds concurrent Navidrome song lookups and preserves track order", async
 });
 
 test("creates an empty API playlist without waiting for a scan", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Empty" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Empty" });
   const client = createClient();
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
 
@@ -308,12 +306,12 @@ test("creates an empty API playlist without waiting for a scan", async () => {
 });
 
 test("preserves an existing API playlist while a new run has no indexed tracks", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Refreshing" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Refreshing" });
   const client = createClient({
     playlists: [{ id: "saved-id", name: "Refreshing" }],
   });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "saved-id",
     title: playlist.name,
   });
@@ -331,7 +329,7 @@ test("preserves an existing API playlist while a new run has no indexed tracks",
 });
 
 test("keeps an M3U fallback when no songs are indexed", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Unindexed" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Unindexed" });
   const client = createClient();
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
 
@@ -351,7 +349,7 @@ test("keeps an M3U fallback when no songs are indexed", async () => {
 });
 
 test("serializes concurrent publishes before creating a native playlist", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Concurrent" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Concurrent" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const createPlaylist = client.createPlaylist.bind(client);
   let createEntrants = 0;
@@ -387,7 +385,7 @@ test("serializes concurrent publishes before creating a native playlist", async 
 });
 
 test("adopts an imported M3U playlist and keeps its ID across rename and delete", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Imported" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Imported" });
   const client = createClient({
     playlists: [{ id: "imported-id", name: "[AS] Imported" }],
     songs: { Song: { id: "song-1" } },
@@ -440,7 +438,7 @@ test("adopts an imported M3U playlist and keeps its ID across rename and delete"
     { id: "imported-id", name: "Renamed", songIds: ["song-1"] },
   ]);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "imported-id",
   );
 
@@ -448,11 +446,11 @@ test("adopts an imported M3U playlist and keeps its ID across rename and delete"
     createPlaybackPlaylistIdentity({ entityId: playlist.id }),
   );
   assert.deepEqual(client.calls.deleted, ["imported-id"]);
-  assert.equal(navidromePlaylistPointerStore.getPointer(playlist.id, "global"), null);
+  assert.equal(await navidromePlaylistPointerStore.getPointer(playlist.id, "global"), null);
 });
 
 test("adopts an imported API playlist from its source comment", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Comment Recovery" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Comment Recovery" });
   const client = createClient({
     playlists: [{
       id: "comment-id",
@@ -476,14 +474,14 @@ test("adopts an imported API playlist from its source comment", async () => {
   ]);
   assert.deepEqual(client.calls.created, []);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "comment-id",
   );
 });
 
 test("replaces a pointer whose imported source belongs to another entity", async () => {
-  const original = flowPlaylistConfig.createSharedPlaylist({ name: "Original" });
-  const wrong = flowPlaylistConfig.createSharedPlaylist({ name: "Wrong Target" });
+  const original = await flowPlaylistConfig.createSharedPlaylist({ name: "Original" });
+  const wrong = await flowPlaylistConfig.createSharedPlaylist({ name: "Wrong Target" });
   const client = createClient({
     playlists: [{
       id: "foreign-id",
@@ -493,7 +491,7 @@ test("replaces a pointer whose imported source belongs to another entity", async
     songs: { Song: { id: "song-1" } },
   });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(wrong.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(wrong.id, "global", {
     playlistId: "foreign-id",
     title: wrong.name,
   });
@@ -511,19 +509,19 @@ test("replaces a pointer whose imported source belongs to another entity", async
   ]);
   assert.deepEqual(client.calls.renamed, []);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(wrong.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(wrong.id, "global")).playlistId,
     "created",
   );
-  assert.equal(navidromePlaylistPointerStore.getPointer(original.id, "global"), null);
+  assert.equal(await navidromePlaylistPointerStore.getPointer(original.id, "global"), null);
 });
 
 test("preserves a stored playlist during rename cleanup until tracks resolve", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Renamed" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Renamed" });
   const client = createClient({
     playlists: [{ id: "imported-id", name: "Legacy Rename Fixture" }],
   });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "imported-id",
     title: "Legacy Rename Fixture",
   });
@@ -552,13 +550,13 @@ test("preserves a stored playlist during rename cleanup until tracks resolve", a
     { id: "imported-id", name: "Renamed", songIds: ["song-1"] },
   ]);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "imported-id",
   );
 });
 
 test("preserves an unclaimed imported playlist during rename cleanup until tracks resolve", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Renamed without pointer" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Renamed without pointer" });
   const client = createClient({
     playlists: [{ id: "unclaimed-id", name: "Legacy Unclaimed Fixture" }],
   });
@@ -584,13 +582,13 @@ test("preserves an unclaimed imported playlist during rename cleanup until track
     { id: "unclaimed-id", name: "Renamed without pointer", songIds: ["song-1"] },
   ]);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "unclaimed-id",
   );
 });
 
 test("renames but preserves an imported playlist before unresolved tracks are ready", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Renamed immediately" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Renamed immediately" });
   const client = createClient({
     playlists: [{ id: "rename-first-id", name: "Legacy Rename First" }],
   });
@@ -614,13 +612,13 @@ test("renames but preserves an imported playlist before unresolved tracks are re
   ]);
   assert.deepEqual(client.calls.updated, []);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "rename-first-id",
   );
 });
 
 test("preserves imported files when Navidrome names require sanitizing", async () => {
-  flowPlaylistConfig.createSharedPlaylist({ name: "Current" });
+  await flowPlaylistConfig.createSharedPlaylist({ name: "Current" });
   const client = createClient({
     playlists: [{ id: "sanitized-id", name: "Legacy: Name" }],
   });
@@ -636,7 +634,7 @@ test("preserves imported files when Navidrome names require sanitizing", async (
 });
 
 test("does not adopt an imported playlist from a colliding track basename", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Collision target" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Collision target" });
   const client = createClient({
     playlists: [{ id: "unrelated-id", name: "Legacy Collision" }],
     songs: { Song: { id: "song-1" } },
@@ -664,13 +662,13 @@ test("does not adopt an imported playlist from a colliding track basename", asyn
 });
 
 test("does not adopt a same-name playlist claimed by another Aurral entity", async () => {
-  const second = flowPlaylistConfig.createSharedPlaylist({ name: "Same Name" });
+  const second = await flowPlaylistConfig.createSharedPlaylist({ name: "Same Name" });
   const client = createClient({
     playlists: [{ id: "claimed-id", name: "Same Name" }],
     songs: { Song: { id: "song-1" } },
   });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer("other-entity", "global", {
+  await navidromePlaylistPointerStore.setPointer("other-entity", "global", {
     playlistId: "claimed-id",
     title: second.name,
   });
@@ -690,7 +688,7 @@ test("does not adopt a same-name playlist claimed by another Aurral entity", asy
 });
 
 test("publishes resolved songs and catches up when Navidrome indexes the rest", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Catch-up" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Catch-up" });
   const songs = { Ready: { id: "ready-song" } };
   const client = createClient({ songs });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
@@ -725,7 +723,7 @@ test("publishes resolved songs and catches up when Navidrome indexes the rest", 
 });
 
 test("serializes playlist deletion behind an in-flight catch-up", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Delete during catch-up" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Delete during catch-up" });
   const songs = { Ready: { id: "ready-song" } };
   const client = createClient({ songs });
   const events = [];
@@ -787,14 +785,14 @@ test("serializes playlist deletion behind an in-flight catch-up", async () => {
   assert.deepEqual(await deletePromise, { ok: true });
   while (destination._catchupRunning) await new Promise((resolve) => setTimeout(resolve, 1));
   assert.deepEqual(events, ["update", "delete"]);
-  assert.equal(navidromePlaylistPointerStore.getPointer(playlist.id, "global"), null);
+  assert.equal(await navidromePlaylistPointerStore.getPointer(playlist.id, "global"), null);
 });
 
 test("updates a stored playlist ID without relying on the playlist list", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Stored" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Stored" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "saved-id",
     title: playlist.name,
   });
@@ -815,7 +813,7 @@ test("updates a stored playlist ID without relying on the playlist list", async 
 });
 
 test("retries a transient missing-ID response without replacing the playlist", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Transient" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Transient" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   const updatePlaylist = client.updatePlaylist.bind(client);
   let attempts = 0;
@@ -829,7 +827,7 @@ test("retries a transient missing-ID response without replacing the playlist", a
     return updatePlaylist(...args);
   };
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "saved-id",
     title: playlist.name,
   });
@@ -846,13 +844,13 @@ test("retries a transient missing-ID response without replacing the playlist", a
   assert.equal(attempts, 2);
   assert.deepEqual(client.calls.created, []);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "saved-id",
   );
 });
 
 test("recreates a stored playlist only when Navidrome reports it missing", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Missing" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Missing" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   client.updatePlaylist = async () => {
     const error = new Error("not found");
@@ -860,7 +858,7 @@ test("recreates a stored playlist only when Navidrome reports it missing", async
     throw error;
   };
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "missing-id",
     title: playlist.name,
   });
@@ -878,7 +876,7 @@ test("recreates a stored playlist only when Navidrome reports it missing", async
 });
 
 test("keeps the stored playlist ID when Navidrome is unavailable", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Offline" });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Offline" });
   const client = createClient({ songs: { Song: { id: "song-1" } } });
   client.updatePlaylist = async () => {
     throw new Error("offline");
@@ -888,7 +886,7 @@ test("keeps the stored playlist ID when Navidrome is unavailable", async () => {
   destination._scheduleCatchup = () => {
     catchupScheduled = true;
   };
-  navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(playlist.id, "global", {
     playlistId: "saved-id",
     title: playlist.name,
   });
@@ -905,13 +903,13 @@ test("keeps the stored playlist ID when Navidrome is unavailable", async () => {
   assert.equal(catchupScheduled, true);
   assert.equal(destination._pendingSnapshots.has(`${playlist.id}:global`), true);
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(playlist.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(playlist.id, "global")).playlistId,
     "saved-id",
   );
 });
 
 test("deletes the current playlist but preserves its artwork", async () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Quiet Night" });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Quiet Night" });
   const client = createClient({ playlists: [{ id: "current", name: "Quiet Night" }] });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
   await fs.mkdir(destination.libraryRoot, { recursive: true });
@@ -933,13 +931,13 @@ test("deletes the current playlist but preserves its artwork", async () => {
 });
 
 test("cleans local files when deleting a stored playlist during an outage", async () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Offline Delete" });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Offline Delete" });
   const client = createClient({ playlists: [{ id: "saved-id", name: flow.name }] });
   client.deletePlaylist = async () => {
     throw new Error("offline");
   };
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(flow.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(flow.id, "global", {
     playlistId: "saved-id",
     title: flow.name,
   });
@@ -953,16 +951,16 @@ test("cleans local files when deleting a stored playlist during an outage", asyn
   assert.equal(result.ok, false);
   await assert.rejects(fs.access(path.join(destination.libraryRoot, `${flow.name}.m3u`)));
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(flow.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(flow.id, "global")).playlistId,
     "saved-id",
   );
 });
 
 test("keeps a stored pointer while deleting local files when Navidrome is unconfigured", async () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Disabled Delete" });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Disabled Delete" });
   const client = createClient({ configured: false });
   const destination = new NavidromePlaybackDestination(weeklyFlowRoot, { client });
-  navidromePlaylistPointerStore.setPointer(flow.id, "global", {
+  await navidromePlaylistPointerStore.setPointer(flow.id, "global", {
     playlistId: "saved-id",
     title: flow.name,
   });
@@ -976,13 +974,13 @@ test("keeps a stored pointer while deleting local files when Navidrome is unconf
   assert.deepEqual(client.calls.deleted, []);
   await assert.rejects(fs.access(path.join(destination.libraryRoot, `${flow.name}.m3u`)));
   assert.equal(
-    navidromePlaylistPointerStore.getPointer(flow.id, "global").playlistId,
+    (await navidromePlaylistPointerStore.getPointer(flow.id, "global")).playlistId,
     "saved-id",
   );
 });
 
 test("publishing adopts one legacy playlist and removes the other legacy copies", async () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Road Trip" });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Road Trip" });
   const client = createClient({
     playlists: [
       { id: "bracketed", name: "[A] Road Trip" },

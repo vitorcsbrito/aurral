@@ -9,12 +9,12 @@ import {
   resolveProxyUser,
 } from "../middleware/auth.js";
 
-const isAuthRequired = () => {
+const isAuthRequired = async () => {
   const settings = dbOps.getSettings();
   if (!settings.onboardingComplete) return false;
-  const users = userOps.getAllUsers();
   const legacyPasswords = getAuthPassword();
-  return isProxyAuthEnabled() || users.length > 0 || legacyPasswords.length > 0;
+  if (isProxyAuthEnabled() || legacyPasswords.length > 0) return true;
+  return (await userOps.countUsers()) > 0;
 };
 
 class WebSocketService {
@@ -33,27 +33,34 @@ class WebSocketService {
     });
 
     this.wss.on('connection', (ws, req) => {
-      this.handleConnection(ws, req);
+      this.handleConnection(ws, req).catch((error) => {
+        logger.warn("system", "WebSocket connection setup failed", {
+          error: error?.message || String(error),
+        });
+        try {
+          ws.close(1011, "Internal error");
+        } catch {}
+      });
     });
 
     logger.info("system", "WebSocket server initialized on /ws");
     return this;
   }
 
-  handleConnection(ws, req) {
+  async handleConnection(ws, req) {
     let sessionUser = null;
     let authSource = null;
-    if (isAuthRequired()) {
+    if (await isAuthRequired()) {
       const requestUrl = new URL(req.url || "", "http://localhost");
       const token = requestUrl.searchParams.get("token");
-      sessionUser = resolveSessionUserFromToken(token);
+      sessionUser = await resolveSessionUserFromToken(token);
       if (!sessionUser) {
-        sessionUser = resolveProxyUser(req);
+        sessionUser = await resolveProxyUser(req);
       }
       if (sessionUser) {
         authSource = "session";
       } else {
-        sessionUser = resolveLocalNetworkBypassUser({
+        sessionUser = await resolveLocalNetworkBypassUser({
           headers: req.headers || {},
           socket: req.socket || {},
           connection: req.connection || {},

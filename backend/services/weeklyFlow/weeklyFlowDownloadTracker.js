@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { db } from "../../config/db-sqlite.js";
+import { db } from "../../config/database.js";
 import { enqueuePipelineJob } from "../honkerDb.js";
 import { isAnyDownloadSourceConfigured } from "../downloadSourceService.js";
 import {
@@ -25,6 +25,19 @@ const parseDeniedSources = (raw) => {
 };
 
 const JOBS_TABLE = "playlist_download_jobs";
+
+// In-memory state is authoritative; DB writes trail it in order.
+let writeChain = Promise.resolve();
+const persist = (sql, params = []) => {
+  writeChain = writeChain
+    .then(() => db.run(sql, params))
+    .catch((error) => {
+      console.warn("[DownloadTracker] Failed to persist job change:", error?.message || error);
+    });
+  return writeChain;
+};
+
+export const flushDownloadTrackerWrites = () => writeChain;
 
 function rowToJob(row) {
   return {
@@ -79,7 +92,7 @@ function rowToJob(row) {
   };
 }
 
-const insertStmt = db.prepare(`
+const INSERT_SQL = `
   INSERT INTO ${JOBS_TABLE} (
     id,
     artist_name,
@@ -115,9 +128,9 @@ const insertStmt = db.prepare(`
     upgrade_for_job_id
   )
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
+`;
 
-const updateStmt = db.prepare(`
+const UPDATE_SQL = `
   UPDATE ${JOBS_TABLE}
   SET status = ?,
       staging_path = ?,
@@ -146,18 +159,14 @@ const updateStmt = db.prepare(`
       quality_upgrade_checked_at = ?,
       upgrade_for_job_id = ?
   WHERE id = ?
-`);
+`;
 
-const deleteStmt = db.prepare(`DELETE FROM ${JOBS_TABLE} WHERE id = ?`);
-const deleteAllStmt = db.prepare(`DELETE FROM ${JOBS_TABLE}`);
-const selectAllStmt = db.prepare(`SELECT * FROM ${JOBS_TABLE} ORDER BY created_at ASC, id ASC`);
-const updatePlaylistTypeStmt = db.prepare(
-  `UPDATE ${JOBS_TABLE} SET playlist_type = ?, playlist_id = ? WHERE playlist_type = ?`,
-);
-const updatePlaylistIdStmt = db.prepare(
-  `UPDATE ${JOBS_TABLE} SET playlist_id = ? WHERE id = ?`,
-);
-const clearSlskdMetaStmt = db.prepare(`
+const DELETE_SQL = `DELETE FROM ${JOBS_TABLE} WHERE id = ?`;
+const DELETE_ALL_SQL = `DELETE FROM ${JOBS_TABLE}`;
+const SELECT_ALL_SQL = `SELECT * FROM ${JOBS_TABLE} ORDER BY created_at ASC, id ASC`;
+const UPDATE_PLAYLIST_TYPE_SQL = `UPDATE ${JOBS_TABLE} SET playlist_type = ?, playlist_id = ? WHERE playlist_type = ?`;
+const UPDATE_PLAYLIST_ID_SQL = `UPDATE ${JOBS_TABLE} SET playlist_id = ? WHERE id = ?`;
+const CLEAR_SLSKD_META_SQL = `
   UPDATE ${JOBS_TABLE}
   SET download_source = NULL,
       download_client = NULL,
@@ -171,16 +180,16 @@ const clearSlskdMetaStmt = db.prepare(`
       remote_username = NULL,
       remote_filename = NULL
   WHERE id = ?
-`);
+`;
 
-const clearTransientPipelineMetaStmt = db.prepare(`
+const CLEAR_TRANSIENT_PIPELINE_META_SQL = `
   UPDATE ${JOBS_TABLE}
   SET slskd_search_id = NULL,
       slskd_batch_id = NULL
   WHERE id = ?
-`);
+`;
 
-const updateDownloadMetaStmt = db.prepare(`
+const UPDATE_DOWNLOAD_META_SQL = `
   UPDATE ${JOBS_TABLE}
   SET download_source = COALESCE(?, download_source),
       download_client = COALESCE(?, download_client),
@@ -192,13 +201,13 @@ const updateDownloadMetaStmt = db.prepare(`
       remote_username = COALESCE(?, remote_username),
       remote_filename = COALESCE(?, remote_filename)
   WHERE id = ?
-`);
+`;
 
-const updateDeniedSourcesStmt = db.prepare(`
+const UPDATE_DENIED_SOURCES_SQL = `
   UPDATE ${JOBS_TABLE}
   SET denied_remote_sources = ?
   WHERE id = ?
-`);
+`;
 
 const sortByCreatedAt = (jobs) =>
   jobs.sort((a, b) => {
@@ -250,7 +259,7 @@ export class WeeklyFlowDownloadTracker {
     this.pendingRetrySet = new Set();
     this.slskdDispatched = new Set();
     this.revision = 0;
-    this._load();
+    this.initialized = false;
   }
 
   _touchRevision() {
@@ -290,9 +299,9 @@ export class WeeklyFlowDownloadTracker {
       job.slskdBatchId = null;
     }
     if (clearDownloadMetadata) {
-      clearSlskdMetaStmt.run(id);
+      persist(CLEAR_SLSKD_META_SQL, [id]);
     } else {
-      clearTransientPipelineMetaStmt.run(id);
+      persist(CLEAR_TRANSIENT_PIPELINE_META_SQL, [id]);
     }
   }
 
@@ -314,7 +323,7 @@ export class WeeklyFlowDownloadTracker {
     assign("indexerName", metadata.indexerName);
     assign("remoteUsername", metadata.remoteUsername);
     assign("remoteFilename", metadata.remoteFilename);
-    updateDownloadMetaStmt.run(
+    persist(UPDATE_DOWNLOAD_META_SQL, [
       metadata.downloadSource ?? null,
       metadata.downloadClient ?? null,
       metadata.downloadClientId ?? null,
@@ -325,7 +334,7 @@ export class WeeklyFlowDownloadTracker {
       metadata.remoteUsername ?? null,
       metadata.remoteFilename ?? null,
       id,
-    );
+    ]);
     return true;
   }
 
@@ -421,16 +430,19 @@ export class WeeklyFlowDownloadTracker {
     this.pendingRetryQueue = this.pendingRetryQueue.filter((entryId) => entryId !== id);
   }
 
-  _load() {
-    updatePlaylistTypeStmt.run("discover", "discover", "recommended");
-    const rows = selectAllStmt.all();
+  // Must complete before routes or workers touch the tracker.
+  async init() {
+    if (this.initialized) return this;
+    this.initialized = true;
+    await db.run(UPDATE_PLAYLIST_TYPE_SQL, ["discover", "discover", "recommended"]);
+    const rows = await db.all(SELECT_ALL_SQL);
     for (const row of rows) {
       const job = rowToJob(row);
       if (job.status === "downloading") {
         job.status = "pending";
         job.startedAt = null;
         job.stagingPath = null;
-        updateStmt.run(
+        persist(UPDATE_SQL, [
           job.status,
           job.stagingPath,
           job.finalPath,
@@ -458,7 +470,7 @@ export class WeeklyFlowDownloadTracker {
           job.qualityUpgradeCheckedAt ?? null,
           job.upgradeForJobId ?? null,
           job.id,
-        );
+        ]);
       }
       this.jobs.set(job.id, job);
     }
@@ -466,12 +478,13 @@ export class WeeklyFlowDownloadTracker {
       if (job.status === "pending" && job.upgradeForJobId) this.removeJob(job.id);
     }
     this._rebuildStatsByPlaylistType();
+    return this;
   }
 
   _insert(job) {
     const createdAt = job.createdAt ?? Date.now();
     job.createdAt = createdAt;
-    insertStmt.run(
+    persist(INSERT_SQL, [
       job.id,
       job.artistName,
       job.trackName,
@@ -504,12 +517,12 @@ export class WeeklyFlowDownloadTracker {
       job.qualityCheckedAt ?? null,
       job.qualityUpgradeCheckedAt ?? null,
       job.upgradeForJobId ?? null,
-    );
+    ]);
     this._touchRevision();
   }
 
   _update(job) {
-    updateStmt.run(
+    persist(UPDATE_SQL, [
       job.status,
       job.stagingPath ?? null,
       job.finalPath ?? null,
@@ -537,7 +550,7 @@ export class WeeklyFlowDownloadTracker {
       job.qualityUpgradeCheckedAt ?? null,
       job.upgradeForJobId ?? null,
       job.id,
-    );
+    ]);
     this._touchRevision();
   }
 
@@ -617,7 +630,7 @@ export class WeeklyFlowDownloadTracker {
     const job = this.jobs.get(id);
     job.playlistId = sourceJob.playlistId || sourceJob.playlistType;
     job.upgradeForJobId = sourceJob.id;
-    updatePlaylistIdStmt.run(job.playlistId, id);
+    persist(UPDATE_PLAYLIST_ID_SQL, [job.playlistId, id]);
     this.pendingSet.delete(id);
     this.pendingRetrySet.delete(id);
     this._removeFromPendingQueues(id);
@@ -757,7 +770,7 @@ export class WeeklyFlowDownloadTracker {
     this.pendingRetrySet.delete(id);
     this._removeFromPendingQueues(id);
     this._applyStatusDelta(job.playlistType, job.status, null);
-    deleteStmt.run(id);
+    persist(DELETE_SQL, [id]);
     this._touchRevision();
     return true;
   }
@@ -985,7 +998,7 @@ export class WeeklyFlowDownloadTracker {
     if (duplicate) return false;
     sources.push([safeSource, safeKey]);
     job.deniedRemoteSources = sources;
-    updateDeniedSourcesStmt.run(JSON.stringify(sources), id);
+    persist(UPDATE_DENIED_SOURCES_SQL, [JSON.stringify(sources), id]);
     this._touchRevision();
     return true;
   }
@@ -1022,7 +1035,7 @@ export class WeeklyFlowDownloadTracker {
     if (!idMap || idMap.size === 0) return 0;
     let count = 0;
     for (const [fromId, toId] of idMap.entries()) {
-      updatePlaylistTypeStmt.run(toId, toId, fromId);
+      persist(UPDATE_PLAYLIST_TYPE_SQL, [toId, toId, fromId]);
       for (const job of this.jobs.values()) {
         if (job.playlistType === fromId) {
           job.playlistId = toId;
@@ -1164,7 +1177,7 @@ export class WeeklyFlowDownloadTracker {
         this.pendingRetrySet.delete(id);
         this._removeFromPendingQueues(id);
       }
-      deleteStmt.run(id);
+      persist(DELETE_SQL, [id]);
     }
     if (toDelete.length > 0) {
       this._rebuildStatsByPlaylistType();
@@ -1197,7 +1210,7 @@ export class WeeklyFlowDownloadTracker {
     this.pendingRetryQueue = [];
     this.pendingSet = new Set();
     this.pendingRetrySet = new Set();
-    deleteAllStmt.run();
+    persist(DELETE_ALL_SQL);
     this._touchRevision();
     return count;
   }

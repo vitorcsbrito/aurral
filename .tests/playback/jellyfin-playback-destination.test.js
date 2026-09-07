@@ -7,10 +7,9 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, { jellyfinPlaylistPointerStore }, { JellyfinPlaybackDestination }] =
+const [isolatedState, { dbOps }, { jellyfinPlaylistPointerStore }, { JellyfinPlaybackDestination }] =
   await setupIsolatedBackend(
     "jellyfin-playback-destination",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/jellyfin/jellyfinPlaylistPointerStore.js",
     "backend/services/playback/jellyfinPlaybackDestination.js",
@@ -20,9 +19,9 @@ const weeklyFlowRoot = process.env.WEEKLY_FLOW_FOLDER;
 const userId = "jellyfin-user";
 
 test.beforeEach(async () => {
-  resetDatabase(db);
+  await resetDatabase();
   await fs.rm(weeklyFlowRoot, { recursive: true, force: true });
-  dbOps.updateSettings({ integrations: {} });
+  await dbOps.updateSettings({ integrations: {} });
 });
 
 test.after(() => cleanupIsolatedState(isolatedState));
@@ -92,7 +91,7 @@ test("publishes, updates, scans, and deletes a managed playlist", async () => {
       },
     });
     assert.equal(
-      jellyfinPlaylistPointerStore.getPointer("flow-jellyfin", userId).playlistId,
+      (await jellyfinPlaylistPointerStore.getPointer("flow-jellyfin", userId)).playlistId,
       "playlist-1",
     );
 
@@ -110,7 +109,7 @@ test("publishes, updates, scans, and deletes a managed playlist", async () => {
     assert.deepEqual(calls[2], { operation: "scan" });
     assert.equal((await destination.deletePlaylist({ entityId: "flow-jellyfin" })).ok, true);
     assert.deepEqual(calls[3], { operation: "delete", playlistId: "playlist-1" });
-    assert.equal(jellyfinPlaylistPointerStore.getPointer("flow-jellyfin", userId), null);
+    assert.equal(await jellyfinPlaylistPointerStore.getPointer("flow-jellyfin", userId), null);
   } finally {
     if (originalMappings == null) delete process.env.PATH_MAPPINGS;
     else process.env.PATH_MAPPINGS = originalMappings;

@@ -8,20 +8,20 @@ import {
 
 const [isolatedState, { db }, subsonic, libraryStore] = await setupIsolatedBackend(
   "subsonic-bounded-reads",
-  "backend/config/db-sqlite.js",
+  "backend/config/database.js",
   "backend/services/subsonicLibraryService.js",
   "backend/services/libraryMediaStore.js",
 );
 
-test.before(() => {
-  resetDatabase(db);
-  const artist = libraryStore.upsertLibraryArtist({
+test.before(async () => {
+  await resetDatabase();
+  const artist = await libraryStore.upsertLibraryArtist({
     identityKey: "bounded:artist",
     mbid: "bounded-artist-mbid",
     name: "Bounded Artist",
     metadata: { genres: ["Rock"] },
   });
-  const album = libraryStore.upsertLibraryAlbum({
+  const album = await libraryStore.upsertLibraryAlbum({
     identityKey: "bounded:album",
     mbid: "bounded-album-mbid",
     releaseGroupMbid: "bounded-release-group",
@@ -29,14 +29,14 @@ test.before(() => {
     title: "Bounded Album",
     metadata: { genres: ["Rock"] },
   });
-  const track = libraryStore.upsertLibraryTrack({
+  const track = await libraryStore.upsertLibraryTrack({
     identityKey: "bounded:track",
     title: "Bounded Track",
     artistName: artist.name,
     metadata: { genres: ["Rock"] },
   });
-  libraryStore.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-  libraryStore.upsertLibraryMediaFile({
+  await libraryStore.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await libraryStore.upsertLibraryMediaFile({
     trackId: track.id,
     albumId: album.id,
     source: "lidarr",
@@ -48,23 +48,24 @@ test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("focused Subsonic requests never execute an unfiltered complete-library query", (t) => {
+test("focused Subsonic requests never execute an unfiltered complete-library query", async (t) => {
   const prepared = [];
-  const prepare = db.prepare.bind(db);
-  t.mock.method(db, "prepare", (sql) => {
-    prepared.push(String(sql));
-    return prepare(sql);
-  });
-  db.prepare("UPDATE library_tracks SET metadata_json = '{' WHERE identity_key = ?")
-    .run("bounded:track");
+  for (const method of ["all", "get"]) {
+    const original = db[method].bind(db);
+    t.mock.method(db, method, (sql, params) => {
+      prepared.push(String(sql));
+      return original(sql, params);
+    });
+  }
+  await db.run("UPDATE library_tracks SET metadata_json = '{' WHERE identity_key = ?", ["bounded:track"]);
 
-  assert.ok(subsonic.listArtists().length);
-  assert.ok(subsonic.getArtist(`artist:${encodeURIComponent("bounded:artist")}`));
-  assert.ok(subsonic.getAlbum(`album:${encodeURIComponent("bounded:album")}`));
-  assert.ok(subsonic.searchLibrary("Bounded", { songCount: 1 }).song.length);
-  assert.ok(subsonic.getAlbumList({ size: 1 }).length);
-  assert.ok(subsonic.getSongsByGenre("Rock", { count: 1 }).length);
-  assert.deepEqual(subsonic.getGenres(), [{ albumCount: 1, songCount: 1, value: "Rock" }]);
+  assert.ok((await subsonic.listArtists()).length);
+  assert.ok(await subsonic.getArtist(`artist:${encodeURIComponent("bounded:artist")}`));
+  assert.ok(await subsonic.getAlbum(`album:${encodeURIComponent("bounded:album")}`));
+  assert.ok((await subsonic.searchLibrary("Bounded", { songCount: 1 })).song.length);
+  assert.ok((await subsonic.getAlbumList({ size: 1 })).length);
+  assert.ok((await subsonic.getSongsByGenre("Rock", { count: 1 })).length);
+  assert.deepEqual(await subsonic.getGenres(), [{ albumCount: 1, songCount: 1, value: "Rock" }]);
 
   const completeQueries = prepared.filter((sql) =>
     sql.includes("FROM library_tracks AS track")

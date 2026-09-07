@@ -17,7 +17,7 @@ async function cleanupUserPlexPlaylistsSafely(userId, context) {
 }
 
 async function cleanupPlexPlaylistsIfIdentityChanged(userId, linkType, plexAccountId) {
-  const previous = plexConnectionStore.getConnection(userId);
+  const previous = await plexConnectionStore.getConnection(userId);
   const identityChanged =
     previous &&
     (previous.linkType !== linkType ||
@@ -68,7 +68,7 @@ export async function resolveGlobalPlexAccount() {
     const plexUsername = identity?.username || identity?.title || null;
     if (plexUsername) {
       const settings = dbOps.getSettings();
-      dbOps.updateSettings({
+      await dbOps.updateSettings({
         ...settings,
         integrations: {
           ...settings.integrations,
@@ -85,7 +85,7 @@ export async function resolveGlobalPlexAccount() {
 export function registerPlexLink(router) {
   router.get("/me/plex-link/status", requireAuth, async (req, res) => {
     try {
-      const status = plexConnectionStore.getPublicStatus(req.user.id);
+      const status = await plexConnectionStore.getPublicStatus(req.user.id);
       const globalAccount = await resolveGlobalPlexAccount();
       const isGlobalAccountOwner =
         req.user.role === "admin" &&
@@ -149,7 +149,7 @@ export function registerPlexLink(router) {
 
       await cleanupPlexPlaylistsIfIdentityChanged(req.user.id, "self", identity.id);
 
-      const saved = plexConnectionStore.saveConnection(req.user.id, {
+      const saved = await plexConnectionStore.saveConnection(req.user.id, {
         linkType: "self",
         token: serverToken,
         clientId,
@@ -175,7 +175,7 @@ export function registerPlexLink(router) {
   router.delete("/me/plex-link", requireAuth, async (req, res) => {
     try {
       await cleanupUserPlexPlaylistsSafely(req.user.id, "on unlink");
-      plexConnectionStore.clearConnection(req.user.id);
+      await plexConnectionStore.clearConnection(req.user.id);
       res.json({ connected: false });
     } catch (e) {
       res.status(500).json({ error: "Failed to disconnect Plex", message: e.message });
@@ -190,7 +190,7 @@ export function registerPlexLink(router) {
         return res.status(400).json({ error: "Connect the global Plex account first" });
       }
       const homeUsers = await PlexClient.getHomeUsers(globalPlex.token, globalPlex.clientId);
-      const linkedIds = plexConnectionStore.getAllLinkedPlexAccountIds();
+      const linkedIds = await plexConnectionStore.getAllLinkedPlexAccountIds();
       res.json({
         users: homeUsers.map((u) => ({
           ...u,
@@ -217,7 +217,7 @@ export function registerPlexLink(router) {
   router.post("/:id/plex-link/managed", requireAuth, requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const target = userOps.getUserById(id);
+      const target = await userOps.getUserById(id);
       if (!target) return res.status(404).json({ error: "User not found" });
 
       const { plexUserId, plexUsername, plexUuid, pin } = req.body || {};
@@ -231,7 +231,7 @@ export function registerPlexLink(router) {
       }
 
       const { PlexClient } = await import("../../services/plex.js");
-      const existingManaged = plexConnectionStore.getConnection(id);
+      const existingManaged = await plexConnectionStore.getConnection(id);
       const targetClientId =
         existingManaged?.linkType === "managed" &&
         existingManaged.clientId &&
@@ -267,7 +267,7 @@ export function registerPlexLink(router) {
 
       await cleanupPlexPlaylistsIfIdentityChanged(id, "managed", plexUserId);
 
-      const saved = plexConnectionStore.saveConnection(id, {
+      const saved = await plexConnectionStore.saveConnection(id, {
         linkType: "managed",
         token: serverToken,
         clientId: targetClientId,
@@ -299,10 +299,10 @@ export function registerPlexLink(router) {
   router.delete("/:id/plex-link", requireAuth, requireAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const target = userOps.getUserById(id);
+      const target = await userOps.getUserById(id);
       if (!target) return res.status(404).json({ error: "User not found" });
       await cleanupUserPlexPlaylistsSafely(id, "on unlink");
-      plexConnectionStore.clearConnection(id);
+      await plexConnectionStore.clearConnection(id);
       res.json({ connected: false });
     } catch (e) {
       res.status(500).json({ error: "Failed to unlink Plex", message: e.message });

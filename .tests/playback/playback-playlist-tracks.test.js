@@ -11,13 +11,11 @@ import {
 
 const [
   isolatedState,
-  { db },
   { downloadTracker },
   { flowPlaylistConfig },
   { collectPlaybackPlaylistTracks },
 ] = await setupIsolatedBackend(
   "playback-playlist-tracks",
-  "backend/config/db-sqlite.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/playback/playbackPlaylistTracks.js",
@@ -25,8 +23,10 @@ const [
 
 const weeklyFlowRoot = process.env.WEEKLY_FLOW_FOLDER;
 
+await downloadTracker.init();
+
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   downloadTracker.clearAll();
   await fs.rm(weeklyFlowRoot, { recursive: true, force: true });
 });
@@ -36,7 +36,7 @@ test.after(async () => {
 });
 
 test("preserves shared playlist track order", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Ordered",
     tracks: [
       { artistName: "A", trackName: "Second", albumName: "Album" },
@@ -59,7 +59,7 @@ test("preserves shared playlist track order", async () => {
 });
 
 test("keeps completed tracks after metadata correction", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Corrected album",
     tracks: [{ artistName: "Artist", trackName: "Track", albumName: "Imported album" }],
   });
@@ -78,7 +78,7 @@ test("keeps completed tracks after metadata correction", async () => {
 });
 
 test("normalizes empty migrated names", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Migrated",
     tracks: [{ artistName: "Artist", trackName: "Track" }],
   });

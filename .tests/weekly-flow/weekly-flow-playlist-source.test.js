@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WeeklyFlowPlaylistSource } from "../../backend/services/weeklyFlow/weeklyFlowPlaylistSource.js";
+import { ensureTestDatabase } from "../helpers/backendTestHarness.js";
+import { loadSettingsCache } from "../../backend/db/helpers/settings.js";
+
+await ensureTestDatabase();
+await loadSettingsCache();
 
 test("harvest limit scales with target without over-fetching", () => {
   const source = new WeeklyFlowPlaylistSource();

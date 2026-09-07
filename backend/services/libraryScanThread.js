@@ -1,11 +1,16 @@
-// Worker-thread entry for library scans. Runs the full scan pipeline on its own
-// SQLite connection so the main thread keeps serving requests while the scan
-// walks the filesystem, talks to Lidarr, and writes library rows.
+// Scan worker entry; gets its own Postgres pool from DATABASE_URL.
 import { parentPort, workerData } from "node:worker_threads";
+import { closeDatabase, db } from "../config/database.js";
+import { migrateDatabase } from "../db/pg/schema.js";
+import { loadSettingsCache } from "../db/helpers/settings.js";
 
 const toPlain = (value) => JSON.parse(JSON.stringify(value ?? null));
 
 try {
+  // Advisory-locked, so racing the main thread is safe.
+  await migrateDatabase(db, { logger: {} });
+  // The settings mirror is per-thread; nothing else populates it here.
+  await loadSettingsCache();
   const { lidarrClient } = await import("./lidarrClient.js");
   const { scanConfiguredLibrary } = await import("./libraryIndexService.js");
   const result = await scanConfiguredLibrary({
@@ -23,4 +28,6 @@ try {
     message: error?.message || String(error),
     stack: error?.stack || null,
   });
+} finally {
+  await closeDatabase().catch(() => {});
 }

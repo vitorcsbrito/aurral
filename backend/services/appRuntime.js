@@ -25,6 +25,33 @@ import {
 } from "./libraryFileWatcher.js";
 import { registerHonkerShutdownHandler } from "./honkerWorkerRuntime.js";
 import { HONKER_QUEUE_NAMES } from "./honkerDb.js";
+import { db, pingDatabase } from "../config/database.js";
+import { migrateDatabase } from "../db/pg/schema.js";
+import { loadSettingsCache } from "../db/helpers/settings.js";
+import { initDiscoveryPersistence } from "./discovery/persistence.js";
+import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
+import { playlistManager } from "./weeklyFlow/weeklyFlowPlaylistManager.js";
+
+let dataLayerReady = null;
+
+// Runs migrations and loads the sync mirrors; must finish before listen().
+export function initializeDataLayer({ logger = console } = {}) {
+  if (dataLayerReady) return dataLayerReady;
+  dataLayerReady = (async () => {
+    const info = await pingDatabase();
+    logger.info?.("system", `[AppRuntime] Connected to ${info?.version || "Postgres"}`);
+    await migrateDatabase(db, { logger });
+    await loadSettingsCache();
+    await initDiscoveryPersistence();
+    await downloadTracker.init();
+    playlistManager.initConfig();
+    return true;
+  })().catch((error) => {
+    dataLayerReady = null;
+    throw error;
+  });
+  return dataLayerReady;
+}
 
 let backgroundWorkersStarted = false;
 let workerSupervisorStarted = false;
@@ -195,7 +222,7 @@ export function startBackgroundWorkers({ logger = console } = {}) {
     .then((closed) => {
       if (Number(closed || 0) > 0) {
         logger.info?.("system", `[AppRuntime] Closed ${closed} interrupted library scan(s) on startup`);
-        scheduleLibraryScan({ includeLidarr: false });
+        return scheduleLibraryScan({ includeLidarr: false });
       }
     })
     .catch((error) => {
@@ -224,7 +251,8 @@ export function startBackgroundWorkers({ logger = console } = {}) {
   return true;
 }
 
-export function initializeAppRuntime({ logger = console } = {}) {
+export async function initializeAppRuntime({ logger = console } = {}) {
+  await initializeDataLayer({ logger });
   startHonkerScheduler();
   startBackgroundWorkers({ logger });
 }

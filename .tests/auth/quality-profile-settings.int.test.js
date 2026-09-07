@@ -10,9 +10,8 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps, userOps }] = await setupIsolatedBackend(
   "quality-profile-settings-api",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 
@@ -34,10 +33,12 @@ async function saveSettings(body) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
-  userOps.createUser("admin", bcrypt.hashSync("password123", 4), "admin");
-  aurral = await startServerProcess();
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+  await userOps.createUser("admin", bcrypt.hashSync("password123", 4), "admin");
+  aurral = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
   const response = await fetch(`http://127.0.0.1:${aurral.port}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -188,8 +188,8 @@ async function handleSubsonicRequest(req, res) {
   const user = password
     ? decodedPassword == null
       ? null
-      : resolveUser(getParameter(req, "u"), decodedPassword)
-    : resolveSubsonicTokenUser(getParameter(req, "u"), token, salt);
+      : await resolveUser(getParameter(req, "u"), decodedPassword)
+    : await resolveSubsonicTokenUser(getParameter(req, "u"), token, salt);
   if (!user) {
     return sendError(
       res,
@@ -230,10 +230,10 @@ async function handleSubsonicRequest(req, res) {
     const times = getParameters(req, ["time"]);
     const submission = !["false", "0", "no"].includes(getParameter(req, "submission").toLowerCase());
     if (submission) {
-      ids.forEach((id, index) => {
-        const song = getSong(id, user);
-        if (!song) return;
-        recordPlayEvent(user.id, {
+      for (const [index, id] of ids.entries()) {
+        const song = await getSong(id, user);
+        if (!song) continue;
+        await recordPlayEvent(user.id, {
           trackId: song.id,
           title: song.title,
           artist: song.artist,
@@ -242,7 +242,7 @@ async function handleSubsonicRequest(req, res) {
           playedAt: times[index] || undefined,
           source: "subsonic",
         });
-      });
+      }
     }
     return sendResponse(res, format);
   }
@@ -257,7 +257,7 @@ async function handleSubsonicRequest(req, res) {
   if (method === "getalbumlist2") {
     return sendResponse(res, format, "ok", null, {
       albumList2: {
-        album: getAlbumList({
+        album: await getAlbumList({
           fromYear: getParameter(req, "fromYear"),
           genre: getParameter(req, "genre"),
           offset: getParameter(req, "offset"),
@@ -269,14 +269,14 @@ async function handleSubsonicRequest(req, res) {
     });
   }
   if (method === "getgenres") {
-    return sendResponse(res, format, "ok", null, { genres: { genre: getGenres() } });
+    return sendResponse(res, format, "ok", null, { genres: { genre: await getGenres() } });
   }
   if (method === "getsongsbygenre") {
     const genre = getParameter(req, "genre").trim();
     if (!genre) return sendError(res, format, 10, "Required parameter is missing: genre");
     return sendResponse(res, format, "ok", null, {
       songsByGenre: {
-        song: getSongsByGenre(genre, {
+        song: await getSongsByGenre(genre, {
           count: getParameter(req, "count"),
           offset: getParameter(req, "offset"),
         }),
@@ -284,7 +284,7 @@ async function handleSubsonicRequest(req, res) {
     });
   }
   if (method === "getartists" || method === "getindexes") {
-    const indexes = groupArtists(listArtists());
+    const indexes = groupArtists(await listArtists());
     return sendResponse(res, format, "ok", null, {
       [method === "getartists" ? "artists" : "indexes"]: {
         ignoredArticles: "The El La Los Las Le Les",
@@ -294,31 +294,31 @@ async function handleSubsonicRequest(req, res) {
     });
   }
   if (method === "getartist") {
-    const artist = getArtist(getParameter(req, "id"));
+    const artist = await getArtist(getParameter(req, "id"));
     return artist
       ? sendResponse(res, format, "ok", null, { artist })
       : sendError(res, format, 70, "Requested data was not found");
   }
   if (method === "getartistinfo") {
-    const artistInfo = getArtistInfo(getParameter(req, "id"));
+    const artistInfo = await getArtistInfo(getParameter(req, "id"));
     return artistInfo
       ? sendResponse(res, format, "ok", null, { artistInfo })
       : sendError(res, format, 70, "Requested data was not found");
   }
   if (method === "getalbum") {
-    const album = getAlbum(getParameter(req, "id"));
+    const album = await getAlbum(getParameter(req, "id"));
     return album
       ? sendResponse(res, format, "ok", null, { album })
       : sendError(res, format, 70, "Requested data was not found");
   }
   if (method === "getsong") {
-    const song = getSong(getParameter(req, "id"), user);
+    const song = await getSong(getParameter(req, "id"), user);
     return song
       ? sendResponse(res, format, "ok", null, { song })
       : sendError(res, format, 70, "Requested data was not found");
   }
   if (method === "getmusicdirectory") {
-    const directory = getMusicDirectory(getParameter(req, "id"));
+    const directory = await getMusicDirectory(getParameter(req, "id"));
     return directory
       ? sendResponse(res, format, "ok", null, { directory })
       : sendError(res, format, 70, "Requested data was not found");
@@ -326,7 +326,7 @@ async function handleSubsonicRequest(req, res) {
   if (method === "search3" || method === "search2") {
     const query = getParameter(req, "query");
     return sendResponse(res, format, "ok", null, {
-      [method === "search3" ? "searchResult3" : "searchResult2"]: searchLibrary(query, req.query),
+      [method === "search3" ? "searchResult3" : "searchResult2"]: await searchLibrary(query, req.query),
     });
   }
   if (method === "getplaylists") {
@@ -340,7 +340,7 @@ async function handleSubsonicRequest(req, res) {
     }
     try {
       const playlist = playlistId
-        ? updateSubsonicPlaylist(user, {
+        ? await updateSubsonicPlaylist(user, {
             playlistId,
             name: name || undefined,
             comment: Object.hasOwn(req.query || {}, "comment")
@@ -348,7 +348,7 @@ async function handleSubsonicRequest(req, res) {
               : undefined,
             songIdsToAdd: getParameters(req, ["songId"]),
           })
-        : createSubsonicPlaylist(user, {
+        : await createSubsonicPlaylist(user, {
             name,
             songIds: getParameters(req, ["songId"]),
           });
@@ -365,14 +365,14 @@ async function handleSubsonicRequest(req, res) {
   }
   if (method === "getstarred" || method === "getstarred2") {
     return sendResponse(res, format, "ok", null, {
-      [method === "getstarred" ? "starred" : "starred2"]: getStarred(user),
+      [method === "getstarred" ? "starred" : "starred2"]: await getStarred(user),
     });
   }
   if (method === "star" || method === "unstar") {
     const targets = getParameters(req, ["id", "albumId", "artistId"]);
     const changed = method === "star"
-      ? starMany(user, targets)
-      : unstarMany(user, targets);
+      ? await starMany(user, targets)
+      : await unstarMany(user, targets);
     return changed
       ? sendResponse(res, format)
       : sendError(res, format, 70, "Requested data was not found");
@@ -382,7 +382,7 @@ async function handleSubsonicRequest(req, res) {
     if (!artist) return sendError(res, format, 10, "Required parameter is missing: artist");
     return sendResponse(res, format, "ok", null, {
       topSongs: {
-        song: getTopSongs(artist, { count: getParameter(req, "count") }),
+        song: await getTopSongs(artist, { count: getParameter(req, "count") }),
       },
     });
   }
@@ -399,7 +399,7 @@ async function handleSubsonicRequest(req, res) {
       .map((value) => Number.parseInt(value, 10))
       .filter((value) => Number.isInteger(value) && value >= 0);
     try {
-      const playlist = updateSubsonicPlaylist(user, {
+      const playlist = await updateSubsonicPlaylist(user, {
         playlistId,
         name: Object.hasOwn(req.query || {}, "name") ? getParameter(req, "name") : undefined,
         comment: Object.hasOwn(req.query || {}, "comment")
@@ -421,12 +421,12 @@ async function handleSubsonicRequest(req, res) {
   if (method === "deleteplaylist") {
     const playlistId = getParameter(req, "id");
     if (!playlistId) return sendError(res, format, 10, "Required parameter is missing: id");
-    return deleteSubsonicPlaylist(user, playlistId)
+    return (await deleteSubsonicPlaylist(user, playlistId))
       ? sendResponse(res, format)
       : sendError(res, format, 70, "Requested data was not found");
   }
   if (method === "stream" || method === "download") {
-    const filePath = resolveStreamPath(getParameter(req, "id"), user);
+    const filePath = await resolveStreamPath(getParameter(req, "id"), user);
     if (!filePath) return handleBinaryError(res, "Track file missing");
     const streamed = await streamAudioFile(req, res, filePath);
     return streamed || res.headersSent ? undefined : handleBinaryError(res, "Track file missing");

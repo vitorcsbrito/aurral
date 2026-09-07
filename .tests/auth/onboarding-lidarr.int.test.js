@@ -5,13 +5,13 @@ import http from "node:http";
 import {
   setupIsolatedBackend,
   cleanupIsolatedState,
+  reloadMirrors,
   resetDatabase,
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps }] = await setupIsolatedBackend(
   "onboarding-lidarr-api",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 
@@ -89,13 +89,15 @@ let server = null;
 let fakeLidarr = null;
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: false,
   });
   fakeLidarr = await startFakeLidarr();
-  server = await startServerProcess();
+  server = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
 });
 
 test.after(async () => {
@@ -155,6 +157,8 @@ test("POST /api/onboarding/complete requires Lidarr and auto-picks profiles", as
   const payload = await response.json();
   assert.equal(response.status, 200, JSON.stringify(payload));
 
+  // The server process wrote the settings; refresh this process's mirror.
+  await reloadMirrors();
   const settings = dbOps.getSettings();
   assert.equal(settings.onboardingComplete, true);
   assert.equal(settings.integrations?.lidarr?.apiKey, "fake-key");

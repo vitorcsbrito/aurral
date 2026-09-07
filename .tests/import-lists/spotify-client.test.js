@@ -7,10 +7,9 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, , { spotifyConnectionStore }, { spotifyClient }] =
+const [isolatedState, , { spotifyConnectionStore }, { spotifyClient }] =
   await setupIsolatedBackend(
     "spotify-client",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/spotify/spotifyConnectionStore.js",
     "backend/services/spotify/spotifyClient.js",
@@ -18,8 +17,8 @@ const [isolatedState, { db }, , { spotifyConnectionStore }, { spotifyClient }] =
 
 const originalFetch = globalThis.fetch;
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
   spotifyClient.clearPlaylistTrackCache();
 });
 
@@ -29,7 +28,7 @@ test.after(async () => {
 });
 
 test("invalid Spotify credentials clear the connection after refresh cannot recover", async () => {
-  spotifyConnectionStore.saveConnection(7, {
+  await spotifyConnectionStore.saveConnection(7, {
     accessToken: "expired-access-token",
     refreshToken: "expired-refresh-token",
     expiresAt: Date.now() + 60 * 60 * 1000,
@@ -61,11 +60,11 @@ test("invalid Spotify credentials clear the connection after refresh cannot reco
     (error) => error?.code === "SPOTIFY_AUTH_REQUIRED" && error?.statusCode === 401,
   );
   assert.equal(requestCount, 3);
-  assert.equal(spotifyConnectionStore.getPublicStatus(7).connected, false);
+  assert.equal((await spotifyConnectionStore.getPublicStatus(7)).connected, false);
 });
 
 test("pending track requests cannot repopulate cache after invalidation", async () => {
-  spotifyConnectionStore.saveConnection(7, {
+  await spotifyConnectionStore.saveConnection(7, {
     accessToken: "expired-access-token",
     refreshToken: "expired-refresh-token",
     expiresAt: Date.now() + 60 * 60 * 1000,
@@ -116,7 +115,7 @@ test("pending track requests cannot repopulate cache after invalidation", async 
 });
 
 test("stale refresh failures cannot clear a newly connected account", async () => {
-  spotifyConnectionStore.saveConnection(7, {
+  await spotifyConnectionStore.saveConnection(7, {
     accessToken: "old-access-token",
     refreshToken: "old-refresh-token",
     expiresAt: Date.now() + 60 * 60 * 1000,
@@ -147,7 +146,7 @@ test("stale refresh failures cannot clear a newly connected account", async () =
 
   const request = spotifyClient.listPlaylists(7);
   await refreshStarted;
-  spotifyConnectionStore.saveConnection(7, {
+  await spotifyConnectionStore.saveConnection(7, {
     accessToken: "new-access-token",
     refreshToken: "new-refresh-token",
     expiresAt: Date.now() + 60 * 60 * 1000,
@@ -163,6 +162,9 @@ test("stale refresh failures cannot clear a newly connected account", async () =
     request,
     (error) => error?.code === "SPOTIFY_AUTH_REQUIRED" && error?.statusCode === 401,
   );
-  assert.equal(spotifyConnectionStore.getConnection(7).refreshToken, "new-refresh-token");
+  assert.equal(
+    (await spotifyConnectionStore.getConnection(7)).refreshToken,
+    "new-refresh-token",
+  );
   assert.equal(requestCount, 2);
 });

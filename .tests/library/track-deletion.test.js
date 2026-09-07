@@ -5,7 +5,8 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { lidarrClient } from "../../backend/services/lidarrClient.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
 import { downloadTracker } from "../../backend/services/weeklyFlow/weeklyFlowDownloadTracker.js";
@@ -17,6 +18,31 @@ import {
   upsertLibraryTrack,
 } from "../../backend/services/libraryMediaStore.js";
 
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
+
+const cleanupEntities = async ({ artistId, albumId, trackId }) => {
+  for (const [entityKind, entityId] of [
+    ["artist", artistId],
+    ["album", albumId],
+    ["track", trackId],
+  ]) {
+    await db.run(
+      "DELETE FROM library_search_documents WHERE entity_kind = ? AND entity_id = ?",
+      [entityKind, entityId],
+    );
+  }
+  await db.run("DELETE FROM library_album_tracks WHERE album_id = ? AND track_id = ?", [
+    albumId,
+    trackId,
+  ]);
+  await db.run("DELETE FROM library_tracks WHERE id = ?", [trackId]);
+  await db.run("DELETE FROM library_albums WHERE id = ?", [albumId]);
+  await db.run("DELETE FROM library_artists WHERE id = ?", [artistId]);
+};
+
 test("deletes Aurral-owned track files without Lidarr", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "aurral-track-delete-"));
   const filePath = path.join(root, "Artist", "Album", "01 Track.flac");
@@ -24,23 +50,23 @@ test("deletes Aurral-owned track files without Lidarr", async (t) => {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, "fixture");
 
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${identity}:artist`,
     name: "Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${identity}:album`,
     artistId: artist.id,
     title: "Album",
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${identity}:track`,
     mbid: `${identity}-mbid`,
     title: "Track",
     artistName: "Artist",
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: album.id,
     source: "aurral",
@@ -52,7 +78,9 @@ test("deletes Aurral-owned track files without Lidarr", async (t) => {
     "library",
   );
   downloadTracker.setDone(libraryJobId, filePath, "Album");
-  const upgradeJobId = downloadTracker.addUpgradeJob(downloadTracker.getJob(libraryJobId));
+  const upgradeJobId = downloadTracker.addUpgradeJob(
+    downloadTracker.getJob(libraryJobId),
+  );
   const differentTrackJobId = downloadTracker.addJob(
     { artistName: "Artist", trackName: "Track", trackMbid: `${identity}-different-mbid` },
     "library",
@@ -64,19 +92,34 @@ test("deletes Aurral-owned track files without Lidarr", async (t) => {
     assert.deepEqual(await libraryManager.deleteTrack(track.id), { success: true });
     await assert.rejects(() => access(filePath));
     assert.equal(
-      db.prepare(
-        "SELECT 1 FROM library_media_files WHERE source = ? AND path = ?",
-      ).get("aurral", filePath),
+      await db.get("SELECT 1 FROM library_media_files WHERE source = ? AND path = ?", [
+        "aurral",
+        filePath,
+      ]),
       undefined,
     );
-    assert.equal(db.prepare("SELECT 1 FROM library_tracks WHERE id = ?").get(track.id), undefined);
-    assert.equal(db.prepare("SELECT 1 FROM library_albums WHERE id = ?").get(album.id), undefined);
-    assert.equal(db.prepare("SELECT 1 FROM library_artists WHERE id = ?").get(artist.id), undefined);
-    for (const [entityKind, entityId] of [["artist", artist.id], ["album", album.id], ["track", track.id]]) {
+    assert.equal(
+      await db.get("SELECT 1 FROM library_tracks WHERE id = ?", [track.id]),
+      undefined,
+    );
+    assert.equal(
+      await db.get("SELECT 1 FROM library_albums WHERE id = ?", [album.id]),
+      undefined,
+    );
+    assert.equal(
+      await db.get("SELECT 1 FROM library_artists WHERE id = ?", [artist.id]),
+      undefined,
+    );
+    for (const [entityKind, entityId] of [
+      ["artist", artist.id],
+      ["album", album.id],
+      ["track", track.id],
+    ]) {
       assert.equal(
-        db.prepare(
+        await db.get(
           "SELECT 1 FROM library_search_documents WHERE entity_kind = ? AND entity_id = ?",
-        ).get(entityKind, entityId),
+          [entityKind, entityId],
+        ),
         undefined,
       );
     }
@@ -84,14 +127,11 @@ test("deletes Aurral-owned track files without Lidarr", async (t) => {
     assert.equal(downloadTracker.getJob(upgradeJobId), null);
     assert.notEqual(downloadTracker.getJob(differentTrackJobId), null);
   } finally {
-    db.prepare(
-      "DELETE FROM library_search_documents WHERE (entity_kind, entity_id) IN ((?, ?), (?, ?), (?, ?))",
-    ).run("artist", artist.id, "album", album.id, "track", track.id);
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run("aurral", filePath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ? AND track_id = ?").run(album.id, track.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", [
+      "aurral",
+      filePath,
+    ]);
+    await cleanupEntities({ artistId: artist.id, albumId: album.id, trackId: track.id });
     if (libraryJobId) downloadTracker.removeJob(libraryJobId);
     if (upgradeJobId) downloadTracker.removeJob(upgradeJobId);
     if (differentTrackJobId) downloadTracker.removeJob(differentTrackJobId);
@@ -108,26 +148,26 @@ test("records successful Aurral deletions when another file fails", async (t) =>
   await writeFile(deletedPath, "fixture");
   await writeFile(failedPath, "fixture");
 
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${identity}:artist`,
     name: "Artist",
     syncSearch: false,
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${identity}:album`,
     artistId: artist.id,
     title: "Album",
     syncSearch: false,
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${identity}:track`,
     title: "Track",
     artistName: "Artist",
     syncSearch: false,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, syncSearch: false });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, syncSearch: false });
   for (const filePath of [deletedPath, failedPath]) {
-    upsertLibraryMediaFile({
+    await upsertLibraryMediaFile({
       trackId: track.id,
       albumId: album.id,
       source: "aurral",
@@ -159,16 +199,22 @@ test("records successful Aurral deletions when another file fails", async (t) =>
       error: "permission denied",
     });
     assert.equal(
-      db.prepare(
-        "SELECT available FROM library_media_files WHERE source = ? AND path = ?",
-      ).get("aurral", deletedPath)?.available,
+      (
+        await db.get(
+          "SELECT available FROM library_media_files WHERE source = ? AND path = ?",
+          ["aurral", deletedPath],
+        )
+      )?.available,
       0,
     );
     assert.equal(downloadTracker.getJob(libraryJobId), null);
     assert.equal(
-      db.prepare(
-        "SELECT available FROM library_media_files WHERE source = ? AND path = ?",
-      ).get("aurral", failedPath)?.available,
+      (
+        await db.get(
+          "SELECT available FROM library_media_files WHERE source = ? AND path = ?",
+          ["aurral", failedPath],
+        )
+      )?.available,
       1,
     );
     await assert.rejects(() => access(deletedPath));
@@ -176,19 +222,25 @@ test("records successful Aurral deletions when another file fails", async (t) =>
     failDeletion = false;
     assert.deepEqual(await libraryManager.deleteTrack(track.id), { success: true });
     await assert.rejects(() => access(failedPath));
-    assert.equal(db.prepare("SELECT 1 FROM library_tracks WHERE id = ?").get(track.id), undefined);
-    assert.equal(db.prepare("SELECT 1 FROM library_albums WHERE id = ?").get(album.id), undefined);
-    assert.equal(db.prepare("SELECT 1 FROM library_artists WHERE id = ?").get(artist.id), undefined);
+    assert.equal(
+      await db.get("SELECT 1 FROM library_tracks WHERE id = ?", [track.id]),
+      undefined,
+    );
+    assert.equal(
+      await db.get("SELECT 1 FROM library_albums WHERE id = ?", [album.id]),
+      undefined,
+    );
+    assert.equal(
+      await db.get("SELECT 1 FROM library_artists WHERE id = ?", [artist.id]),
+      undefined,
+    );
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path IN (?, ?)").run(
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path IN (?, ?)", [
       "aurral",
       deletedPath,
       failedPath,
-    );
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ? AND track_id = ?").run(album.id, track.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    ]);
+    await cleanupEntities({ artistId: artist.id, albumId: album.id, trackId: track.id });
     if (libraryJobId) downloadTracker.removeJob(libraryJobId);
     await rm(root, { recursive: true, force: true });
   }

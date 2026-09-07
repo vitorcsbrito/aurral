@@ -368,10 +368,10 @@ function normalizeArtistNameKey(artistName) {
     .toLowerCase();
 }
 
-export function musicbrainzGetCachedArtistMbidByName(artistName) {
+export async function musicbrainzGetCachedArtistMbidByName(artistName) {
   const normalized = normalizeArtistNameKey(artistName);
   if (!normalized) return null;
-  const cached = dbOps.getMusicbrainzArtistMbidCache(normalized);
+  const cached = await dbOps.getMusicbrainzArtistMbidCache(normalized);
   if (!cached?.updatedAt) return null;
   const ageMs = Date.now() - cached.updatedAt;
   const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -385,7 +385,7 @@ export async function musicbrainzResolveArtistMbidByName(artistName) {
   const rawName = String(artistName || "").trim();
   if (!rawName) return null;
   const normalized = normalizeArtistNameKey(rawName);
-  const cached = dbOps.getMusicbrainzArtistMbidCache(normalized);
+  const cached = await dbOps.getMusicbrainzArtistMbidCache(normalized);
   const now = Date.now();
   const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   const NEGATIVE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -398,7 +398,7 @@ export async function musicbrainzResolveArtistMbidByName(artistName) {
   }
   try {
     const resolved = await resolveMetadataArtistByName(rawName);
-    dbOps.setMusicbrainzArtistMbidCache(normalized, resolved);
+    await dbOps.setMusicbrainzArtistMbidCache(normalized, resolved);
     return resolved;
   } catch (e) {
     if (cached) {

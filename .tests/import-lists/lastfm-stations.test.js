@@ -8,14 +8,13 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { userOps }, { lastfmStationClient }] = await setupIsolatedBackend(
+const [isolatedState, { userOps }, { lastfmStationClient }] = await setupIsolatedBackend(
   "lastfm-stations",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/importLists/lastfmStations.js",
 );
 
-test.beforeEach(() => resetDatabase(db));
+test.beforeEach(async () => resetDatabase());
 test.after(() => cleanupIsolatedState(isolatedState));
 
 test("parseLastfmStation maps tracks, durations, and skipped entries", () => {
@@ -83,8 +82,8 @@ test("lastfmStationClient lists the three stations in a stable order", async (t)
 });
 
 test("lastfmStationClient reuses a Last.fm username from the profile", async (t) => {
-  const user = userOps.createUser("profile-user", "hash");
-  userOps.updateUser(user.id, {
+  const user = await userOps.createUser("profile-user", "hash");
+  await userOps.updateUser(user.id, {
     listenHistoryProvider: "lastfm",
     listenHistoryUsername: "profile-lastfm",
   });

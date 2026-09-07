@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { resetDatabase } from "../helpers/backendTestHarness.js";
 import { getRecentMissingReleases } from "../../backend/services/discovery/recentReleases.js";
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
 import { dbOps } from "../../backend/db/helpers/index.js";
 import { lidarrClient } from "../../backend/services/lidarrClient.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
@@ -17,6 +18,8 @@ import {
   upsertLibraryMediaFile,
   upsertLibraryTrack,
 } from "../../backend/services/libraryMediaStore.js";
+
+await resetDatabase();
 
 const artist = {
   id: 1,
@@ -113,7 +116,7 @@ test("recent missing releases backfill direct Lidarr artists before mapping", as
   lidarrClient.isConfigured = () => true;
   t.mock.method(libraryManager, "backfillLidarrArtistMappings", async (artists) => {
     assert.equal(artists[0], providerArtist);
-    dbOps.setLidarrArtistIdMap(canonicalMbid, providerArtist.foreignArtistId);
+    await dbOps.setLidarrArtistIdMap(canonicalMbid, providerArtist.foreignArtistId);
   });
 
   try {
@@ -136,36 +139,36 @@ test("recent missing releases backfill direct Lidarr artists before mapping", as
     assert.equal(releases[0].foreignArtistId, providerArtist.foreignArtistId);
   } finally {
     lidarrClient.isConfigured = originalIsConfigured;
-    dbOps.deleteLidarrArtistIdMap(canonicalMbid);
+    await dbOps.deleteLidarrArtistIdMap(canonicalMbid);
   }
 });
 
 test("canonical recent releases exclude owned albums without loading old albums", async () => {
   const key = `recent-canonical-${process.pid}-${Date.now()}`;
-  const canonicalArtist = upsertLibraryArtist({
+  const canonicalArtist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     mbid: "45454545-4545-4454-8454-454545454545",
     name: "Canonical Release Artist",
     metadata: { id: 4545 },
   });
   const trackIds = [];
-  const addAlbum = ({ suffix, title, releaseDate, available = false }) => {
-    const album = upsertLibraryAlbum({
+  const addAlbum = async ({ suffix, title, releaseDate, available = false }) => {
+    const album = await upsertLibraryAlbum({
       identityKey: `${key}:album:${suffix}`,
       releaseGroupMbid: `56565656-5656-4565-8565-${String(suffix).padStart(12, "0")}`,
       artistId: canonicalArtist.id,
       title,
       releaseDate,
     });
-    const track = upsertLibraryTrack({
+    const track = await upsertLibraryTrack({
       identityKey: `${key}:track:${suffix}`,
       title: `${title} Track`,
       artistName: "Canonical Release Artist",
     });
     trackIds.push(track.id);
-    linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
+    await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
     if (available) {
-      upsertLibraryMediaFile({
+      await upsertLibraryMediaFile({
         trackId: track.id,
         albumId: album.id,
         source: "lidarr",
@@ -176,31 +179,42 @@ test("canonical recent releases exclude owned albums without loading old albums"
   };
 
   try {
-    addAlbum({ suffix: 1, title: "Missing Current", releaseDate: "2026-08-20" });
-    addAlbum({ suffix: 2, title: "Owned Current", releaseDate: "2026-08-19", available: true });
-    const unrelatedArtist = upsertLibraryArtist({
+    await addAlbum({ suffix: 1, title: "Missing Current", releaseDate: "2026-08-20" });
+    await addAlbum({
+      suffix: 2,
+      title: "Owned Current",
+      releaseDate: "2026-08-19",
+      available: true,
+    });
+    const unrelatedArtist = await upsertLibraryArtist({
       identityKey: `${key}:unrelated-artist`,
       name: "Unrelated Release Artist",
     });
-    const unrelatedAlbum = upsertLibraryAlbum({
+    const unrelatedAlbum = await upsertLibraryAlbum({
       identityKey: `${key}:unrelated-album`,
       artistId: unrelatedArtist.id,
       title: "Unrelated Newer Release",
       releaseDate: "2026-08-21",
     });
-    const unrelatedTrack = upsertLibraryTrack({
+    const unrelatedTrack = await upsertLibraryTrack({
       identityKey: `${key}:unrelated-track`,
       title: "Unrelated Track",
       artistName: "Unrelated Release Artist",
     });
     trackIds.push(unrelatedTrack.id);
-    linkLibraryAlbumTrack({ albumId: unrelatedAlbum.id, trackId: unrelatedTrack.id });
+    await linkLibraryAlbumTrack({ albumId: unrelatedAlbum.id, trackId: unrelatedTrack.id });
     for (let index = 0; index < 125; index += 1) {
-      addAlbum({ suffix: index + 100, title: `Old Album ${index}`, releaseDate: "2000-01-01" });
+      await addAlbum({
+        suffix: index + 100,
+        title: `Old Album ${index}`,
+        releaseDate: "2000-01-01",
+      });
     }
 
-    const projectedArtist = getCanonicalArtistProjection({ reference: canonicalArtist.id })[0];
-    const projectedAlbums = getCanonicalAlbumsByReleaseDate({
+    const projectedArtist = (
+      await getCanonicalArtistProjection({ reference: canonicalArtist.id })
+    )[0];
+    const projectedAlbums = await getCanonicalAlbumsByReleaseDate({
       from: "2026-08-01",
       to: "2026-08-22",
       limit: 10,
@@ -225,12 +239,13 @@ test("canonical recent releases exclude owned albums without loading old albums"
     });
     assert.deepEqual(scopedReleases.map((album) => album.title), ["Missing Current"]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path LIKE ?").run(`/tmp/${key}/%`);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(canonicalArtist.id);
+    await db.run("DELETE FROM library_media_files WHERE path LIKE ?", [`/tmp/${key}/%`]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [canonicalArtist.id]);
     if (trackIds.length) {
-      db.prepare(
+      await db.run(
         `DELETE FROM library_tracks WHERE id IN (${trackIds.map(() => "?").join(",")})`,
-      ).run(...trackIds);
+        trackIds,
+      );
     }
   }
 });

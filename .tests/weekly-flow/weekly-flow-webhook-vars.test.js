@@ -11,7 +11,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   { flowPlaylistConfig },
   { downloadTracker },
@@ -19,7 +18,6 @@ const [
   { playlistManager },
 ] = await setupIsolatedBackend(
   "weekly-flow-webhook-vars",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
@@ -27,10 +25,12 @@ const [
   "backend/services/weeklyFlow/weeklyFlowPlaylistManager.js",
 );
 
-test.beforeEach(() => {
+await downloadTracker.init();
+
+test.beforeEach(async () => {
   downloadTracker.clearAll();
-  resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -43,7 +43,7 @@ test.after(async () => {
 });
 
 test("weekly flow completion sends display name and track library path", async () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Late Night",
     tracks: [{ artistName: "Artist", trackName: "Track" }],
   });
@@ -66,7 +66,7 @@ test("weekly flow completion sends display name and track library path", async (
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   const settings = dbOps.getSettings();
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...settings,
     integrations: {
       ...settings.integrations,

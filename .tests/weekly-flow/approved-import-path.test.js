@@ -12,7 +12,6 @@ import {
 
 const [
   isolatedState,
-  { db },
   { dbOps },
   { downloadTracker },
   { flowPlaylistConfig },
@@ -22,7 +21,6 @@ const [
   { registerJobs },
 ] = await setupIsolatedBackend(
   "approved-import-path",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
@@ -64,11 +62,13 @@ playlistManager.navidromeDestination.client = {
   async scanLibrary() {},
 };
 
+await downloadTracker.init();
+
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   downloadTracker.clearAll();
   await fs.mkdir(process.env.DOWNLOAD_FOLDER, { recursive: true });
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {},
     downloadFolderPath: process.env.DOWNLOAD_FOLDER,
@@ -83,7 +83,7 @@ test.after(async () => {
 
 test("approving a reviewed download commits it inside the managed playlist library", async () => {
   const playlistId = "40ae99ad-92b0-48c6-93e7-7b39e76703ea";
-  flowPlaylistConfig.createSharedPlaylist({
+  await flowPlaylistConfig.createSharedPlaylist({
     id: playlistId,
     name: "Reviewed",
     tracks: [{ artistName: "Artist", trackName: "Track", albumName: "Album" }],
@@ -114,7 +114,7 @@ test("approving a reviewed download commits it inside the managed playlist libra
 });
 
 test("approving a reviewed upgrade replaces the source playlist file", async () => {
-  const flow = flowPlaylistConfig.createFlow({
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Reviewed upgrade flow",
     size: 10,
     mix: { discover: 100 },
@@ -164,16 +164,17 @@ test("approving a reviewed upgrade replaces the source playlist file", async () 
 
 test("reports when an upgrade search is already queued for a track", async () => {
   const playlistId = "c79c1598-699a-4ab3-b8cd-4e570f001f18";
-  flowPlaylistConfig.createSharedPlaylist({
-    id: playlistId,
-    name: "Upgrades",
-    tracks: [{ artistName: "Artist", trackName: "Track", albumName: "Album" }],
-  });
-  dbOps.updateSettings({
+  // Settings first: playlist writes persist a snapshot taken when called.
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       slskd: { enabled: true, url: "http://127.0.0.1:1", apiKey: "test-key" },
     },
+  });
+  await flowPlaylistConfig.createSharedPlaylist({
+    id: playlistId,
+    name: "Upgrades",
+    tracks: [{ artistName: "Artist", trackName: "Track", albumName: "Album" }],
   });
   const finalPath = path.join(
     process.env.DOWNLOAD_FOLDER,
@@ -208,16 +209,17 @@ test("reports when an upgrade search is already queued for a track", async () =>
 
 test("records queued upgrade history if the pipeline removes the live job immediately", async () => {
   const playlistId = "e6be4cd3-10b0-4744-baa1-7e960a41ca54";
-  flowPlaylistConfig.createSharedPlaylist({
-    id: playlistId,
-    name: "Fast failure",
-    tracks: [{ artistName: "Artist", trackName: "Fast failure track", albumName: "Album" }],
-  });
-  dbOps.updateSettings({
+  // Settings first: playlist writes persist a snapshot taken when called.
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     integrations: {
       slskd: { enabled: true, url: "http://127.0.0.1:1", apiKey: "test-key" },
     },
+  });
+  await flowPlaylistConfig.createSharedPlaylist({
+    id: playlistId,
+    name: "Fast failure",
+    tracks: [{ artistName: "Artist", trackName: "Fast failure track", albumName: "Album" }],
   });
   const finalPath = path.join(
     process.env.DOWNLOAD_FOLDER,
@@ -244,7 +246,7 @@ test("records queued upgrade history if the pipeline removes the live job immedi
   try {
     assert.equal(await queueQualityUpgrade(downloadTracker.getJob(jobId)), "queued");
     assert.equal(
-      dbOps.getAurralHistory().some(
+      (await dbOps.getAurralHistory()).some(
         (entry) => entry.metadata?.trackName === "Fast failure track",
       ),
       true,
@@ -257,13 +259,20 @@ test("records queued upgrade history if the pipeline removes the live job immedi
 test("search all stays within the requesting user's playlist access", async () => {
   const ownedPlaylistId = "c0de1f39-226f-4ab8-8f37-09d8adf47b5a";
   const otherPlaylistId = "a2b9ae35-7fb7-474e-a0d4-8ac4bdb8d9e6";
-  flowPlaylistConfig.createSharedPlaylist({
+  // Settings first: playlist writes persist a snapshot taken when called.
+  await dbOps.updateSettings({
+    ...dbOps.getSettings(),
+    integrations: {
+      slskd: { enabled: true, url: "http://127.0.0.1:1", apiKey: "test-key" },
+    },
+  });
+  await flowPlaylistConfig.createSharedPlaylist({
     id: ownedPlaylistId,
     name: "Owned wanted",
     ownerUserId: 7,
     tracks: [{ artistName: "Artist", trackName: "Missing", albumName: "Album" }],
   });
-  flowPlaylistConfig.createSharedPlaylist({
+  await flowPlaylistConfig.createSharedPlaylist({
     id: otherPlaylistId,
     name: "Other wanted",
     ownerUserId: 8,
@@ -312,12 +321,6 @@ test("search all stays within the requesting user's playlist access", async () =
   downloadTracker.setDone(otherUpgradeId, otherPath, "Album");
   downloadTracker.updateQuality(ownedUpgradeId, { tier: "mp3-128", format: "mp3" });
   downloadTracker.updateQuality(otherUpgradeId, { tier: "mp3-128", format: "mp3" });
-  dbOps.updateSettings({
-    ...dbOps.getSettings(),
-    integrations: {
-      slskd: { enabled: true, url: "http://127.0.0.1:1", apiKey: "test-key" },
-    },
-  });
 
   const originalStart = weeklyFlowWorker.start;
   weeklyFlowWorker.start = async () => {};
@@ -344,7 +347,7 @@ test("search all stays within the requesting user's playlist access", async () =
       false,
     );
     assert.equal(
-      dbOps.getAurralHistory().some((entry) => entry.metadata?.jobId === queuedUpgrade.id),
+      (await dbOps.getAurralHistory()).some((entry) => entry.metadata?.jobId === queuedUpgrade.id),
       true,
     );
 

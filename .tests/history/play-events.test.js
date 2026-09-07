@@ -13,17 +13,21 @@ const [isolatedState, playEvents, scrobbleStore, honkerDbModule] = await setupIs
   "backend/services/scrobbleConnectionStore.js",
   "backend/services/honkerDb.js",
 );
-const { db } = await import("../../backend/config/db-sqlite.js");
+const { db } = await import("../../backend/config/database.js");
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  db.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("listener", "test");
+test.beforeEach(async () => {
+  await resetDatabase();
+  await db.run("INSERT INTO users (username, password_hash) VALUES (?, ?)", [
+    "listener",
+    "test",
+  ]);
 });
 
 test.after(async () => cleanupIsolatedState(isolatedState));
 
-test("records local plays and aggregates artists without provider access", () => {
-  const first = playEvents.recordPlayEvent(1, {
+test("records local plays and aggregates artists without provider access", async () => {
+  const userId = (await db.get("SELECT id FROM users WHERE username = ?", ["listener"])).id;
+  const first = await playEvents.recordPlayEvent(userId, {
     trackId: "song:one",
     title: "One",
     artist: "Artist A",
@@ -32,7 +36,7 @@ test("records local plays and aggregates artists without provider access", () =>
     playedAt: 1700000000,
     source: "subsonic",
   });
-  playEvents.recordPlayEvent(1, {
+  await playEvents.recordPlayEvent(userId, {
     trackId: "song:two",
     title: "Two",
     artist: "Artist A",
@@ -41,8 +45,8 @@ test("records local plays and aggregates artists without provider access", () =>
   });
 
   assert.equal(first.playedAt, 1700000000000);
-  assert.equal(playEvents.getPlayHistory(1).length, 2);
-  assert.deepEqual(playEvents.getTopPlayedArtists(1)[0], {
+  assert.equal((await playEvents.getPlayHistory(userId)).length, 2);
+  assert.deepEqual((await playEvents.getTopPlayedArtists(userId))[0], {
     artistName: "Artist A",
     mbid: null,
     playcount: 2,
@@ -50,13 +54,17 @@ test("records local plays and aggregates artists without provider access", () =>
   });
 });
 
-test("pins each scrobble delivery to the connection active when the play was recorded", () => {
-  const userId = db.prepare("SELECT id FROM users WHERE username = ?").get("listener").id;
-  const connection = scrobbleStore.scrobbleConnectionStore.saveConnection(userId, "lastfm", {
-    token: "session-token",
-    displayName: "listener",
-  });
-  const event = playEvents.recordPlayEvent(userId, {
+test("pins each scrobble delivery to the connection active when the play was recorded", async () => {
+  const userId = (await db.get("SELECT id FROM users WHERE username = ?", ["listener"])).id;
+  const connection = await scrobbleStore.scrobbleConnectionStore.saveConnection(
+    userId,
+    "lastfm",
+    {
+      token: "session-token",
+      displayName: "listener",
+    },
+  );
+  const event = await playEvents.recordPlayEvent(userId, {
     trackId: "song:one",
     title: "One",
     artist: "Artist A",

@@ -18,7 +18,6 @@ const [
   { processUsenetPipelinePayload },
   { processDeemixPipelinePayload },
   { dbOps },
-  { db },
   { blockPipelineJobForReview },
 ] = await setupIsolatedBackend(
   "download-review-routing",
@@ -27,12 +26,13 @@ const [
   "backend/services/usenetOrchestrator.js",
   "backend/services/deemixOrchestrator.js",
   "backend/db/helpers/index.js",
-  "backend/config/db-sqlite.js",
   "backend/services/pipelineHelpers.js",
 );
 
-test.beforeEach(() => {
-  resetDatabase(db);
+await downloadTracker.init();
+
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
@@ -194,7 +194,7 @@ test("Usenet sends its best plausible duration mismatch to review", async () => 
       "01 Correct Track.mp3",
     );
     await writeOneSecondMp3(filePath);
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         nzbget: {
           enabled: true,
@@ -296,7 +296,7 @@ test("deemix drops its queue entry before a track goes to review", async () => {
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: { deemix: { enabled: true, url: server.url, bitrate: 1 } },
     });
     const jobId = addDurationMismatchJob("deemix-review");

@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import axios from "../../lib/axiosFetch.js";
 
+import { resetDatabase } from "../helpers/backendTestHarness.js";
 import { buildShowsResponseCacheKey } from "../../backend/routes/discovery/handlers/shows.js";
 import { getNearbyShows, groupShowsByEvent } from "../../backend/services/nearbyShowsService.js";
+
+await resetDatabase();
 
 test("includes all artist inputs in the shows response cache key", () => {
   const base = {

@@ -23,7 +23,7 @@ const canAccessJob = (user, job) =>
 
 export function registerStream(router) {
   router.get("/stream/:jobId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res
         .status(401)
         .json({ error: "Unauthorized", message: "Authentication required" });
@@ -63,7 +63,7 @@ export function registerStream(router) {
   });
 
   router.get("/staging-stream/:jobId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res
         .status(401)
         .json({ error: "Unauthorized", message: "Authentication required" });

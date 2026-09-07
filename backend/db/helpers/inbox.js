@@ -1,4 +1,4 @@
-import { db, dbHelpers } from "../../config/db-sqlite.js";
+import { db, dbHelpers } from "../../config/database.js";
 
 const mapInboxRow = (row) => {
   if (!row) return null;
@@ -23,7 +23,7 @@ const mapInboxRow = (row) => {
   };
 };
 
-const getInboxItemsStmt = db.prepare(`
+const GET_INBOX_ITEMS_SQL = `
   SELECT *
   FROM inbox_items
   WHERE user_id = ?
@@ -31,9 +31,9 @@ const getInboxItemsStmt = db.prepare(`
     AND (expires_at IS NULL OR expires_at > ?)
   ORDER BY created_at DESC, id DESC
   LIMIT ?
-`);
+`;
 
-const getUnreadInboxItemsStmt = db.prepare(`
+const GET_UNREAD_INBOX_ITEMS_SQL = `
   SELECT *
   FROM inbox_items
   WHERE user_id = ?
@@ -42,20 +42,18 @@ const getUnreadInboxItemsStmt = db.prepare(`
     AND (expires_at IS NULL OR expires_at > ?)
   ORDER BY created_at DESC, id DESC
   LIMIT ?
-`);
+`;
 
-const getUnreadCountStmt = db.prepare(`
+const GET_UNREAD_COUNT_SQL = `
   SELECT COUNT(*) AS count
   FROM inbox_items
   WHERE user_id = ?
     AND is_read = 0
     AND is_dismissed = 0
     AND (expires_at IS NULL OR expires_at > ?)
-`);
+`;
 
-const getItemStmt = db.prepare(
-  "SELECT * FROM inbox_items WHERE user_id = ? AND id = ?",
-);
+const GET_ITEM_SQL = "SELECT * FROM inbox_items WHERE user_id = ? AND id = ?";
 
 const normalizeKinds = (kinds) =>
   [...new Set((Array.isArray(kinds) ? kinds : []).map((kind) => String(kind || "").trim()).filter(Boolean))];
@@ -63,7 +61,7 @@ const normalizeKinds = (kinds) =>
 const kindClause = (kinds) =>
   kinds.length ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
 
-const upsertInboxItemStmt = db.prepare(`
+const UPSERT_INBOX_ITEM_SQL = `
   INSERT INTO inbox_items (
     id,
     user_id,
@@ -78,37 +76,50 @@ const upsertInboxItemStmt = db.prepare(`
     created_at,
     updated_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(user_id, kind, source_key) DO UPDATE SET
-    title = excluded.title,
-    subtitle = excluded.subtitle,
-    href = excluded.href,
-    image_url = excluded.image_url,
-    metadata = excluded.metadata,
-    expires_at = excluded.expires_at,
+  ON CONFLICT (user_id, kind, source_key) DO UPDATE SET
+    title = EXCLUDED.title,
+    subtitle = EXCLUDED.subtitle,
+    href = EXCLUDED.href,
+    image_url = EXCLUDED.image_url,
+    metadata = EXCLUDED.metadata,
+    expires_at = EXCLUDED.expires_at,
     is_read = CASE
       WHEN inbox_items.dismissed_until IS NOT NULL
-        AND inbox_items.dismissed_until <= excluded.updated_at THEN 0
+        AND inbox_items.dismissed_until <= EXCLUDED.updated_at THEN 0
       ELSE inbox_items.is_read
     END,
     is_dismissed = CASE
       WHEN inbox_items.dismissed_until IS NOT NULL
-        AND inbox_items.dismissed_until <= excluded.updated_at THEN 0
+        AND inbox_items.dismissed_until <= EXCLUDED.updated_at THEN 0
       ELSE inbox_items.is_dismissed
     END,
     dismissed_until = CASE
       WHEN inbox_items.dismissed_until IS NOT NULL
-        AND inbox_items.dismissed_until <= excluded.updated_at THEN NULL
+        AND inbox_items.dismissed_until <= EXCLUDED.updated_at THEN NULL
       ELSE inbox_items.dismissed_until
     END,
-    updated_at = excluded.updated_at
-`);
+    updated_at = EXCLUDED.updated_at
+`;
+
+const UPDATE_INBOX_ITEM_SQL = `
+  UPDATE inbox_items
+  SET is_read = ?, is_saved = ?, is_dismissed = ?, is_added = ?,
+      dismissed_until = ?, updated_at = ?
+  WHERE user_id = ? AND id = ?
+`;
+
+const MARK_ALL_INBOX_ITEMS_READ_SQL = `
+  UPDATE inbox_items
+  SET is_read = 1, updated_at = ?
+  WHERE user_id = ? AND is_dismissed = 0 AND is_read = 0
+`;
 
 export default function register(dbOps) {
-  dbOps.getInboxItems = function (userId, { limit = 50, unreadOnly = false, kinds = [] } = {}) {
+  dbOps.getInboxItems = async function (userId, { limit = 50, unreadOnly = false, kinds = [] } = {}) {
     const safeLimit = Math.max(1, Math.min(50, Math.floor(Number(limit) || 50)));
     const selectedKinds = normalizeKinds(kinds);
     if (selectedKinds.length > 0) {
-      const statement = db.prepare(`
+      const sql = `
         SELECT *
         FROM inbox_items
         WHERE user_id = ?
@@ -118,21 +129,19 @@ export default function register(dbOps) {
           ${kindClause(selectedKinds)}
         ORDER BY created_at DESC, id DESC
         LIMIT ?
-      `);
-      return statement
-        .all(Number(userId), Date.now(), ...selectedKinds, safeLimit)
-        .map(mapInboxRow);
+      `;
+      const rows = await db.all(sql, [Number(userId), Date.now(), ...selectedKinds, safeLimit]);
+      return rows.map(mapInboxRow);
     }
-    const statement = unreadOnly ? getUnreadInboxItemsStmt : getInboxItemsStmt;
-    return statement
-      .all(Number(userId), Date.now(), safeLimit)
-      .map(mapInboxRow);
+    const sql = unreadOnly ? GET_UNREAD_INBOX_ITEMS_SQL : GET_INBOX_ITEMS_SQL;
+    const rows = await db.all(sql, [Number(userId), Date.now(), safeLimit]);
+    return rows.map(mapInboxRow);
   };
 
-  dbOps.getInboxUnreadCount = function (userId, kinds = []) {
+  dbOps.getInboxUnreadCount = async function (userId, kinds = []) {
     const selectedKinds = normalizeKinds(kinds);
     if (selectedKinds.length > 0) {
-      const statement = db.prepare(`
+      const sql = `
         SELECT COUNT(*) AS count
         FROM inbox_items
         WHERE user_id = ?
@@ -140,17 +149,20 @@ export default function register(dbOps) {
           AND is_dismissed = 0
           AND (expires_at IS NULL OR expires_at > ?)
           ${kindClause(selectedKinds)}
-      `);
-      return Number(statement.get(Number(userId), Date.now(), ...selectedKinds)?.count || 0);
+      `;
+      const row = await db.get(sql, [Number(userId), Date.now(), ...selectedKinds]);
+      return Number(row?.count || 0);
     }
-    return Number(getUnreadCountStmt.get(Number(userId), Date.now())?.count || 0);
+    const row = await db.get(GET_UNREAD_COUNT_SQL, [Number(userId), Date.now()]);
+    return Number(row?.count || 0);
   };
 
-  dbOps.getInboxItem = function (userId, itemId) {
-    return mapInboxRow(getItemStmt.get(Number(userId), String(itemId || "")));
+  dbOps.getInboxItem = async function (userId, itemId) {
+    const row = await db.get(GET_ITEM_SQL, [Number(userId), String(itemId || "")]);
+    return mapInboxRow(row);
   };
 
-  dbOps.upsertInboxItem = function (item) {
+  dbOps.upsertInboxItem = async function (item) {
     const now = Date.now();
     const userId = Number(item?.userId);
     const kind = String(item?.kind || "").trim();
@@ -160,7 +172,7 @@ export default function register(dbOps) {
       return null;
     }
     const id = String(item.id || `${userId}:${kind}:${sourceKey}`);
-    upsertInboxItemStmt.run(
+    await db.run(UPSERT_INBOX_ITEM_SQL, [
       id,
       userId,
       kind,
@@ -173,12 +185,13 @@ export default function register(dbOps) {
       item.expiresAt == null ? null : Number(item.expiresAt),
       Number(item.createdAt) || now,
       now,
-    );
-    return mapInboxRow(getItemStmt.get(userId, id));
+    ]);
+    const row = await db.get(GET_ITEM_SQL, [userId, id]);
+    return mapInboxRow(row);
   };
 
-  dbOps.updateInboxItem = function (userId, itemId, updates = {}) {
-    const current = getItemStmt.get(Number(userId), String(itemId || ""));
+  dbOps.updateInboxItem = async function (userId, itemId, updates = {}) {
+    const current = await db.get(GET_ITEM_SQL, [Number(userId), String(itemId || "")]);
     if (!current) return null;
     const nextRead = updates.isRead === undefined ? current.is_read : updates.isRead ? 1 : 0;
     const nextSaved = updates.isSaved === undefined ? current.is_saved : updates.isSaved ? 1 : 0;
@@ -187,12 +200,7 @@ export default function register(dbOps) {
     const nextAdded = updates.isAdded === undefined ? current.is_added : updates.isAdded ? 1 : 0;
     const nextDismissedUntil =
       updates.dismissedUntil === undefined ? current.dismissed_until : updates.dismissedUntil;
-    db.prepare(`
-      UPDATE inbox_items
-      SET is_read = ?, is_saved = ?, is_dismissed = ?, is_added = ?,
-          dismissed_until = ?, updated_at = ?
-      WHERE user_id = ? AND id = ?
-    `).run(
+    await db.run(UPDATE_INBOX_ITEM_SQL, [
       nextRead,
       nextSaved,
       nextDismissed,
@@ -201,16 +209,13 @@ export default function register(dbOps) {
       Date.now(),
       Number(userId),
       String(itemId),
-    );
-    return mapInboxRow(getItemStmt.get(Number(userId), String(itemId)));
+    ]);
+    const row = await db.get(GET_ITEM_SQL, [Number(userId), String(itemId)]);
+    return mapInboxRow(row);
   };
 
-  dbOps.markAllInboxItemsRead = function (userId) {
-    return db.prepare(`
-      UPDATE inbox_items
-      SET is_read = 1, updated_at = ?
-      WHERE user_id = ? AND is_dismissed = 0 AND is_read = 0
-    `).run(Date.now(), Number(userId));
+  dbOps.markAllInboxItemsRead = async function (userId) {
+    return await db.run(MARK_ALL_INBOX_ITEMS_READ_SQL, [Date.now(), Number(userId)]);
   };
 }
 

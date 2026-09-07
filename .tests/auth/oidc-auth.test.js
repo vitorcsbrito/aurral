@@ -12,7 +12,7 @@ import {
 const [isolatedState, { db }, dbHelpers, authModule, sessionModule, oidcModule] =
   await setupIsolatedBackend(
     "oidc-auth",
-    "backend/config/db-sqlite.js",
+    "backend/config/database.js",
     "backend/db/helpers/index.js",
     "backend/middleware/auth.js",
     "backend/config/session-helpers.js",
@@ -149,10 +149,10 @@ async function createPendingOidcLogin({ idTokenClaims = {}, userInfo = null, use
   };
 }
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
   resetOidcEnv();
-  dbOps.updateSettings({ onboardingComplete: false });
+  await dbOps.updateSettings({ onboardingComplete: false });
 });
 
 test.after(async () => {
@@ -190,21 +190,21 @@ test("OIDC role mapping uses admin users and groups claim", () => {
   assert.equal(resolveOidcRole("hank", { groups: ["users"] }), "admin");
 });
 
-test("ensureExternalUser JIT-creates and re-syncs role", () => {
-  const created = ensureExternalUser("oidc-user", "user");
+test("ensureExternalUser JIT-creates and re-syncs role", async () => {
+  const created = await ensureExternalUser("oidc-user", "user");
   assert.ok(created);
   assert.equal(created.username, "oidc-user");
   assert.equal(created.role, "user");
-  assert.equal(userOps.getAllUsers().length, 1);
+  assert.equal((await userOps.getAllUsers()).length, 1);
 
-  const promoted = ensureExternalUser("oidc-user", "admin");
+  const promoted = await ensureExternalUser("oidc-user", "admin");
   assert.equal(promoted.id, created.id);
   assert.equal(promoted.role, "admin");
-  assert.equal(userOps.getUserByUsername("oidc-user")?.role, "admin");
-  assert.equal(userOps.getAllUsers().length, 1);
+  assert.equal((await userOps.getUserByUsername("oidc-user"))?.role, "admin");
+  assert.equal((await userOps.getAllUsers()).length, 1);
 });
 
-test("OIDC enablement requires full config and marks auth required after onboarding", () => {
+test("OIDC enablement requires full config and marks auth required after onboarding", async () => {
   process.env.OIDC_ENABLED = "true";
   assert.equal(isOidcEnabled(), false);
   assert.equal(getOidcBootstrapInfo().oidcEnabled, false);
@@ -214,9 +214,9 @@ test("OIDC enablement requires full config and marks auth required after onboard
   assert.equal(isOidcAuthEnabled(), true);
   assert.equal(getOidcBootstrapInfo().oidcEnabled, true);
 
-  assert.equal(isAuthRequiredByConfig(), false);
-  completeOnboarding();
-  assert.equal(isAuthRequiredByConfig(), true);
+  assert.equal(await isAuthRequiredByConfig(), false);
+  await completeOnboarding();
+  assert.equal(await isAuthRequiredByConfig(), true);
 });
 
 test("OIDC bootstrap exposes logout URL when configured", () => {
@@ -227,12 +227,12 @@ test("OIDC bootstrap exposes logout URL when configured", () => {
   });
 });
 
-test("OIDC-provisioned users get normal Aurral sessions", () => {
-  completeOnboarding();
-  const user = ensureExternalUser("sso-erin", "user");
-  const session = createSession(user.id, "127.0.0.1", "test-agent");
+test("OIDC-provisioned users get normal Aurral sessions", async () => {
+  await completeOnboarding();
+  const user = await ensureExternalUser("sso-erin", "user");
+  const session = await createSession(user.id, "127.0.0.1", "test-agent");
   assert.ok(session?.token);
-  assert.equal(getSessionByToken(session.token)?.user?.username, "sso-erin");
+  assert.equal((await getSessionByToken(session.token))?.user?.username, "sso-erin");
 });
 
 test("OIDC callback issues a cookie-bound one-time session exchange", async () => {
@@ -245,21 +245,21 @@ test("OIDC callback issues a cookie-bound one-time session exchange", async () =
       ip: "127.0.0.1",
     });
     assert.ok(callback.code);
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sessions").get().count, 0);
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM sessions")).count, 0);
 
-    assert.throws(
+    await assert.rejects(
       () => exchangeOidcCallback(callback.code, { headers: { cookie: "aurral_oidc_transaction=wrong" } }),
       { status: 400, message: "OIDC login session expired" },
     );
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sessions").get().count, 0);
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM sessions")).count, 0);
 
-    const session = exchangeOidcCallback(callback.code, {
+    const session = await exchangeOidcCallback(callback.code, {
       headers: { cookie: pending.cookie, "user-agent": "test-agent" },
       ip: "127.0.0.1",
     });
     assert.ok(session.token);
-    assert.equal(getSessionByToken(session.token)?.user?.username, "callback-user");
-    assert.throws(
+    assert.equal((await getSessionByToken(session.token))?.user?.username, "callback-user");
+    await assert.rejects(
       () => exchangeOidcCallback(callback.code, { headers: { cookie: pending.cookie } }),
       { status: 400, message: "OIDC login session expired" },
     );
@@ -352,7 +352,7 @@ test("OIDC callback rejects an expired state without creating a session", async 
         }),
       { status: 400, message: "OIDC login session expired" },
     );
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sessions").get().count, 0);
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM sessions")).count, 0);
   } finally {
     clock.mock.restore();
     await pending.close();
@@ -372,7 +372,7 @@ test("OIDC callback rejects a mismatched state without creating a session", asyn
         }),
       { status: 400, message: "OIDC login session expired" },
     );
-    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sessions").get().count, 0);
+    assert.equal((await db.get("SELECT COUNT(*) AS count FROM sessions")).count, 0);
   } finally {
     await pending.close();
   }

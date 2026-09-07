@@ -188,7 +188,7 @@ export function schedulePlaylistMbidEnrichment(
   );
 }
 
-export function schedulePlaylistMbidEnrichmentForMissingPlaylists({
+export async function schedulePlaylistMbidEnrichmentForMissingPlaylists({
   reason = "sweep",
   reconcileArtistMbids = false,
 } = {}) {
@@ -218,10 +218,18 @@ export function schedulePlaylistMbidEnrichmentForMissingPlaylists({
     if (jobId != null) jobIds.push(jobId);
   }
   if (shouldReconcileArtistMbids) {
-    dbOps.setJSONSetting(
-      ARTIST_MBID_RECONCILIATION_KEY,
-      ARTIST_MBID_RECONCILIATION_VERSION,
-    );
+    // Await so a second call in the same startup sees the marker.
+    try {
+      await dbOps.setJSONSetting(
+        ARTIST_MBID_RECONCILIATION_KEY,
+        ARTIST_MBID_RECONCILIATION_VERSION,
+      );
+    } catch (error) {
+      console.warn(
+        "[PlaylistMbidEnrichment] Failed to persist reconciliation marker:",
+        error?.message || error,
+      );
+    }
   }
   return jobIds;
 }
@@ -289,7 +297,7 @@ export async function enrichSharedPlaylistMbids(
 
       let updatedPlaylist = currentPlaylist;
       if (playlistTracksUpdated > 0) {
-        updatedPlaylist = flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
+        updatedPlaylist = await flowPlaylistConfig.updateSharedPlaylist(safePlaylistId, {
           tracks: nextTracks,
         });
       }

@@ -38,15 +38,19 @@ export const EMPTY_CACHE = {
 
 let discoveryCache = { ...EMPTY_CACHE };
 
-const dbData = dbOps.getDiscoveryCache();
-if (
-  dbData.lastUpdated ||
-  dbData.recommendations?.length > 0 ||
-  dbData.globalTop?.length > 0 ||
-  dbData.topGenres?.length > 0 ||
-  dbData.fallbackGenres?.length > 0 ||
-  Object.keys(dbData.fallbackGenrePools || {}).length > 0
-) {
+const hydrateFromDb = (dbData) => {
+  if (
+    !(
+      dbData.lastUpdated ||
+      dbData.recommendations?.length > 0 ||
+      dbData.globalTop?.length > 0 ||
+      dbData.topGenres?.length > 0 ||
+      dbData.fallbackGenres?.length > 0 ||
+      Object.keys(dbData.fallbackGenrePools || {}).length > 0
+    )
+  ) {
+    return;
+  }
   discoveryCache = {
     recommendations: dbData.recommendations || [],
     globalTop: dbData.globalTop || [],
@@ -71,6 +75,13 @@ if (
     enrichmentProgressMessage: dbData.enrichmentProgressMessage || null,
     isUpdating: false,
   };
+};
+
+// Call after migrateDatabase(); routes read discoveryCache synchronously.
+export async function initDiscoveryPersistence() {
+  await dbOps.loadDiscoveryCacheMirror();
+  hydrateFromDb(dbOps.getDiscoveryCacheSync());
+  return discoveryCache;
 }
 
 export function resetDiscoveryModuleCache() {
@@ -83,11 +94,11 @@ export const getDiscoveryCache = (listenHistoryProfile = null) => {
       ? String(listenHistoryProfile).trim() || null
       : getListenHistoryCacheNamespace(listenHistoryProfile);
   if (cacheNamespace) {
-    const userDbData = dbOps.getDiscoveryCache(cacheNamespace);
+    const userDbData = dbOps.getDiscoveryCacheSync(cacheNamespace);
     const hasUserRecommendations = userDbData.recommendations?.length > 0;
     const hasUserBasedOn = userDbData.basedOn?.length > 0;
     if (hasUserRecommendations || hasUserBasedOn) {
-      const globalDbData = dbOps.getDiscoveryCache();
+      const globalDbData = dbOps.getDiscoveryCacheSync();
       const recommendations = hasUserRecommendations
         ? userDbData.recommendations
         : globalDbData.recommendations || [];
@@ -158,7 +169,7 @@ export const getDiscoveryCache = (listenHistoryProfile = null) => {
 };
 
 export const getUserDiscoveryCacheStaleness = (cacheNamespace) => {
-  const data = dbOps.getDiscoveryCache(cacheNamespace);
+  const data = dbOps.getDiscoveryCacheSync(cacheNamespace);
   if (!data.lastUpdated) return Infinity;
   return Date.now() - new Date(data.lastUpdated).getTime();
 };

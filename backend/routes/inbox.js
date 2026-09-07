@@ -94,7 +94,7 @@ router.post("/refresh", requireAuth, async (req, res) => {
       ipAddress: req.ip || req.headers["x-forwarded-for"] || "",
     });
     lastManualRefresh.set(userId, now);
-    const result = getInboxForUser(userId, { limit: 50 });
+    const result = await getInboxForUser(userId, { limit: 50 });
     return res.status(202).json({
       ...result,
       accepted: refresh.queued,
@@ -107,14 +107,14 @@ router.post("/refresh", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/read-all", requireAuth, (req, res) => {
-  const unreadCount = markAllInboxItemsRead(getUserId(req));
+router.post("/read-all", requireAuth, async (req, res) => {
+  const unreadCount = await markAllInboxItemsRead(getUserId(req));
   res.json({ unreadCount });
 });
 
 router.patch("/:id", requireAuth, async (req, res) => {
   const userId = getUserId(req);
-  const item = dbOps.getInboxItem(userId, req.params.id);
+  const item = await dbOps.getInboxItem(userId, req.params.id);
   if (!item) return res.status(404).json({ error: "Inbox item not found" });
 
   const action = String(req.body?.action || "").trim().toLowerCase();
@@ -125,18 +125,18 @@ router.patch("/:id", requireAuth, async (req, res) => {
       if (result?.error) {
         return res.status(503).json({ error: result.error });
       }
-      const updated = updateInboxItem(userId, item.id, {
+      const updated = await updateInboxItem(userId, item.id, {
         isAdded: true,
         isRead: true,
       });
       return res.json({ item: updated });
     }
     if (action === "read") {
-      return res.json({ item: updateInboxItem(userId, item.id, { isRead: true }) });
+      return res.json({ item: await updateInboxItem(userId, item.id, { isRead: true }) });
     }
     if (action === "save" || action === "unsave") {
       return res.json({
-        item: updateInboxItem(userId, item.id, {
+        item: await updateInboxItem(userId, item.id, {
           isSaved: action === "save",
           isRead: true,
         }),
@@ -144,7 +144,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
     }
     if (action === "dismiss") {
       return res.json({
-        item: updateInboxItem(userId, item.id, {
+        item: await updateInboxItem(userId, item.id, {
           isDismissed: true,
           isRead: true,
           dismissedUntil:

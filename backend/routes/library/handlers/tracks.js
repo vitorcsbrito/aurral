@@ -96,18 +96,18 @@ export function registerTracks(router) {
 
       if (req.query.readPath === "canonical") {
         let canonical = albumId
-          ? getCanonicalLibraryReadModelForAlbumIds({
+          ? await getCanonicalLibraryReadModelForAlbumIds({
               source: req.query.source || "all",
               availableOnly: true,
               ids: [albumId],
             })
-          : getCanonicalLibraryReadModelForAlbumReferences({
+          : await getCanonicalLibraryReadModelForAlbumReferences({
               source: req.query.source || "all",
               availableOnly: true,
               references: releaseGroupMbid ? [releaseGroupMbid] : [],
             });
         if (albumId && canonical.albums.length === 0 && releaseGroupMbid) {
-          canonical = getCanonicalLibraryReadModelForAlbumReferences({
+          canonical = await getCanonicalLibraryReadModelForAlbumReferences({
             source: req.query.source || "all",
             availableOnly: true,
             references: [releaseGroupMbid],
@@ -243,11 +243,11 @@ export function registerTracks(router) {
   });
 
   router.get("/canonical-stream/:albumId/:trackId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const filePath = resolveCanonicalTrackPath(req.params.albumId, req.params.trackId);
+    const filePath = await resolveCanonicalTrackPath(req.params.albumId, req.params.trackId);
     if (!filePath) return res.status(404).json({ error: "Track file missing" });
     try {
       if (!(await streamAudioFile(req, res, filePath)) && !res.headersSent) {
@@ -262,7 +262,7 @@ export function registerTracks(router) {
   });
 
   router.get("/file-stream/:albumId/:trackId", noCache, async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 

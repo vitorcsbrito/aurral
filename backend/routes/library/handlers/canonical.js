@@ -81,34 +81,46 @@ export function toPublicLibraryPage(page, favoriteKeys = null) {
 }
 
 export function registerCanonical(router) {
-  router.post("/refresh", requireAuth, (_req, res) => {
-    const jobId = scheduleLibraryScan({ force: true });
-    res.status(202).json({
-      queued: true,
-      jobId,
-      status: getLibraryScanStatus(jobId),
-    });
-  });
-
-  router.get("/refresh", requireAuth, noCache, (_req, res) => {
-    const jobId = getScheduledLibraryScanJobId();
-    return res.json({
-      jobId,
-      status: jobId == null ? null : getLibraryScanStatus(jobId),
-    });
-  });
-
-  router.get("/refresh/:jobId", requireAuth, noCache, (req, res) => {
-    const status = getLibraryScanStatus(req.params.jobId);
-    if (!status || status.status === "unknown") {
-      return res.status(404).json({ error: "Library scan not found" });
-    }
-    return res.json(status);
-  });
-
-  router.get("/canonical", noCache, (req, res) => {
+  router.post("/refresh", requireAuth, async (_req, res, next) => {
     try {
-      const favoriteKeys = req.user ? getStarredIdentityKeys(req.user) : null;
+      const jobId = await scheduleLibraryScan({ force: true });
+      res.status(202).json({
+        queued: true,
+        jobId,
+        status: await getLibraryScanStatus(jobId),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/refresh", requireAuth, noCache, async (_req, res, next) => {
+    try {
+      const jobId = getScheduledLibraryScanJobId();
+      return res.json({
+        jobId,
+        status: jobId == null ? null : await getLibraryScanStatus(jobId),
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get("/refresh/:jobId", requireAuth, noCache, async (req, res, next) => {
+    try {
+      const status = await getLibraryScanStatus(req.params.jobId);
+      if (!status || status.status === "unknown") {
+        return res.status(404).json({ error: "Library scan not found" });
+      }
+      return res.json(status);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get("/canonical", noCache, async (req, res) => {
+    try {
+      const favoriteKeys = req.user ? await getStarredIdentityKeys(req.user) : null;
       const kind = typeof req.query.kind === "string" ? req.query.kind.trim() : "";
       const requestedPageSize = typeof req.query.pageSize === "string"
         ? Number(req.query.pageSize)
@@ -123,7 +135,7 @@ export function registerCanonical(router) {
           error: "kind and pageSize (1-100) are required",
         });
       }
-      return res.json(toPublicLibraryPage(getCanonicalLibraryPage({
+      return res.json(toPublicLibraryPage(await getCanonicalLibraryPage({
         source: req.query.source,
         availableOnly: req.query.availableOnly === "true",
         kind,
@@ -150,12 +162,12 @@ export function registerCanonical(router) {
     }
   });
 
-  router.get("/favorites", requireAuth, noCache, (req, res) => {
-    const { starred, library } = getStarredWithLibrary(req.user);
+  router.get("/favorites", requireAuth, noCache, async (req, res) => {
+    const { starred, library } = await getStarredWithLibrary(req.user);
     res.json({ ...starred, library: toPublicLibrary(library) });
   });
 
-  router.post("/favorites", requireAuth, noCache, (req, res) => {
+  router.post("/favorites", requireAuth, noCache, async (req, res) => {
     const ids = Array.isArray(req.body?.ids)
       ? req.body.ids.map((id) => String(id || "").trim()).filter(Boolean)
       : [];
@@ -167,15 +179,15 @@ export function registerCanonical(router) {
 
     if (req.body.starred) {
       const canonicalIds = ids.filter((id) => /^(artist|album|song):.+/.test(id));
-      const validTargets = getCanonicalFavoriteTargetKeys(canonicalIds);
+      const validTargets = await getCanonicalFavoriteTargetKeys(canonicalIds);
       if (canonicalIds.some((id) => !validTargets.has(id))) {
         return res.status(400).json({ error: "Invalid favorite target" });
       }
     }
 
     const changed = req.body.starred
-      ? starMany(req.user, ids, { skipCanonicalValidation: true })
-      : unstarMany(req.user, ids);
+      ? await starMany(req.user, ids, { skipCanonicalValidation: true })
+      : await unstarMany(req.user, ids);
     if (!changed) {
       return res.status(400).json({ error: "Invalid favorite target" });
     }

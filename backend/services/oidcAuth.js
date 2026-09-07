@@ -254,7 +254,7 @@ export async function handleOidcCallback(req) {
   }
 
   const role = resolveOidcRole(username, claims);
-  const user = ensureExternalUser(username, role);
+  const user = await ensureExternalUser(username, role);
   if (!user?.id || user.id < 0) {
     throw Object.assign(new Error("Failed to provision OIDC user"), { status: 500 });
   }
@@ -272,7 +272,7 @@ export async function handleOidcCallback(req) {
   };
 }
 
-export function exchangeOidcCallback(code, req) {
+export async function exchangeOidcCallback(code, req) {
   if (!isOidcEnabled()) {
     throw Object.assign(new Error("OIDC is not enabled"), { status: 404 });
   }
@@ -286,7 +286,7 @@ export function exchangeOidcCallback(code, req) {
   }
 
   pendingExchanges.delete(exchangeCode);
-  const session = createSession(pending.user.id, req.ip || null, req.headers["user-agent"] || null);
+  const session = await createSession(pending.user.id, req.ip || null, req.headers["user-agent"] || null);
   return {
     token: session.token,
     expiresAt: session.expiresAt,

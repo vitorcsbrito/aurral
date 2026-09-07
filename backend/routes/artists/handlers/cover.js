@@ -27,7 +27,7 @@ export function registerCover(router) {
         return res.json({ images: result.images || [] });
       }
 
-      const cachedImage = dbOps.getImage(mbid);
+      const cachedImage = await dbOps.getImage(mbid);
       if (
         !refresh &&
         cachedImage &&
@@ -85,7 +85,7 @@ export function registerCover(router) {
       } else {
         if (result.notFound) {
           logger.info("api", "No cover found, caching NOT_FOUND", { mbid });
-          dbOps.setImage(mbid, "NOT_FOUND");
+          await dbOps.setImage(mbid, "NOT_FOUND");
           res.set("Cache-Control", "public, max-age=3600");
         } else {
           logger.warn("api", "Cover lookup failed transiently, skipping NOT_FOUND cache", { mbid });

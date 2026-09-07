@@ -7,10 +7,9 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, playlistConfigModule, flowHandlerUtils] =
+const [isolatedState, { dbOps }, playlistConfigModule, flowHandlerUtils] =
   await setupIsolatedBackend(
     "playlist-config",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/weeklyFlow/weeklyFlowPlaylistConfig.js",
     "backend/routes/weeklyFlow/handlers/utils.js",
@@ -18,9 +17,9 @@ const [isolatedState, { db }, { dbOps }, playlistConfigModule, flowHandlerUtils]
 const { flowPlaylistConfig, normalizeImportSource, tracksShareMembership } = playlistConfigModule;
 const { validateFlowPayload } = flowHandlerUtils;
 
-test.beforeEach(() => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+test.beforeEach(async () => {
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: {},
     onboardingComplete: true,
     flows: [],
@@ -32,8 +31,8 @@ test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("creates flows with normalized scheduling and enforces unique names", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("creates flows with normalized scheduling and enforces unique names", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Late Night",
     size: 25,
     mix: { discover: 60, mix: 25, trending: 15 },
@@ -49,7 +48,7 @@ test("creates flows with normalized scheduling and enforces unique names", () =>
   assert.equal(flow.yearFrom, null);
   assert.equal(flow.yearTo, null);
 
-  assert.throws(
+  await assert.rejects(
     () =>
       flowPlaylistConfig.createFlow({
         name: "late night",
@@ -58,32 +57,32 @@ test("creates flows with normalized scheduling and enforces unique names", () =>
   );
 });
 
-test("normalizes invalid playlist owners to null", () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Unowned Flow", ownerUserId: 0 });
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("normalizes invalid playlist owners to null", async () => {
+  const flow = await flowPlaylistConfig.createFlow({ name: "Unowned Flow", ownerUserId: 0 });
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Unowned Playlist",
     ownerUserId: "0",
   });
-  const fractional = flowPlaylistConfig.createFlow({
+  const fractional = await flowPlaylistConfig.createFlow({
     name: "Fractional Owner",
     ownerUserId: 7.9,
   });
-  const unsafe = flowPlaylistConfig.createFlow({
+  const unsafe = await flowPlaylistConfig.createFlow({
     name: "Unsafe Owner",
     ownerUserId: Number.MAX_SAFE_INTEGER + 1,
   });
-  const unowned = flowPlaylistConfig.createFlow({ name: "Invalid Owner Conflict" });
-  const unownedPlaylist = flowPlaylistConfig.createSharedPlaylist({
+  const unowned = await flowPlaylistConfig.createFlow({ name: "Invalid Owner Conflict" });
+  const unownedPlaylist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Invalid Playlist Owner Conflict",
   });
-  const owned = flowPlaylistConfig.createFlow({ name: "Owned Flow", ownerUserId: 7 });
+  const owned = await flowPlaylistConfig.createFlow({ name: "Owned Flow", ownerUserId: 7 });
 
   assert.equal(flow.ownerUserId, null);
   assert.equal(playlist.ownerUserId, null);
   assert.equal(fractional.ownerUserId, null);
   assert.equal(unsafe.ownerUserId, null);
   assert.equal(owned.ownerUserId, 7);
-  assert.throws(
+  await assert.rejects(
     () =>
       flowPlaylistConfig.createFlow({
         name: "Invalid Owner Conflict",
@@ -91,7 +90,7 @@ test("normalizes invalid playlist owners to null", () => {
       }),
     /already exists/,
   );
-  assert.throws(
+  await assert.rejects(
     () =>
       flowPlaylistConfig.createSharedPlaylist({
         name: "Invalid Playlist Owner Conflict",
@@ -100,24 +99,24 @@ test("normalizes invalid playlist owners to null", () => {
     /already exists/,
   );
 
-  flowPlaylistConfig.deleteFlow(flow.id);
-  flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
-  flowPlaylistConfig.deleteFlow(fractional.id);
-  flowPlaylistConfig.deleteFlow(unsafe.id);
-  flowPlaylistConfig.deleteFlow(unowned.id);
-  flowPlaylistConfig.deleteSharedPlaylist(unownedPlaylist.id);
-  flowPlaylistConfig.deleteFlow(owned.id);
+  await flowPlaylistConfig.deleteFlow(flow.id);
+  await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+  await flowPlaylistConfig.deleteFlow(fractional.id);
+  await flowPlaylistConfig.deleteFlow(unsafe.id);
+  await flowPlaylistConfig.deleteFlow(unowned.id);
+  await flowPlaylistConfig.deleteSharedPlaylist(unownedPlaylist.id);
+  await flowPlaylistConfig.deleteFlow(owned.id);
 });
 
-test("defaults listening history on and persists a flow opt-out", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("defaults listening history on and persists a flow opt-out", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "No History",
     size: 20,
   });
 
   assert.equal(flow.recordHistory, true);
 
-  const updated = flowPlaylistConfig.updateFlow(flow.id, {
+  const updated = await flowPlaylistConfig.updateFlow(flow.id, {
     recordHistory: false,
   });
 
@@ -125,8 +124,8 @@ test("defaults listening history on and persists a flow opt-out", () => {
   assert.equal(flowPlaylistConfig.getFlow(flow.id)?.recordHistory, false);
 });
 
-test("rejects non-boolean listening history payloads", () => {
-  dbOps.updateSettings({ integrations: { lastfm: { apiKey: "test" } } });
+test("rejects non-boolean listening history payloads", async () => {
+  await dbOps.updateSettings({ integrations: { lastfm: { apiKey: "test" } } });
   const payload = {
     name: "Validated History",
     size: 20,
@@ -142,8 +141,8 @@ test("rejects non-boolean listening history payloads", () => {
   assert.equal(validateFlowPayload(payload), null);
 });
 
-test("stores and swaps optional release year range", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("stores and swaps optional release year range", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Eighties",
     size: 20,
     yearFrom: 1989,
@@ -152,7 +151,7 @@ test("stores and swaps optional release year range", () => {
   assert.equal(flow.yearFrom, 1980);
   assert.equal(flow.yearTo, 1989);
 
-  const updated = flowPlaylistConfig.updateFlow(flow.id, {
+  const updated = await flowPlaylistConfig.updateFlow(flow.id, {
     yearFrom: 2020,
     yearTo: null,
   });
@@ -160,67 +159,67 @@ test("stores and swaps optional release year range", () => {
   assert.equal(updated?.yearTo, null);
 });
 
-test("partial year updates do not silently swap the untouched bound", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("partial year updates do not silently swap the untouched bound", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Nineties",
     size: 20,
     yearFrom: 1980,
     yearTo: 1989,
   });
 
-  const raisedFrom = flowPlaylistConfig.updateFlow(flow.id, {
+  const raisedFrom = await flowPlaylistConfig.updateFlow(flow.id, {
     yearFrom: 2020,
   });
   assert.equal(raisedFrom?.yearFrom, 2020);
   assert.equal(raisedFrom?.yearTo, null);
 
-  const loweredTo = flowPlaylistConfig.updateFlow(flow.id, {
+  const loweredTo = await flowPlaylistConfig.updateFlow(flow.id, {
     yearFrom: 1980,
     yearTo: 1989,
   });
   assert.equal(loweredTo?.yearFrom, 1980);
   assert.equal(loweredTo?.yearTo, 1989);
 
-  const earlyTo = flowPlaylistConfig.updateFlow(flow.id, {
+  const earlyTo = await flowPlaylistConfig.updateFlow(flow.id, {
     yearTo: 1970,
   });
   assert.equal(earlyTo?.yearFrom, null);
   assert.equal(earlyTo?.yearTo, 1970);
 });
 
-test("rejects flow and shared playlist names that collide across types", () => {
-  const flow = flowPlaylistConfig.createFlow({ name: "Rock" });
-  assert.throws(
+test("rejects flow and shared playlist names that collide across types", async () => {
+  const flow = await flowPlaylistConfig.createFlow({ name: "Rock" });
+  await assert.rejects(
     () => flowPlaylistConfig.createSharedPlaylist({ name: "rock" }),
     /already exists/,
   );
 
-  const playlist = flowPlaylistConfig.createSharedPlaylist({ name: "Jazz" });
-  assert.throws(
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({ name: "Jazz" });
+  await assert.rejects(
     () => flowPlaylistConfig.createFlow({ name: "Jazz" }),
     /already exists/,
   );
 
-  flowPlaylistConfig.deleteFlow(flow.id);
-  flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+  await flowPlaylistConfig.deleteFlow(flow.id);
+  await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
 });
 
-test("records flow last run time", () => {
-  const flow = flowPlaylistConfig.createFlow({
+test("records flow last run time", async () => {
+  const flow = await flowPlaylistConfig.createFlow({
     name: "Morning",
     size: 20,
   });
   const lastRunAt = 1710000000000;
 
-  const updated = flowPlaylistConfig.markLastRunAt(flow.id, lastRunAt);
+  const updated = await flowPlaylistConfig.markLastRunAt(flow.id, lastRunAt);
   const stored = flowPlaylistConfig.getFlow(flow.id);
 
   assert.equal(updated?.lastRunAt, lastRunAt);
   assert.equal(stored?.lastRunAt, lastRunAt);
 });
 
-test("stores full shared playlists but exposes trackless summaries for hot paths", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("stores full shared playlists but exposes trackless summaries for hot paths", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Road Trip",
     sourceName: "Discover Weekly",
     sourceFlowId: "flow-123",
@@ -258,8 +257,8 @@ test("stores full shared playlists but exposes trackless summaries for hot paths
   assert.equal(summaries[0].sourceName, "Discover Weekly");
 });
 
-test("supports empty manual playlists", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("supports empty manual playlists", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Empty Queue",
   });
 
@@ -284,8 +283,8 @@ test("supports empty manual playlists", () => {
   assert.equal(summary?.trackCount, 0);
 });
 
-test("updates shared playlists and keeps summaries in sync", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("updates shared playlists and keeps summaries in sync", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Gym Mix",
     tracks: [
       { artistName: "A", trackName: "One" },
@@ -293,7 +292,7 @@ test("updates shared playlists and keeps summaries in sync", () => {
     ],
   });
 
-  const updated = flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
+  const updated = await flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
     name: "Gym Mix Updated",
     tracks: [{ artistName: "C", trackName: "Three" }],
   });
@@ -347,8 +346,8 @@ test("rejects unsupported playlist import providers", () => {
   );
 });
 
-test("preserves rich track metadata when shared playlists are updated", () => {
-  const playlist = flowPlaylistConfig.createSharedPlaylist({
+test("preserves rich track metadata when shared playlists are updated", async () => {
+  const playlist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Metadata Mix",
     tracks: [
       {
@@ -365,7 +364,7 @@ test("preserves rich track metadata when shared playlists are updated", () => {
     ],
   });
 
-  const updated = flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
+  const updated = await flowPlaylistConfig.updateSharedPlaylist(playlist.id, {
     tracks: [
       {
         artistName: "Artist B",

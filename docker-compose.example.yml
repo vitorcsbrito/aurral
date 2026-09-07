@@ -7,12 +7,31 @@ services:
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - DATABASE_URL=postgres://aurral:${POSTGRES_PASSWORD:-aurral}@postgres:5432/aurral
     # Hard ceiling for the container; the image also caps the Node heap at
     # 2 GB (NODE_OPTIONS). Raise both together for very large libraries.
     mem_limit: 3g
     volumes:
       - ${MEDIA_ROOT:-/srv/media}:/data
       - ./config:/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=aurral
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aurral}
+      - POSTGRES_DB=aurral
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurral -d aurral"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   lidarr:
     image: lscr.io/linuxserver/lidarr:nightly

@@ -164,7 +164,7 @@ export function registerLidarr(router) {
       try {
         const results = await applyCommunityGuide({ url: config.url, apiKey: config.apiKey });
         const currentSettings = dbOps.getSettings();
-        dbOps.updateSettings({
+        await dbOps.updateSettings({
           ...currentSettings,
           integrations: {
             ...currentSettings.integrations,

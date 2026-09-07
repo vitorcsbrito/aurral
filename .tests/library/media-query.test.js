@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { scanMusicRoot } from "../../backend/services/libraryFileScanner.js";
 import { indexLidarrLibrary } from "../../backend/services/libraryLidarrIndexer.js";
 import {
@@ -34,6 +35,18 @@ import {
   upsertLibraryTrack,
 } from "../../backend/services/libraryMediaStore.js";
 
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
+
+const explainPlan = async (sql, params) =>
+  (await db.transaction(async () => {
+    // On a fixture-sized table a seq scan always wins on cost.
+    await db.exec("SET LOCAL enable_seqscan = off");
+    return db.all(`EXPLAIN ${sql}`, params);
+  })).map((row) => row["QUERY PLAN"]).join("\n");
+
 const metadata = {
   common: {
     albumartist: "Query Fixture",
@@ -56,46 +69,46 @@ async function createAudioFile(root, relativePath) {
   return filePath;
 }
 
-test("getCanonicalTrackPath keeps shared tracks scoped to the requested album", () => {
+test("getCanonicalTrackPath keeps shared tracks scoped to the requested album", async () => {
   const key = `query-track-path-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     name: "Query Fixture",
   });
-  const firstAlbum = upsertLibraryAlbum({
+  const firstAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:album:first`,
     artistId: artist.id,
     title: "First Album",
   });
-  const secondAlbum = upsertLibraryAlbum({
+  const secondAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:album:second`,
     artistId: artist.id,
     title: "Second Album",
   });
-  const fallbackAlbum = upsertLibraryAlbum({
+  const fallbackAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:album:fallback`,
     artistId: artist.id,
     title: "Fallback Album",
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: key,
     mbid: `${key}-mbid`,
     title: "Direct Path",
     artistName: "Query Fixture",
   });
-  linkLibraryAlbumTrack({ albumId: firstAlbum.id, trackId: track.id });
-  linkLibraryAlbumTrack({ albumId: secondAlbum.id, trackId: track.id });
-  linkLibraryAlbumTrack({ albumId: fallbackAlbum.id, trackId: track.id });
+  await linkLibraryAlbumTrack({ albumId: firstAlbum.id, trackId: track.id });
+  await linkLibraryAlbumTrack({ albumId: secondAlbum.id, trackId: track.id });
+  await linkLibraryAlbumTrack({ albumId: fallbackAlbum.id, trackId: track.id });
   const firstPath = `/tmp/${key}-first.flac`;
   const secondPath = `/tmp/${key}-second.flac`;
   const fallbackPath = `/tmp/${key}-fallback.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: firstAlbum.id,
     source: "lidarr",
     path: firstPath,
   });
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: secondAlbum.id,
     source: "lidarr",
@@ -103,56 +116,56 @@ test("getCanonicalTrackPath keeps shared tracks scoped to the requested album", 
   });
 
   try {
-    assert.equal(getCanonicalTrackPath(firstAlbum.id, track.id), firstPath);
-    assert.equal(getCanonicalTrackPath(secondAlbum.identity_key, track.mbid), secondPath);
-    assert.equal(getCanonicalTrackPath(fallbackAlbum.id, track.id), null);
-    upsertLibraryMediaFile({ trackId: track.id, source: "aurral", path: fallbackPath });
-    assert.equal(getCanonicalTrackPath(fallbackAlbum.id, track.id), fallbackPath);
-    assert.equal(getCanonicalTrackPath(firstAlbum.id, track.id), firstPath);
+    assert.equal(await getCanonicalTrackPath(firstAlbum.id, track.id), firstPath);
+    assert.equal(await getCanonicalTrackPath(secondAlbum.identity_key, track.mbid), secondPath);
+    assert.equal(await getCanonicalTrackPath(fallbackAlbum.id, track.id), null);
+    await upsertLibraryMediaFile({ trackId: track.id, source: "aurral", path: fallbackPath });
+    assert.equal(await getCanonicalTrackPath(fallbackAlbum.id, track.id), fallbackPath);
+    assert.equal(await getCanonicalTrackPath(firstAlbum.id, track.id), firstPath);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE track_id = ?").run(track.id);
-    db.prepare("DELETE FROM library_album_tracks WHERE track_id = ?").run(track.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE artist_id = ?").run(artist.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE track_id = ?", [track.id]);
+    await db.run("DELETE FROM library_album_tracks WHERE track_id = ?", [track.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE artist_id = ?", [artist.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
   }
 });
 
-test("focused track, ownership, count, and sample queries stay bounded", () => {
+test("focused track, ownership, count, and sample queries stay bounded", async () => {
   const key = `query-focused-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     name: "Focused Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     artistId: artist.id,
     title: "Focused Album",
   });
-  const ownedTrack = upsertLibraryTrack({
+  const ownedTrack = await upsertLibraryTrack({
     identityKey: `${key}:owned`,
     mbid: `${key}-owned-mbid`,
     title: "Focused Track",
     artistName: artist.name,
   });
-  const unavailableTrack = upsertLibraryTrack({
+  const unavailableTrack = await upsertLibraryTrack({
     identityKey: `${key}:unavailable`,
     mbid: `${key}-unavailable-mbid`,
     title: "Unavailable Track",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: unavailableTrack.id, trackNumber: 2 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: unavailableTrack.id, trackNumber: 2 });
   const ownedPath = `/tmp/${key}/owned.flac`;
   const unavailablePath = `/tmp/${key}/unavailable.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: ownedTrack.id,
     albumId: album.id,
     source: "aurral",
     path: ownedPath,
     available: true,
   });
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: unavailableTrack.id,
     albumId: album.id,
     source: "aurral",
@@ -161,7 +174,7 @@ test("focused track, ownership, count, and sample queries stay bounded", () => {
   });
 
   try {
-    const focused = getCanonicalTrack({
+    const focused = await getCanonicalTrack({
       trackId: ownedTrack.id,
       source: "aurral",
       availableOnly: true,
@@ -171,7 +184,7 @@ test("focused track, ownership, count, and sample queries stay bounded", () => {
     assert.deepEqual(focused.albums.map((entry) => entry.id), [album.id]);
     assert.deepEqual(focused.tracks[0].files.map((file) => file.path), [ownedPath]);
 
-    const stale = getCanonicalTrack({
+    const stale = await getCanonicalTrack({
       trackId: unavailableTrack.id,
       source: "aurral",
       availableOnly: false,
@@ -180,31 +193,31 @@ test("focused track, ownership, count, and sample queries stay bounded", () => {
     assert.equal(stale.tracks[0].files[0].available, false);
 
     assert.equal(
-      getCanonicalTrackOwnership({ trackMbid: ownedTrack.mbid }),
+      await getCanonicalTrackOwnership({ trackMbid: ownedTrack.mbid }),
       true,
     );
     assert.equal(
-      getCanonicalTrackOwnership({ artistName: artist.name, trackName: ownedTrack.title }),
+      await getCanonicalTrackOwnership({ artistName: artist.name, trackName: ownedTrack.title }),
       true,
     );
     assert.equal(
-      getCanonicalTrackOwnership({ trackMbid: unavailableTrack.mbid }),
+      await getCanonicalTrackOwnership({ trackMbid: unavailableTrack.mbid }),
       false,
     );
 
-    const countBefore = getCanonicalTrackCount({ source: "aurral" });
-    const availableCountBefore = getCanonicalTrackCount({ source: "aurral", availableOnly: true });
+    const countBefore = await getCanonicalTrackCount({ source: "aurral" });
+    const availableCountBefore = await getCanonicalTrackCount({ source: "aurral", availableOnly: true });
     assert.equal(countBefore >= 2, true);
     assert.equal(availableCountBefore >= 1, true);
-    const sample = getCanonicalTrackSample({ source: "aurral", availableOnly: true, limit: 1 });
+    const sample = await getCanonicalTrackSample({ source: "aurral", availableOnly: true, limit: 1 });
     assert.ok(sample.tracks.length <= 1);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path IN (?, ?)").run(ownedPath, unavailablePath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(ownedTrack.id, unavailableTrack.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    invalidateCanonicalLibraryCache();
+    await db.run("DELETE FROM library_media_files WHERE path IN (?, ?)", [ownedPath, unavailablePath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?)", [ownedTrack.id, unavailableTrack.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
@@ -240,8 +253,8 @@ test("getCanonicalLibrary merges sources and preserves normalized hierarchy", as
       },
     });
 
-    const all = getCanonicalLibrary();
-    assert.strictEqual(getCanonicalLibrary(), all);
+    const all = await getCanonicalLibrary();
+    assert.strictEqual(await getCanonicalLibrary(), all);
     assert.equal(all.artists.length, 1);
     assert.equal(all.albums.length, 1);
     assert.equal(all.tracks.length, 1);
@@ -251,25 +264,21 @@ test("getCanonicalLibrary merges sources and preserves normalized hierarchy", as
     assert.equal(all.artists[0].albumIds[0], all.albums[0].id);
     assert.equal(all.tracks[0].available, true);
 
-    const lidarr = getCanonicalLibrary({ source: "lidarr" });
+    const lidarr = await getCanonicalLibrary({ source: "lidarr" });
     assert.equal(lidarr.tracks.length, 1);
     assert.deepEqual(lidarr.tracks[0].sources, ["lidarr"]);
 
-    db.prepare("UPDATE library_media_files SET available = 0 WHERE source = ? AND path = ?").run(
-      "lidarr",
-      filePath,
-    );
-    const available = getCanonicalLibrary({ availableOnly: true });
+    await db.run("UPDATE library_media_files SET available = 0 WHERE source = ? AND path = ?", ["lidarr",
+      filePath]);
+    const available = await getCanonicalLibrary({ availableOnly: true });
     assert.equal(available.tracks.length, 1);
     assert.deepEqual(available.tracks[0].sources, [source]);
     assert.equal(available.tracks[0].files.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
-    db.prepare("DELETE FROM library_media_files WHERE source IN (?, ?) AND path = ?").run(
-      source,
+    await db.run("DELETE FROM library_media_files WHERE source IN (?, ?) AND path = ?", [source,
       "lidarr",
-      filePath,
-    );
+      filePath]);
   }
 });
 
@@ -280,90 +289,90 @@ test("getCanonicalLibrary deduplicates a file shared by multiple album relations
   try {
     filePath = await createAudioFile(root, "Artist/Album/01 Track.flac");
     await scanMusicRoot({ rootPath: root, source: "aurral", metadataReader: async () => metadata });
-    const first = getCanonicalLibrary({ source: "aurral" });
+    const first = await getCanonicalLibrary({ source: "aurral" });
     const track = first.tracks.find((entry) => entry.files.some((file) => file.path === filePath));
     const album = first.albums.find((entry) => entry.trackIds.includes(track.id));
-    const duplicateAlbum = upsertLibraryAlbum({
+    const duplicateAlbum = await upsertLibraryAlbum({
       identityKey: `duplicate-album:${process.pid}`,
       artistId: album.artistId,
       title: "Duplicate Relationship",
     });
     duplicateAlbumId = duplicateAlbum.id;
-    linkLibraryAlbumTrack({ albumId: duplicateAlbum.id, trackId: track.id, trackNumber: 1 });
+    await linkLibraryAlbumTrack({ albumId: duplicateAlbum.id, trackId: track.id, trackNumber: 1 });
 
-    const result = getCanonicalLibrary({ source: "aurral" });
+    const result = await getCanonicalLibrary({ source: "aurral" });
     const resultTrack = result.tracks.find((entry) => entry.files.some((file) => file.path === filePath));
     assert.equal(resultTrack.files.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
     if (duplicateAlbumId) {
-      db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(duplicateAlbumId);
-      db.prepare("DELETE FROM library_albums WHERE id = ?").run(duplicateAlbumId);
+      await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [duplicateAlbumId]);
+      await db.run("DELETE FROM library_albums WHERE id = ?", [duplicateAlbumId]);
     }
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run("aurral", filePath);
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", ["aurral", filePath]);
   }
 });
 
-test("getCanonicalLibrary rejects unknown source filters", () => {
-  assert.throws(() => getCanonicalLibrary({ source: "plex" }), /Unsupported library source/);
+test("getCanonicalLibrary rejects unknown source filters", async () => {
+  await assert.rejects(() => getCanonicalLibrary({ source: "plex" }), /Unsupported library source/);
 });
 
-test("scoped canonical reads keep ownership lookups off unrelated library records", () => {
+test("scoped canonical reads keep ownership lookups off unrelated library records", async () => {
   const key = `query-scoped-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     mbid: `${key}-artist`,
     name: "Scoped Artist",
   });
-  const unrelatedArtist = upsertLibraryArtist({
+  const unrelatedArtist = await upsertLibraryArtist({
     identityKey: `${key}:unrelated-artist`,
     mbid: `${key}-unrelated-artist`,
     name: "Unrelated Artist",
   });
   const releaseGroupMbid = `${key}-release-group`;
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     mbid: `${key}-album`,
     releaseGroupMbid,
     artistId: artist.id,
     title: "Scoped Album",
   });
-  const unrelatedAlbum = upsertLibraryAlbum({
+  const unrelatedAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:unrelated-album`,
     mbid: `${key}-unrelated-album`,
     artistId: unrelatedArtist.id,
     title: "Unrelated Album",
   });
-  const ownedTrack = upsertLibraryTrack({
+  const ownedTrack = await upsertLibraryTrack({
     identityKey: `${key}:owned-track`,
     mbid: `${key}-owned-track`,
     title: "Owned Track",
     artistName: artist.name,
   });
-  const missingTrack = upsertLibraryTrack({
+  const missingTrack = await upsertLibraryTrack({
     identityKey: `${key}:missing-track`,
     mbid: `${key}-missing-track`,
     title: "Missing Track",
     artistName: artist.name,
   });
-  const unrelatedTrack = upsertLibraryTrack({
+  const unrelatedTrack = await upsertLibraryTrack({
     identityKey: `${key}:unrelated-track`,
     mbid: `${key}-unrelated-track`,
     title: "Unrelated Track",
     artistName: unrelatedArtist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
-  linkLibraryAlbumTrack({ albumId: unrelatedAlbum.id, trackId: unrelatedTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
+  await linkLibraryAlbumTrack({ albumId: unrelatedAlbum.id, trackId: unrelatedTrack.id, trackNumber: 1 });
   const ownedPath = `/tmp/${key}/owned.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: ownedTrack.id,
     albumId: album.id,
     source: "aurral",
     path: ownedPath,
   });
   const unrelatedPath = `/tmp/${key}/unrelated.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: unrelatedTrack.id,
     albumId: unrelatedAlbum.id,
     source: "aurral",
@@ -372,11 +381,11 @@ test("scoped canonical reads keep ownership lookups off unrelated library record
 
   try {
     assert.deepEqual(
-      [...getCanonicalArtistMbids({ source: "all", mbids: [artist.mbid] })],
+      [...(await getCanonicalArtistMbids({ source: "all", mbids: [artist.mbid] }))],
       [artist.mbid],
     );
 
-    const artistLibrary = getCanonicalLibraryForArtists({
+    const artistLibrary = await getCanonicalLibraryForArtists({
       source: "all",
       availableOnly: false,
       mbids: [artist.mbid],
@@ -384,7 +393,7 @@ test("scoped canonical reads keep ownership lookups off unrelated library record
     assert.deepEqual(artistLibrary.artists.map((entry) => entry.mbid), [artist.mbid]);
     assert.deepEqual(artistLibrary.albums.map((entry) => entry.mbid), [album.mbid]);
 
-    const albumLibrary = getCanonicalLibraryForAlbumReferences({
+    const albumLibrary = await getCanonicalLibraryForAlbumReferences({
       source: "all",
       availableOnly: false,
       references: [releaseGroupMbid],
@@ -395,28 +404,22 @@ test("scoped canonical reads keep ownership lookups off unrelated library record
       [ownedTrack.mbid, missingTrack.mbid],
     );
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path IN (?, ?)").run(ownedPath, unrelatedPath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)").run(
-      album.id,
-      unrelatedAlbum.id,
-    );
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?, ?)").run(
-      ownedTrack.id,
+    await db.run("DELETE FROM library_media_files WHERE path IN (?, ?)", [ownedPath, unrelatedPath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)", [album.id,
+      unrelatedAlbum.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?, ?)", [ownedTrack.id,
       missingTrack.id,
-      unrelatedTrack.id,
-    );
-    db.prepare("DELETE FROM library_albums WHERE id IN (?, ?)").run(album.id, unrelatedAlbum.id);
-    db.prepare("DELETE FROM library_artists WHERE id IN (?, ?)").run(
-      artist.id,
-      unrelatedArtist.id,
-    );
-    invalidateCanonicalLibraryCache();
+      unrelatedTrack.id]);
+    await db.run("DELETE FROM library_albums WHERE id IN (?, ?)", [album.id, unrelatedAlbum.id]);
+    await db.run("DELETE FROM library_artists WHERE id IN (?, ?)", [artist.id,
+      unrelatedArtist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
-test("artist and album reference reads resolve through indexed entity lookups", (t) => {
+test("artist and album reference reads resolve through indexed entity lookups", async (t) => {
   const key = `query-plan-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     mbid: `${key}:artist-mbid`,
     name: "Query Plan Artist",
@@ -425,45 +428,48 @@ test("artist and album reference reads resolve through indexed entity lookups", 
       foreignArtistId: `${key}:foreign-artist-id`,
     },
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     mbid: `${key}:album-mbid`,
     releaseGroupMbid: `${key}:release-group`,
     artistId: artist.id,
     title: "Query Plan Album",
   });
-  const track = upsertLibraryTrack({ identityKey: `${key}:track`, title: "Plan Track" });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-  upsertLibraryMediaFile({
+  const track = await upsertLibraryTrack({ identityKey: `${key}:track`, title: "Plan Track" });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: album.id,
     source: "lidarr",
     path: `/tmp/${key}.flac`,
   });
   const prepared = [];
-  const prepare = db.prepare.bind(db);
-  const spy = t.mock.method(db, "prepare", (sql) => {
-    prepared.push(String(sql));
-    return prepare(sql);
+  const spies = ["all", "get"].map((method) => {
+    const original = db[method].bind(db);
+    return t.mock.method(db, method, (sql, params) => {
+      prepared.push(String(sql));
+      return original(sql, params);
+    });
   });
+  const restoreSpies = () => spies.forEach((spy) => spy.mock.restore());
 
   try {
     assert.deepEqual(
-      getCanonicalLibraryForArtistReferences({
+      (await getCanonicalLibraryForArtistReferences({
         references: [
           artist.mbid,
           `${key}:provider-id`,
           `${key}:foreign-artist-id`,
           "QUERY PLAN ARTIST",
         ],
-      }).artists.map(({ id }) => id),
+      })).artists.map(({ id }) => id),
       [artist.id],
     );
     assert.deepEqual(
-      getCanonicalLibraryForAlbumReferences({ references: [album.release_group_mbid] }).albums.map(({ id }) => id),
+      (await getCanonicalLibraryForAlbumReferences({ references: [album.release_group_mbid] })).albums.map(({ id }) => id),
       [album.id],
     );
-    spy.mock.restore();
+    restoreSpies();
 
     const lookups = prepared.filter((sql) =>
       /^SELECT id FROM library_(artists|albums)/.test(sql.trim()),
@@ -471,11 +477,9 @@ test("artist and album reference reads resolve through indexed entity lookups", 
     assert.equal(lookups.length, 2);
     for (const sql of lookups) {
       const parameterCount = (sql.match(/\?/g) || []).length;
-      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(
-        ...Array.from({ length: parameterCount }, () => `${key}:missing`),
-      );
-      assert.equal(plan.some(({ detail }) => /SCAN library_(artists|albums)/.test(detail)), false);
-      assert.equal(plan.some(({ detail }) => /INDEX/.test(detail)), true);
+      const plan = await explainPlan(sql, Array.from({ length: parameterCount }, () => `${key}:missing`));
+      assert.doesNotMatch(plan, /Seq Scan on library_(artists|albums)/);
+      assert.match(plan, /Index (Only )?Scan|Bitmap Index Scan/);
     }
     const hydration = prepared.filter((sql) =>
       sql.includes("track.id AS track_id") && sql.includes("FROM library_tracks AS track"),
@@ -484,62 +488,60 @@ test("artist and album reference reads resolve through indexed entity lookups", 
     assert.equal(hydration.every((sql) => /WHERE (artist|album)\.id IN/.test(sql)), true);
     for (const sql of hydration) {
       const parameterCount = (sql.match(/\?/g) || []).length;
-      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(
-        ...Array.from({ length: parameterCount }, () => artist.id),
-      );
-      assert.equal(plan.some(({ detail }) => /SCAN (album|album_track)/.test(detail)), false);
+      const plan = await explainPlan(sql, Array.from({ length: parameterCount }, () => artist.id));
+      assert.doesNotMatch(plan, /Seq Scan on \w+ (album|album_track)\b/);
     }
   } finally {
-    spy.mock.restore();
-    db.prepare("DELETE FROM library_media_files WHERE track_id = ?").run(track.id);
-    db.prepare("DELETE FROM library_album_tracks WHERE track_id = ?").run(track.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    restoreSpies();
+    await db.run("DELETE FROM library_media_files WHERE track_id = ?", [track.id]);
+    await db.run("DELETE FROM library_album_tracks WHERE track_id = ?", [track.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
   }
 });
 
-test("album-reference reads preserve identity keys and album-specific ownership", () => {
+test("album-reference reads preserve identity keys and album-specific ownership", async () => {
   const key = `query-album-ownership-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Shared Artist" });
-  const ownedAlbum = upsertLibraryAlbum({
+  const artist = await upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Shared Artist" });
+  const ownedAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:owned-album`,
     artistId: artist.id,
     title: "Owned Album",
   });
-  const missingAlbum = upsertLibraryAlbum({
+  const missingAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:missing-album`,
     artistId: artist.id,
     title: "Missing Album",
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${key}:track`,
     mbid: `${key}-track`,
     title: "Shared Track",
     artistName: artist.name,
   });
-  const missingAlbumTrack = upsertLibraryTrack({
+  const missingAlbumTrack = await upsertLibraryTrack({
     identityKey: `${key}:missing-album-track`,
     mbid: `${key}-missing-album-track`,
     title: "Owned Only By Missing Album",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: ownedAlbum.id, trackId: track.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: missingAlbum.id, trackId: track.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({
+  await linkLibraryAlbumTrack({ albumId: ownedAlbum.id, trackId: track.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: missingAlbum.id, trackId: track.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({
     albumId: missingAlbum.id,
     trackId: missingAlbumTrack.id,
     trackNumber: 2,
   });
   const ownedPath = `/tmp/${key}/owned.flac`;
   const missingAlbumPath = `/tmp/${key}/missing-album.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: ownedAlbum.id,
     source: "aurral",
     path: ownedPath,
   });
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: missingAlbumTrack.id,
     albumId: missingAlbum.id,
     source: "aurral",
@@ -547,7 +549,7 @@ test("album-reference reads preserve identity keys and album-specific ownership"
   });
 
   try {
-    const readModel = getCanonicalLibraryReadModelForAlbumReferences({
+    const readModel = await getCanonicalLibraryReadModelForAlbumReferences({
       source: "aurral",
       availableOnly: false,
       references: [ownedAlbum.identity_key, missingAlbum.identity_key],
@@ -564,8 +566,8 @@ test("album-reference reads preserve identity keys and album-specific ownership"
         .map((entry) => entry.title),
       ["Owned Only By Missing Album"],
     );
-    db.prepare("UPDATE library_media_files SET available = 0 WHERE path = ?").run(missingAlbumPath);
-    const available = getCanonicalLibraryReadModelForAlbumReferences({
+    await db.run("UPDATE library_media_files SET available = 0 WHERE path = ?", [missingAlbumPath]);
+    const available = await getCanonicalLibraryReadModelForAlbumReferences({
       source: "aurral",
       availableOnly: true,
       references: [missingAlbum.identity_key],
@@ -573,29 +575,21 @@ test("album-reference reads preserve identity keys and album-specific ownership"
     assert.deepEqual(available.albums, []);
     assert.deepEqual(available.tracks, []);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path IN (?, ?)").run(
-      ownedPath,
-      missingAlbumPath,
-    );
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)").run(
-      ownedAlbum.id,
-      missingAlbum.id,
-    );
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(
-      track.id,
-      missingAlbumTrack.id,
-    );
-    db.prepare("DELETE FROM library_albums WHERE id IN (?, ?)").run(
-      ownedAlbum.id,
-      missingAlbum.id,
-    );
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
-    invalidateCanonicalLibraryCache();
+    await db.run("DELETE FROM library_media_files WHERE path IN (?, ?)", [ownedPath,
+      missingAlbumPath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)", [ownedAlbum.id,
+      missingAlbum.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?)", [track.id,
+      missingAlbumTrack.id]);
+    await db.run("DELETE FROM library_albums WHERE id IN (?, ?)", [ownedAlbum.id,
+      missingAlbum.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
+    await invalidateCanonicalLibraryCache();
   }
 });
 
-test("album reads prefer an album-specific file over an earlier unscoped file", () => {
-  const readModel = buildCanonicalLibraryReadModel({
+test("album reads prefer an album-specific file over an earlier unscoped file", async () => {
+  const readModel = await buildCanonicalLibraryReadModel({
     artists: [{ id: 1, name: "Artist", albumIds: [2], sources: ["aurral"] }],
     albums: [{ id: 2, artistId: 1, title: "Album", trackIds: [3], sources: ["aurral"] }],
     tracks: [{
@@ -613,57 +607,53 @@ test("album reads prefer an album-specific file over an earlier unscoped file", 
   assert.equal(readModel.tracks[0].path, "/music/01-album.flac");
 });
 
-test("canonical newest ordering follows library arrival time", () => {
+test("canonical newest ordering follows library arrival time", async () => {
   const key = `query-newest-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Newest Fixture" });
-  const oldAlbum = upsertLibraryAlbum({
+  const artist = await upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Newest Fixture" });
+  const oldAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:old-album`,
     artistId: artist.id,
     title: "Old Album",
     releaseDate: "2020-01-01",
   });
-  const newAlbum = upsertLibraryAlbum({
+  const newAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:new-album`,
     artistId: artist.id,
     title: "Recently Added",
     releaseDate: "1990-01-01",
   });
-  const oldTrack = upsertLibraryTrack({
+  const oldTrack = await upsertLibraryTrack({
     identityKey: `${key}:old-track`,
     title: "Old Track",
     artistName: "Newest Fixture",
   });
-  const newTrack = upsertLibraryTrack({
+  const newTrack = await upsertLibraryTrack({
     identityKey: `${key}:new-track`,
     title: "New Track",
     artistName: "Newest Fixture",
   });
-  linkLibraryAlbumTrack({ albumId: oldAlbum.id, trackId: oldTrack.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: newAlbum.id, trackId: newTrack.id, trackNumber: 1 });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: oldAlbum.id, trackId: oldTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: newAlbum.id, trackId: newTrack.id, trackNumber: 1 });
+  await upsertLibraryMediaFile({
     trackId: oldTrack.id,
     albumId: oldAlbum.id,
     source: "aurral",
     path: `/tmp/${key}/old.flac`,
   });
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: newTrack.id,
     albumId: newAlbum.id,
     source: "aurral",
     path: `/tmp/${key}/new.flac`,
   });
   const now = Date.now();
-  db.prepare("UPDATE library_media_files SET created_at = ? WHERE path = ?").run(
-    now - 60_000,
-    `/tmp/${key}/old.flac`,
-  );
-  db.prepare("UPDATE library_media_files SET created_at = ? WHERE path = ?").run(
-    now,
-    `/tmp/${key}/new.flac`,
-  );
+  await db.run("UPDATE library_media_files SET created_at = ? WHERE path = ?", [now - 60_000,
+    `/tmp/${key}/old.flac`]);
+  await db.run("UPDATE library_media_files SET created_at = ? WHERE path = ?", [now,
+    `/tmp/${key}/new.flac`]);
 
   try {
-    const page = getCanonicalLibraryPage({
+    const page = await getCanonicalLibraryPage({
       source: "aurral",
       kind: "albums",
       page: 1,
@@ -672,40 +662,38 @@ test("canonical newest ordering follows library arrival time", () => {
     });
     assert.deepEqual(page.items.map((item) => item.title), ["Recently Added", "Old Album"]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path LIKE ?").run(`/tmp/${key}/%`);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)").run(
-      oldAlbum.id,
-      newAlbum.id,
-    );
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(oldTrack.id, newTrack.id);
-    db.prepare("DELETE FROM library_albums WHERE id IN (?, ?)").run(oldAlbum.id, newAlbum.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE path LIKE ?", [`/tmp/${key}/%`]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)", [oldAlbum.id,
+      newAlbum.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?)", [oldTrack.id, newTrack.id]);
+    await db.run("DELETE FROM library_albums WHERE id IN (?, ?)", [oldAlbum.id, newAlbum.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
   }
 });
 
-test("canonical album track pages keep the selected album relationship", () => {
+test("canonical album track pages keep the selected album relationship", async () => {
   const key = `query-album-scope-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Eve 6" });
-  const firstAlbum = upsertLibraryAlbum({
+  const artist = await upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Eve 6" });
+  const firstAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:first-album`,
     artistId: artist.id,
     title: "Eve 6",
     releaseDate: "1998",
   });
-  const selectedAlbum = upsertLibraryAlbum({
+  const selectedAlbum = await upsertLibraryAlbum({
     identityKey: `${key}:selected-album`,
     artistId: artist.id,
     title: "Inside Out",
     releaseDate: "1998",
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${key}:track`,
     title: "Showerhead",
     artistName: "Eve 6",
   });
-  linkLibraryAlbumTrack({ albumId: firstAlbum.id, trackId: track.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: selectedAlbum.id, trackId: track.id, trackNumber: 1 });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: firstAlbum.id, trackId: track.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: selectedAlbum.id, trackId: track.id, trackNumber: 1 });
+  await upsertLibraryMediaFile({
     trackId: track.id,
     albumId: selectedAlbum.id,
     source: "aurral",
@@ -713,7 +701,7 @@ test("canonical album track pages keep the selected album relationship", () => {
   });
 
   try {
-    const page = getCanonicalLibraryPage({
+    const page = await getCanonicalLibraryPage({
       source: "aurral",
       kind: "tracks",
       albumId: selectedAlbum.id,
@@ -723,45 +711,41 @@ test("canonical album track pages keep the selected album relationship", () => {
     assert.deepEqual(page.items[0].albums.map((entry) => entry.albumId), [selectedAlbum.id]);
     assert.deepEqual(page.albums.map((album) => album.title), ["Inside Out"]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path = ?").run(`/tmp/${key}/track.flac`);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)").run(
-      firstAlbum.id,
-      selectedAlbum.id,
-    );
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id IN (?, ?)").run(
-      firstAlbum.id,
-      selectedAlbum.id,
-    );
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE path = ?", [`/tmp/${key}/track.flac`]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)", [firstAlbum.id,
+      selectedAlbum.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE id IN (?, ?)", [firstAlbum.id,
+      selectedAlbum.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
   }
 });
 
-test("canonical album track pages include indexed tracks without media", () => {
+test("canonical album track pages include indexed tracks without media", async () => {
   const key = `query-album-missing-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Partial Fixture" });
-  const album = upsertLibraryAlbum({
+  const artist = await upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Partial Fixture" });
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     artistId: artist.id,
     title: "Partial Album",
   });
-  const ownedTrack = upsertLibraryTrack({
+  const ownedTrack = await upsertLibraryTrack({
     identityKey: `${key}:owned-track`,
     mbid: `${key}-owned`,
     title: "Owned Track",
     artistName: "Partial Fixture",
   });
-  const missingTrack = upsertLibraryTrack({
+  const missingTrack = await upsertLibraryTrack({
     identityKey: `${key}:missing-track`,
     mbid: `${key}-missing`,
     title: "Missing Track",
     artistName: "Partial Fixture",
     metadata: { genres: ["Electronic"] },
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: ownedTrack.id, trackNumber: 1 });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: missingTrack.id, trackNumber: 2 });
   const ownedPath = `/tmp/${key}/owned.flac`;
-  upsertLibraryMediaFile({
+  await upsertLibraryMediaFile({
     trackId: ownedTrack.id,
     albumId: album.id,
     source: "aurral",
@@ -769,7 +753,7 @@ test("canonical album track pages include indexed tracks without media", () => {
   });
 
   try {
-    const page = getCanonicalLibraryPage({
+    const page = await getCanonicalLibraryPage({
       source: "aurral",
       kind: "tracks",
       albumId: album.id,
@@ -782,7 +766,7 @@ test("canonical album track pages include indexed tracks without media", () => {
     assert.equal(page.albums[0].trackCount, 2);
     assert.equal(page.albums[0].availableTrackCount, 1);
 
-    const filtered = getCanonicalLibraryPage({
+    const filtered = await getCanonicalLibraryPage({
       kind: "tracks",
       albumId: album.id,
       page: 1,
@@ -794,7 +778,7 @@ test("canonical album track pages include indexed tracks without media", () => {
     });
     assert.deepEqual(filtered.items.map((track) => track.title), ["Missing Track"]);
 
-    const artistScoped = getCanonicalLibraryPage({
+    const artistScoped = await getCanonicalLibraryPage({
       kind: "tracks",
       albumId: album.id,
       artistId: artist.id,
@@ -805,16 +789,16 @@ test("canonical album track pages include indexed tracks without media", () => {
     });
     assert.deepEqual(artistScoped.items.map((track) => track.title), ["Owned Track", "Missing Track"]);
   } finally {
-    db.prepare("DELETE FROM library_media_files WHERE path = ?").run(ownedPath);
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(ownedTrack.id, missingTrack.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_media_files WHERE path = ?", [ownedPath]);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id IN (?, ?)", [ownedTrack.id, missingTrack.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
   }
 });
 
-test("canonical library responses do not expose filesystem paths", () => {
-  const response = toPublicLibrary({
+test("canonical library responses do not expose filesystem paths", async () => {
+  const response = await toPublicLibrary({
     artists: [{ metadata: { path: "/music/private", tags: { genre: "rock" } } }],
     albums: [{ metadata: { rootFolderPath: "/music/private" } }],
     tracks: [{
@@ -830,9 +814,9 @@ test("canonical library responses do not expose filesystem paths", () => {
   assert.deepEqual(response.tracks[0].files, [{ id: 2, source: "aurral" }]);
 });
 
-test("canonical album responses return public metadata artwork links", () => {
+test("canonical album responses return public metadata artwork links", async () => {
   const remoteUrl = "https://cdn.example.test/cover.jpg?size=500";
-  const response = toPublicLibrary({
+  const response = await toPublicLibrary({
     artists: [],
     albums: [{
       id: 1,

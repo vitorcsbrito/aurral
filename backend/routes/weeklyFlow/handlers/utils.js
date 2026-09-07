@@ -127,15 +127,15 @@ export const validateFlowPayload = ({
   return null;
 };
 
-export const markFlowMutationToken = (flowId) => {
+export const markFlowMutationToken = async (flowId) => {
   const token = createWeeklyFlowOperationToken();
   const tokenScope = `flow:${flowId}:mutation`;
-  markLatestWeeklyFlowOperationToken(tokenScope, token);
+  await markLatestWeeklyFlowOperationToken(tokenScope, token);
   return { token, tokenScope };
 };
 
 export const pauseSharedPlaylistRetryCycle = async (playlistId) => {
-  weeklyFlowWorker.setRetryCyclePaused(playlistId, true);
+  await weeklyFlowWorker.setRetryCyclePaused(playlistId, true);
   let cancelledJobs = 0;
   await withPlaylistMutation(playlistId, async () => {
     cancelledJobs = downloadTracker.failActiveJobsForPlaylist(
@@ -176,8 +176,15 @@ export const filterJobsForUser = (user, jobs) =>
     canAccessPlaylistType(user, job?.playlistId || job?.playlistType),
   );
 
-export const queueFlowSideEffect = (kind, labelPrefix, flowId) => {
-  const { token, tokenScope } = markFlowMutationToken(flowId);
+export const queueFlowSideEffect = async (kind, labelPrefix, flowId) => {
+  let token;
+  let tokenScope;
+  try {
+    ({ token, tokenScope } = await markFlowMutationToken(flowId));
+  } catch (error) {
+    logger.error("weeklyFlow", `Failed to mark ${labelPrefix} token for flow ${flowId}:`, { message: error.message });
+    return;
+  }
   weeklyFlowOperationQueue
     .enqueuePayload({
       kind,

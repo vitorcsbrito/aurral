@@ -5,6 +5,11 @@ import {
   buildSlskdSearchTierGroups,
   hasSlskdSearchCandidates,
 } from "../../backend/services/slskdOrchestrator.js";
+import { ensureTestDatabase } from "../helpers/backendTestHarness.js";
+import { loadSettingsCache } from "../../backend/db/helpers/settings.js";
+
+await ensureTestDatabase();
+await loadSettingsCache();
 
 const fataTrack = {
   artistName: "From Autumn to Ashes",

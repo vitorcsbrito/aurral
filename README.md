@@ -58,10 +58,31 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
+      - DATABASE_URL=postgres://aurral:${POSTGRES_PASSWORD:-aurral}@postgres:5432/aurral
     volumes:
       - ${MEDIA_ROOT:-/srv/media}:/data
       - ./config:/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=aurral
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aurral}
+      - POSTGRES_DB=aurral
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurral -d aurral"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 ```
+
+Aurral stores its data in Postgres. Point `DATABASE_URL` at an existing server instead of the bundled `postgres` service if you already run one. Upgrading from a SQLite install? Run `node backend/scripts/migrateSqliteToPostgres.js` once inside the container; see [Database](https://docs.aurral.org/admin/environment/#database).
 
 Set `MEDIA_ROOT` to the **same host media path that Lidarr already mounts**. Keep `/data` as the container path and use that same mapping for your download clients and Navidrome or Plex. Then set Aurral's Downloads Folder to a container path such as `/data/downloads/aurral`. See [Filesystem and mounts](https://docs.aurral.org/getting-started/storage/).
 

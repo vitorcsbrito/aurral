@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { resolvePlaylistRoot } from "./playlistPaths.js";
 import { AUDIO_EXTENSIONS, isLibraryScanExcludedDirectory } from "./libraryFileScanner.js";
 import { lidarrClient } from "./lidarrClient.js";
@@ -158,14 +158,12 @@ const isWithin = (candidate, folder) =>
 
 // Lidarr artist folders as local paths, from the indexed metadata. Cheap
 // (one row per artist) and only read once per flush.
-export function loadLidarrArtistFolders(mappings = getPathMappings("lidarr")) {
-  const rows = db
-    .prepare(
-      `SELECT json_extract(metadata_json, '$.id') AS id, json_extract(metadata_json, '$.path') AS path
-       FROM library_artists
-       WHERE json_extract(metadata_json, '$.librarySource') = 'lidarr'`,
-    )
-    .all();
+export async function loadLidarrArtistFolders(mappings = getPathMappings("lidarr")) {
+  const rows = await db.all(
+    `SELECT aurral_json(metadata_json) ->> 'id' AS id, aurral_json(metadata_json) ->> 'path' AS path
+     FROM library_artists
+     WHERE aurral_json(metadata_json) ->> 'librarySource' = 'lidarr'`,
+  );
   const folders = [];
   for (const row of rows) {
     const id = Number(row.id);
@@ -238,7 +236,11 @@ const clearDeferredFullScan = () => {
 };
 
 function applyWatcherPlan(plan, { logger, now, fullScanIntervalMs }) {
-  for (const request of plan.requests) scheduleLibraryScan(request);
+  for (const request of plan.requests) {
+    scheduleLibraryScan(request).catch((error) => {
+      logger.warn?.("library", "[Library] Failed to schedule watcher scan:", { error: error?.message || String(error) });
+    });
+  }
   if (plan.fullScheduled) {
     lastFullScanAt = now;
     clearDeferredFullScan();
@@ -250,7 +252,9 @@ function applyWatcherPlan(plan, { logger, now, fullScanIntervalMs }) {
     deferredFullScanTimer = setTimeout(() => {
       deferredFullScanTimer = null;
       lastFullScanAt = Date.now();
-      scheduleLibraryScan({ includeLidarr: true });
+      scheduleLibraryScan({ includeLidarr: true }).catch((error) => {
+        logger.warn?.("library", "[Library] Failed to schedule deferred full scan:", { error: error?.message || String(error) });
+      });
     }, delay);
     deferredFullScanTimer.unref?.();
   }
@@ -265,11 +269,11 @@ export async function refreshLibraryFileWatcher({
   const playlistRoot = path.resolve(resolvePlaylistRoot());
   activeWatcher = createLibraryFileWatcher({
     roots: await resolveLibraryWatchRoots(),
-    onChange: (changedRoots, details = {}) => {
+    onChange: async (changedRoots, details = {}) => {
       const now = Date.now();
       let lidarrArtistFolders = [];
       try {
-        lidarrArtistFolders = loadLidarrArtistFolders();
+        lidarrArtistFolders = await loadLidarrArtistFolders();
       } catch (error) {
         logger.warn?.("library", "[Library] Could not load Lidarr artist folders:", { error: error?.message || String(error) });
       }

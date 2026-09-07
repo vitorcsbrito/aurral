@@ -1,4 +1,4 @@
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 import { dbOps, userOps } from "../db/helpers/index.js";
 import { getTicketmasterApiKey } from "./apiClients/index.js";
 import {
@@ -71,15 +71,12 @@ const getStoredRefreshStatus = (userId) =>
     jobId: null,
   };
 
-const setStoredRefreshStatus = (userId, status) => {
-  db.transaction(() => {
-    dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
-      ...getStoredRefreshStatus(userId),
-      ...status,
-      updatedAt: Date.now(),
-    });
-  })();
-};
+const setStoredRefreshStatus = async (userId, status) =>
+  await dbOps.setJSONSetting(getInboxRefreshStatusKey(userId), {
+    ...getStoredRefreshStatus(userId),
+    ...status,
+    updatedAt: Date.now(),
+  });
 
 export function getInboxRefreshStatus(userId) {
   const normalizedUserId = normalizeUserId(userId);
@@ -126,14 +123,14 @@ export function getInboxRefreshStatus(userId) {
   return stored;
 }
 
-const upsertAll = (items) => {
-  for (const item of items) dbOps.upsertInboxItem(item);
+const upsertAll = async (items) => {
+  for (const item of items) await dbOps.upsertInboxItem(item);
 };
 
 async function buildReleaseItems(userId, now) {
   const cutoff = now - RELEASE_PAST_DAYS * DAY_MS;
   const horizon = now + RELEASE_FUTURE_DAYS * DAY_MS;
-  const rawAlbums = getCanonicalAlbumsByReleaseDate({
+  const rawAlbums = await getCanonicalAlbumsByReleaseDate({
     from: new Date(cutoff).toISOString().slice(0, 10),
     to: new Date(horizon).toISOString().slice(0, 10),
     limit: 1000,
@@ -299,21 +296,22 @@ async function buildNewsItems(userId, now, enabledKinds) {
   });
 }
 
-const dismissBlockedNewsItems = (userId) => {
+const dismissBlockedNewsItems = async (userId) => {
   const blocked = new Set(
     getNewsPreferences(userId).blockedPublishers.map((publisher) => publisher.toLowerCase()),
   );
   if (blocked.size === 0) return;
-  for (const item of dbOps.getInboxItems(userId, {
+  const items = await dbOps.getInboxItems(userId, {
     kinds: ["news", "recommendedNews"],
     limit: 50,
-  })) {
+  });
+  for (const item of items) {
     const articles = Array.isArray(item.metadata?.articles) ? item.metadata.articles : [];
     if (
       articles.length > 0 &&
       articles.every((article) => blocked.has(String(article?.source || "").trim().toLowerCase()))
     ) {
-      dbOps.updateInboxItem(userId, item.id, { isDismissed: true });
+      await dbOps.updateInboxItem(userId, item.id, { isDismissed: true });
     }
   }
 };
@@ -345,7 +343,7 @@ export async function refreshInboxForUser(
 
   const promise = (async () => {
     const now = Date.now();
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: "running",
       stale: false,
       error: null,
@@ -353,7 +351,7 @@ export async function refreshInboxForUser(
     });
     const preferences = getInboxPreferences();
     const libraryArtists = preferences.shows
-      ? getCanonicalArtistKeys()
+      ? await getCanonicalArtistKeys()
       : [];
     const enabledNewsKinds = new Set(
       getEnabledKinds(preferences).filter((kind) =>
@@ -381,10 +379,10 @@ export async function refreshInboxForUser(
     const items = results
       .filter((result) => result.status === "fulfilled")
       .flatMap((result) => result.value);
-    db.transaction(() => {
-      upsertAll(items);
-      dismissBlockedNewsItems(normalizedUserId);
-    })();
+    await db.transaction(async () => {
+      await upsertAll(items);
+      await dismissBlockedNewsItems(normalizedUserId);
+    });
     refreshState.set(normalizedUserId, { at: now, hadLocationRequest: hasLocationRequest });
     const refreshStatus = failures.length === 0
       ? "complete"
@@ -394,7 +392,7 @@ export async function refreshInboxForUser(
     const errorMessage = failures.length > 0
       ? failures.map(({ result, source }) => `${source}: ${result.reason?.message || "failed"}`).join("; ")
       : null;
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: refreshStatus,
       stale: failures.length > 0,
       error: errorMessage,
@@ -407,11 +405,11 @@ export async function refreshInboxForUser(
       throw error;
     }
     return failures.length === 0;
-  })().catch((error) => {
+  })().catch(async (error) => {
     logger.warn("inbox", "Inbox refresh failed", { userId: normalizedUserId, error: error.message });
     refreshState.set(normalizedUserId, { at: Date.now(), hadLocationRequest: hasLocationRequest });
     if (!error.inboxStatusWritten) {
-      setStoredRefreshStatus(normalizedUserId, {
+      await setStoredRefreshStatus(normalizedUserId, {
         status: "failed",
         stale: true,
         error: error.message,
@@ -456,7 +454,7 @@ export async function enqueueInboxRefreshForUser(
       zipCode: String(zipCode || "").trim(),
       ipAddress: String(ipAddress || "").trim(),
     }, { priority: reason === "manual" ? 5 : 0 });
-    setStoredRefreshStatus(normalizedUserId, {
+    await setStoredRefreshStatus(normalizedUserId, {
       status: "queued",
       stale: false,
       error: null,
@@ -469,7 +467,7 @@ export async function enqueueInboxRefreshForUser(
 
 export async function enqueueInboxRefreshForAllUsers(options = {}) {
   const jobs = [];
-  for (const user of userOps.getAllUsers()) {
+  for (const user of await userOps.getAllUsers()) {
     jobs.push(await enqueueInboxRefreshForUser(user.id, options));
   }
   return jobs;
@@ -479,7 +477,7 @@ export async function refreshInboxForAllUsers(options = {}) {
   return enqueueInboxRefreshForAllUsers({ reason: "scheduled", ...options });
 }
 
-export function getInboxForUser(userId, options = {}) {
+export async function getInboxForUser(userId, options = {}) {
   const kinds = getEnabledKinds(getInboxPreferences());
   const refreshStatus = getInboxRefreshStatus(userId);
   if (kinds.length === 0) {
@@ -491,19 +489,19 @@ export function getInboxForUser(userId, options = {}) {
     };
   }
   return {
-    items: dbOps.getInboxItems(userId, { limit: options.limit || 50, kinds }),
-    unreadCount: dbOps.getInboxUnreadCount(userId, kinds),
+    items: await dbOps.getInboxItems(userId, { limit: options.limit || 50, kinds }),
+    unreadCount: await dbOps.getInboxUnreadCount(userId, kinds),
     refreshing: refreshStatus.status === "queued" || refreshStatus.status === "running",
     refreshStatus,
   };
 }
 
-export const updateInboxItem = (userId, itemId, updates) =>
-  dbOps.updateInboxItem(userId, itemId, updates);
+export const updateInboxItem = async (userId, itemId, updates) =>
+  await dbOps.updateInboxItem(userId, itemId, updates);
 
-export const markAllInboxItemsRead = (userId) => {
-  dbOps.markAllInboxItemsRead(userId);
-  return dbOps.getInboxUnreadCount(userId);
+export const markAllInboxItemsRead = async (userId) => {
+  await dbOps.markAllInboxItemsRead(userId);
+  return await dbOps.getInboxUnreadCount(userId);
 };
 
 export const getInboxRefreshCooldownMs = () => REFRESH_COOLDOWN_MS;

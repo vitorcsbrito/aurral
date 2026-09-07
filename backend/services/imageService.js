@@ -159,20 +159,20 @@ const addToPendingRequests = (mbid, promise) => {
   pendingImageRequests.set(mbid, promise);
 };
 
-const getCachedUrl = (cacheKey) => {
-  const cached = dbOps.getImage(cacheKey);
+const getCachedUrl = async (cacheKey) => {
+  const cached = await dbOps.getImage(cacheKey);
   if (
     cached?.imageUrl &&
     cached.imageUrl !== "NOT_FOUND" &&
     LEGACY_COVER_HOST_PATTERN.test(cached.imageUrl)
   ) {
-    dbOps.deleteImage(cacheKey);
+    await dbOps.deleteImage(cacheKey);
     return undefined;
   }
   if (cached?.imageUrl && cached.imageUrl !== "NOT_FOUND") {
     const imageUrl = buildStableImageProxyUrl(cached.imageUrl);
     if (imageUrl) return imageUrl;
-    dbOps.deleteImage(cacheKey);
+    await dbOps.deleteImage(cacheKey);
   }
   if (cached?.imageUrl === "NOT_FOUND") {
     return null;
@@ -200,9 +200,9 @@ const buildArtistCoverFromUrl = (imageUrl, types = ["Front"]) => ({
 
 const recoverArtistCoverFromCachedReleaseGroups = async (resolvedMbid) => {
   const rgCacheKey = `artist_rg:${resolvedMbid}`;
-  const cachedRgId = dbOps.getDeezerMbidCache(rgCacheKey);
+  const cachedRgId = await dbOps.getDeezerMbidCache(rgCacheKey);
   if (cachedRgId && cachedRgId !== "NOT_FOUND") {
-    const cachedUrl = getCachedUrl(`rg:${cachedRgId}`);
+    const cachedUrl = await getCachedUrl(`rg:${cachedRgId}`);
     if (cachedUrl) {
       return buildArtistCoverFromUrl(cachedUrl);
     }
@@ -223,9 +223,9 @@ const recoverArtistCoverFromCachedReleaseGroups = async (resolvedMbid) => {
     });
 
   for (const rg of ordered) {
-    const cachedUrl = getCachedUrl(`rg:${rg.id}`);
+    const cachedUrl = await getCachedUrl(`rg:${rg.id}`);
     if (cachedUrl) {
-      dbOps.setDeezerMbidCache(rgCacheKey, rg.id);
+      await dbOps.setDeezerMbidCache(rgCacheKey, rg.id);
       return buildArtistCoverFromUrl(cachedUrl);
     }
   }
@@ -267,7 +267,7 @@ export const getArtistImage = async (
     artistNameHint,
   );
 
-  const cachedImage = dbOps.getImage(mbid);
+  const cachedImage = await dbOps.getImage(mbid);
   if (
     !forceRefresh &&
     cachedImage &&
@@ -283,19 +283,19 @@ export const getArtistImage = async (
         images,
       };
     }
-    dbOps.deleteImage(mbid);
+    await dbOps.deleteImage(mbid);
   }
 
   if (
     !forceRefresh &&
     ((cachedImage && cachedImage.imageUrl === "NOT_FOUND") || hasFreshNegativeCache(mbid))
   ) {
-    const override = dbOps.getArtistOverride(mbid);
+    const override = await dbOps.getArtistOverride(mbid);
     const resolvedMbid = override?.musicbrainzId || mbid;
     const recovered = await recoverArtistCoverFromCachedReleaseGroups(resolvedMbid);
     if (recovered?.url) {
       negativeImageCache.delete(mbid);
-      dbOps.setImage(mbid, recovered.url, recovered.images);
+      await dbOps.setImage(mbid, recovered.url, recovered.images);
       return recovered;
     }
     return { url: null, images: [], notFound: true };
@@ -310,7 +310,7 @@ export const getArtistImage = async (
     let resolvedMbid = mbid;
     let override = null;
     try {
-      override = dbOps.getArtistOverride(mbid);
+      override = await dbOps.getArtistOverride(mbid);
       resolvedMbid = override?.musicbrainzId || mbid;
       metadataArtist = await getArtistByMbid(resolvedMbid).catch(() => null);
       const directArtistImages = sortArtistImages(metadataArtist?.images);
@@ -318,7 +318,7 @@ export const getArtistImage = async (
       const primaryImage = images.find((image) => image.front) || images[0];
       if (primaryImage?.image) {
         negativeImageCache.delete(mbid);
-        dbOps.setImage(mbid, primaryImage.image, images);
+        await dbOps.setImage(mbid, primaryImage.image, images);
         return {
           url: primaryImage.image,
           images,
@@ -336,12 +336,12 @@ export const getArtistImage = async (
           buildStableImageProxyUrl(deezerImage),
           ["Artist"],
         );
-        dbOps.setImage(mbid, result.url, result.images);
+        await dbOps.setImage(mbid, result.url, result.images);
         return result;
       }
 
       const rgCacheKey = `artist_rg:${resolvedMbid}`;
-      const cachedRg = forceRefresh ? null : dbOps.getDeezerMbidCache(rgCacheKey);
+      const cachedRg = forceRefresh ? null : await dbOps.getDeezerMbidCache(rgCacheKey);
       const albums = cachedRg
         ? cachedRg === "NOT_FOUND"
           ? []
@@ -404,9 +404,9 @@ export const getArtistImage = async (
           ],
         };
         negativeImageCache.delete(mbid);
-        dbOps.setImage(mbid, artistImageUrl, result.images);
+        await dbOps.setImage(mbid, artistImageUrl, result.images);
         if (!cachedRg || forceRefresh) {
-          dbOps.setDeezerMbidCache(rgCacheKey, foundCover.releaseGroupId);
+          await dbOps.setDeezerMbidCache(rgCacheKey, foundCover.releaseGroupId);
         }
         return result;
       }
@@ -416,7 +416,7 @@ export const getArtistImage = async (
       }
 
       if (!cachedRg || forceRefresh) {
-        dbOps.setDeezerMbidCache(rgCacheKey, "NOT_FOUND");
+        await dbOps.setDeezerMbidCache(rgCacheKey, "NOT_FOUND");
       }
     } catch (e) {
       console.warn(`Failed to fetch image for ${mbid}:`, e.message);
@@ -433,7 +433,7 @@ export const getArtistImage = async (
         if (siblings.length > 0) {
           siblings.sort((a, b) => b.images.length - a.images.length);
           const sibling = siblings[0];
-          dbOps.setArtistOverride(mbid, {
+          await dbOps.setArtistOverride(mbid, {
             musicbrainzId: sibling.id,
             deezerArtistId: override?.deezerArtistId || null,
           });
@@ -443,7 +443,7 @@ export const getArtistImage = async (
           });
           if (siblingResult?.url) {
             negativeImageCache.delete(mbid);
-            dbOps.setImage(mbid, siblingResult.url, siblingResult.images);
+            await dbOps.setImage(mbid, siblingResult.url, siblingResult.images);
             return siblingResult;
           }
         }
@@ -451,7 +451,7 @@ export const getArtistImage = async (
     }
 
     addToNegativeCache(mbid);
-    dbOps.setImage(mbid, "NOT_FOUND");
+    await dbOps.setImage(mbid, "NOT_FOUND");
 
     return { url: null, images: [], notFound: true };
   })();

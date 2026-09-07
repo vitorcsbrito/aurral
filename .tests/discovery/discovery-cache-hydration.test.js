@@ -1,7 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import path from "path";
-import { pathToFileURL } from "url";
 
 import {
   setupIsolatedBackend,
@@ -9,20 +7,22 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps }, persistence] = await setupIsolatedBackend(
   "discovery-cache-hydration",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
+  "backend/services/discovery/persistence.js",
 );
+
+const { getDiscoveryCache, initDiscoveryPersistence, resetDiscoveryModuleCache } = persistence;
 
 test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
 test("getDiscoveryCache preserves lastUpdated after an empty completed refresh", async () => {
-  resetDatabase(db);
+  await resetDatabase();
 
-  dbOps.updateDiscoveryCache({
+  await dbOps.updateDiscoveryCache({
     recommendations: [],
     globalTop: [],
     basedOn: [],
@@ -30,10 +30,9 @@ test("getDiscoveryCache preserves lastUpdated after an empty completed refresh",
     topGenres: [],
   });
 
-  const moduleUrl = pathToFileURL(
-    path.join(process.cwd(), "backend/services/discovery/index.js"),
-  ).href;
-  const { getDiscoveryCache } = await import(`${moduleUrl}?t=${Date.now()}`);
+  // Rehydrate from the database the way startup does.
+  resetDiscoveryModuleCache();
+  await initDiscoveryPersistence();
   const cache = getDiscoveryCache();
 
   assert.ok(cache.lastUpdated);
@@ -44,9 +43,9 @@ test("getDiscoveryCache preserves lastUpdated after an empty completed refresh",
 });
 
 test("getDiscoveryCache persists recommendation enrichment metadata", async () => {
-  resetDatabase(db);
+  await resetDatabase();
 
-  dbOps.updateDiscoveryCache({
+  await dbOps.updateDiscoveryCache({
     recommendations: [{ id: "artist-1", name: "Initial Artist" }],
     recommendationQuality: "initial",
     isEnriching: true,
@@ -55,7 +54,7 @@ test("getDiscoveryCache persists recommendation enrichment metadata", async () =
     enrichmentProgressMessage: "Improving recommendations",
   });
 
-  const cache = dbOps.getDiscoveryCache();
+  const cache = await dbOps.getDiscoveryCache();
 
   assert.equal(cache.recommendationQuality, "initial");
   assert.equal(cache.isEnriching, true);

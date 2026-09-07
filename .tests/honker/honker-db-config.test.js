@@ -81,7 +81,7 @@ test("Honker uses a low-CPU watcher cadence by default", () => {
   }
 });
 
-test("startup only queues due bootstrap work and a pending migration", () => {
+test("startup only queues due bootstrap work and a pending migration", async () => {
   const db = honkerDb.getHonkerDb();
   const clearQueue = () => {
     const tx = db.transaction();
@@ -103,7 +103,7 @@ test("startup only queues due bootstrap work and a pending migration", () => {
     "library-index-bootstrap",
   ]);
 
-  dbOps.setJSONSetting(honkerDb.PLAYLIST_STARTUP_MIGRATION_SETTING, {
+  await dbOps.setJSONSetting(honkerDb.PLAYLIST_STARTUP_MIGRATION_SETTING, {
     version: honkerDb.PLAYLIST_STARTUP_MIGRATION_VERSION,
     rootPath: process.env.WEEKLY_FLOW_FOLDER,
   });

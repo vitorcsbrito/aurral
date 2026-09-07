@@ -103,7 +103,7 @@ function upsertGeneralAuth(settings, username, password) {
   };
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     printUsage();
@@ -125,16 +125,16 @@ function main() {
   }
 
   const hash = hashPassword(password);
-  const existing = userOps.getUserByUsername(username);
+  const existing = await userOps.getUserByUsername(username);
 
   let resultUser = null;
   if (existing) {
-    resultUser = userOps.updateUser(existing.id, {
+    resultUser = await userOps.updateUser(existing.id, {
       passwordHash: hash,
       role: "admin",
     });
   } else {
-    resultUser = userOps.createUser(username, hash, "admin", null);
+    resultUser = await userOps.createUser(username, hash, "admin", null);
   }
 
   if (!resultUser) {
@@ -142,7 +142,7 @@ function main() {
     process.exit(1);
   }
 
-  dbOps.updateSettings(upsertGeneralAuth(currentSettings, username, password));
+  await dbOps.updateSettings(upsertGeneralAuth(currentSettings, username, password));
 
   console.log("Admin password reset successful.");
   console.log(`Username: ${username}`);

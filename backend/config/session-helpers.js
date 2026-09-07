@@ -1,16 +1,15 @@
 import crypto from "crypto";
-import { db } from "./db-sqlite.js";
+import { db } from "./database.js";
 import { userOps } from "../db/helpers/index.js";
 
 const DEFAULT_EXPIRY_HOURS = 24 * 30;
 
-const insertSessionStmt = db.prepare(
-  "INSERT INTO sessions (user_id, token, created_at, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
-);
-const getSessionByTokenStmt = db.prepare("SELECT * FROM sessions WHERE token = ? LIMIT 1");
-const deleteSessionByTokenStmt = db.prepare("DELETE FROM sessions WHERE token = ?");
-const deleteSessionsByUserIdStmt = db.prepare("DELETE FROM sessions WHERE user_id = ?");
-const deleteExpiredSessionsStmt = db.prepare("DELETE FROM sessions WHERE expires_at <= ?");
+const INSERT_SESSION_SQL =
+  "INSERT INTO sessions (user_id, token, created_at, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)";
+const GET_SESSION_BY_TOKEN_SQL = "SELECT * FROM sessions WHERE token = ? LIMIT 1";
+const DELETE_SESSION_BY_TOKEN_SQL = "DELETE FROM sessions WHERE token = ?";
+const DELETE_SESSIONS_BY_USER_ID_SQL = "DELETE FROM sessions WHERE user_id = ?";
+const DELETE_EXPIRED_SESSIONS_SQL = "DELETE FROM sessions WHERE expires_at <= ?";
 
 const getSessionExpiryMs = () => {
   const hours = Number(process.env.SESSION_EXPIRY_HOURS);
@@ -28,36 +27,36 @@ const toUserPayload = (user) => {
   };
 };
 
-export const createSession = (userId, ipAddress = null, userAgent = null) => {
+export const createSession = async (userId, ipAddress = null, userAgent = null) => {
   const now = Date.now();
   const expiresAt = now + getSessionExpiryMs();
   const token = crypto.randomBytes(32).toString("hex");
-  insertSessionStmt.run(
+  await db.run(INSERT_SESSION_SQL, [
     Number(userId),
     token,
     now,
     expiresAt,
     ipAddress ? String(ipAddress).slice(0, 255) : null,
     userAgent ? String(userAgent).slice(0, 1024) : null,
-  );
+  ]);
   return {
     token,
     expiresAt,
   };
 };
 
-export const getSessionByToken = (token) => {
+export const getSessionByToken = async (token) => {
   const rawToken = String(token || "").trim();
   if (!rawToken) return null;
-  const row = getSessionByTokenStmt.get(rawToken);
+  const row = await db.get(GET_SESSION_BY_TOKEN_SQL, [rawToken]);
   if (!row) return null;
   if (row.expires_at <= Date.now()) {
-    deleteSessionByTokenStmt.run(rawToken);
+    await db.run(DELETE_SESSION_BY_TOKEN_SQL, [rawToken]);
     return null;
   }
-  const user = userOps.getUserAuthById(row.user_id);
+  const user = await userOps.getUserAuthById(row.user_id);
   if (!user) {
-    deleteSessionByTokenStmt.run(rawToken);
+    await db.run(DELETE_SESSION_BY_TOKEN_SQL, [rawToken]);
     return null;
   }
   return {
@@ -72,17 +71,17 @@ export const getSessionByToken = (token) => {
   };
 };
 
-export const deleteSession = (token) => {
-  const result = deleteSessionByTokenStmt.run(String(token || "").trim());
+export const deleteSession = async (token) => {
+  const result = await db.run(DELETE_SESSION_BY_TOKEN_SQL, [String(token || "").trim()]);
   return result.changes > 0;
 };
 
-export const deleteSessionsByUserId = (userId) => {
-  const result = deleteSessionsByUserIdStmt.run(Number(userId));
+export const deleteSessionsByUserId = async (userId) => {
+  const result = await db.run(DELETE_SESSIONS_BY_USER_ID_SQL, [Number(userId)]);
   return result.changes;
 };
 
-export const cleanExpiredSessions = () => {
-  const result = deleteExpiredSessionsStmt.run(Date.now());
+export const cleanExpiredSessions = async () => {
+  const result = await db.run(DELETE_EXPIRED_SESSIONS_SQL, [Date.now()]);
   return result.changes;
 };

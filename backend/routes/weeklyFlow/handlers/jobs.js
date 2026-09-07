@@ -46,8 +46,8 @@ const getAccessiblePlaylistIds = (user) => [
 ];
 
 export function registerJobs(router) {
-  router.get("/status", noCache, (req, res) => {
-    res.json(getWeeklyFlowStatusSnapshot({ user: req.user }));
+  router.get("/status", noCache, async (req, res) => {
+    res.json(await getWeeklyFlowStatusSnapshot({ user: req.user }));
   });
 
   router.get("/jobs/:flowId", noCache, async (req, res) => {
@@ -177,7 +177,7 @@ export function registerJobs(router) {
       if (paused) {
         await pauseSharedPlaylistRetryCycle(playlistId);
       } else {
-        weeklyFlowWorker.setRetryCyclePaused(playlistId, false);
+        await weeklyFlowWorker.setRetryCyclePaused(playlistId, false);
         await weeklyFlowWorker.retryIncompletePlaylist(playlistId);
       }
       return res.json({

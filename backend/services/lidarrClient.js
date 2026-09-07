@@ -210,7 +210,10 @@ export class LidarrClient {
       maxFreeSockets: 2,
       timeout: 60000,
     });
-    this.updateConfig();
+    // Settings load after import; every request refreshes the config anyway.
+    try {
+      this.updateConfig();
+    } catch {}
   }
 
   _setArtistByMbidCacheEntry(mbid, artist) {
@@ -1121,7 +1124,7 @@ export class LidarrClient {
         try {
           result = await postArtist({ ...lidarrArtist, foreignArtistId: providerArtistId });
           try {
-            dbOps.setLidarrArtistIdMap(mbid, providerArtistId);
+            await dbOps.setLidarrArtistIdMap(mbid, providerArtistId);
           } catch (mappingError) {
             if (mappingError?.code !== "LIDARR_ARTIST_ID_CONFLICT") {
               throw mappingError;
@@ -1160,7 +1163,7 @@ export class LidarrClient {
   async getArtistByMbid(mbid, { forceRefresh = false } = {}) {
     const normalizedMbid = String(mbid || "").trim();
     if (!normalizedMbid) return null;
-    const mappedLidarrArtistId = dbOps.getLidarrArtistIdMap(normalizedMbid);
+    const mappedLidarrArtistId = await dbOps.getLidarrArtistIdMap(normalizedMbid);
 
     const matchesArtistId = (artist) =>
       artist?.foreignArtistId === normalizedMbid ||

@@ -28,7 +28,7 @@ import { logger } from "../services/logger.js";
 import { resolvePlaylistRoot } from "../services/playlistPaths.js";
 import { getFilesystemBrowseRoots } from "../services/downloadFolderConfig.js";
 import { dbOps } from "../db/helpers/index.js";
-import { db } from "../config/db-sqlite.js";
+import { pingDatabase, resolveDatabaseConfig } from "../config/database.js";
 import { resolveAurralDataDir } from "../config/data-dir.js";
 import { websocketService } from "../services/websocketService.js";
 import { noCache } from "../middleware/cache.js";
@@ -59,13 +59,6 @@ async function isRunningInDocker() {
   } catch {
     return false;
   }
-}
-
-function resolveDatabasePath() {
-  const dataDir = resolveAurralDataDir();
-  return process.env.AURRAL_DB_PATH
-    ? path.resolve(process.env.AURRAL_DB_PATH)
-    : path.join(dataDir, "aurral.db");
 }
 
 async function resolveExistingFilesystemPath(targetPath) {
@@ -146,11 +139,9 @@ async function buildDiskSpacePayload(settings) {
 
 async function computeDiskSpacePayload(settings) {
   const dataDir = resolveAurralDataDir();
-  const dbPath = resolveDatabasePath();
   const downloadRoot = resolvePlaylistRoot();
   const candidates = [
     { location: dataDir, role: "App data" },
-    { location: path.dirname(dbPath), role: "Database" },
     { location: downloadRoot, role: "Downloads" },
     ...getFilesystemBrowseRoots().map((location) => ({
       location,
@@ -185,9 +176,21 @@ async function computeDiskSpacePayload(settings) {
   ).filter(Boolean);
 }
 
-function readSqliteVersion() {
+async function readDatabaseInfo() {
   try {
-    return db.prepare("SELECT sqlite_version() AS version").get()?.version || null;
+    const row = await pingDatabase();
+    const match = /PostgreSQL\s+([\d.]+)/.exec(String(row?.version || ""));
+    return { version: match ? match[1] : row?.version || null, database: row?.database || null };
+  } catch {
+    return { version: null, database: null };
+  }
+}
+
+// Host/port/database only; credentials never leave the process.
+function describeDatabaseTarget() {
+  try {
+    const url = new URL(resolveDatabaseConfig().connectionString);
+    return `${url.hostname}${url.port ? `:${url.port}` : ""}${url.pathname}`;
   } catch {
     return null;
   }
@@ -195,8 +198,7 @@ function readSqliteVersion() {
 
 async function buildSystemPayload(settings) {
   const dataDir = resolveAurralDataDir();
-  const dbPath = resolveDatabasePath();
-  const sqliteVersion = readSqliteVersion();
+  const databaseInfo = await readDatabaseInfo();
   return {
     startedAt: new Date(STARTED_AT).toISOString(),
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - STARTED_AT) / 1000)),
@@ -207,13 +209,14 @@ async function buildSystemPayload(settings) {
     mode: formatRuntimeMode(),
     docker: await isRunningInDocker(),
     dataDir,
-    databasePath: dbPath,
+    databasePath: describeDatabaseTarget(),
     startupDirectory: process.cwd(),
     hostname: os.hostname(),
     database: {
-      engine: "SQLite",
-      version: sqliteVersion,
-      label: sqliteVersion ? `SQLite ${sqliteVersion}` : "SQLite",
+      engine: "PostgreSQL",
+      version: databaseInfo.version,
+      label: databaseInfo.version ? `PostgreSQL ${databaseInfo.version}` : "PostgreSQL",
+      name: databaseInfo.database,
     },
     diskSpace: await buildDiskSpacePayload(settings),
     links: [
@@ -233,12 +236,12 @@ async function buildSystemPayload(settings) {
   };
 }
 
-function buildBootstrapPayload(req) {
+async function buildBootstrapPayload(req) {
   lidarrClient.updateConfig();
   const settings = dbOps.getSettings();
   const onboardingDone = settings.onboardingComplete;
-  const authRequired = isAuthRequiredByConfig();
-  const currentUser = resolveRequestUser(req);
+  const authRequired = await isAuthRequiredByConfig();
+  const currentUser = await resolveRequestUser(req);
   const lidarrConfigured = lidarrClient.isConfigured();
 
   const oidcInfo = getOidcBootstrapInfo();
@@ -287,9 +290,9 @@ function buildBootstrapPayload(req) {
     payload.deemixConfigured = downloadSources.deemix.configured;
     payload.downloadSources = downloadSources;
     payload.metadataProviders = getMetadataProviderHealthSnapshot();
-    payload.localNetworkBypass = getLocalNetworkBypassStatus(req);
+    payload.localNetworkBypass = await getLocalNetworkBypassStatus(req);
     payload.proxyLogoutUrl = process.env.AUTH_PROXY_LOGOUT_URL || null;
-    const proxySession = issueProxySession(req);
+    const proxySession = await issueProxySession(req);
     if (proxySession) payload.token = proxySession.token;
   }
 
@@ -300,9 +303,9 @@ router.get("/live", noCache, (_req, res) => {
   res.json({ status: "ok" });
 });
 
-router.get("/bootstrap", noCache, (req, res) => {
+router.get("/bootstrap", noCache, async (req, res) => {
   try {
-    res.json(buildBootstrapPayload(req));
+    res.json(await buildBootstrapPayload(req));
   } catch (error) {
     logger.error("health", "Bootstrap check error:", { message: error.message });
     res.status(500).json({
@@ -311,20 +314,24 @@ router.get("/bootstrap", noCache, (req, res) => {
   }
 });
 
-router.post("/stream-token", noCache, (req, res) => {
-  const user = resolveRequestUser(req);
-  if (!user) {
-    return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+router.post("/stream-token", noCache, async (req, res, next) => {
+  try {
+    const user = await resolveRequestUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
+    }
+    const token = issueStreamToken(user);
+    return res.json({ token, expiresIn: 120 });
+  } catch (error) {
+    return next(error);
   }
-  const token = issueStreamToken(user);
-  return res.json({ token, expiresIn: 120 });
 });
 
 router.get("/", noCache, async (req, res) => {
   try {
     const settings = dbOps.getSettings();
-    const currentUser = resolveRequestUser(req);
-    const payload = buildBootstrapPayload(req);
+    const currentUser = await resolveRequestUser(req);
+    const payload = await buildBootstrapPayload(req);
     if (currentUser) {
       const discoveryCache = getDiscoveryCache();
       const wsStats = websocketService.getStats();
@@ -334,7 +341,7 @@ router.get("/", noCache, async (req, res) => {
         lastScan: null,
       };
       const discoveryUpdateStatus = getDiscoveryUpdateStatus();
-      const artworkLinkCount = dbOps.countImages();
+      const artworkLinkCount = await dbOps.countImages();
       const nativeImageCacheSizeBytes = await getImageProxyCacheSizeBytes();
       payload.discovery = {
         provider: getLastfmApiKey()

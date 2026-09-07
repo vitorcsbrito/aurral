@@ -10,9 +10,8 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }] = await setupIsolatedBackend(
+const [isolatedState, { dbOps, userOps }] = await setupIsolatedBackend(
   "plex-global-account-owner",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
 );
 
@@ -52,14 +51,16 @@ async function login(username) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
-  const adminA = userOps.createUser("admin-a", bcrypt.hashSync("password123", 4), "admin");
-  const adminB = userOps.createUser("admin-b", bcrypt.hashSync("password123", 4), "admin");
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+  const adminA = await userOps.createUser("admin-a", bcrypt.hashSync("password123", 4), "admin");
+  const adminB = await userOps.createUser("admin-b", bcrypt.hashSync("password123", 4), "admin");
   adminAId = adminA.id;
   adminBId = adminB.id;
 
-  aurral = await startServerProcess();
+  aurral = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
   adminAToken = await login("admin-a");
   adminBToken = await login("admin-b");
 });

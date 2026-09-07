@@ -137,11 +137,11 @@ export class PlexPlaybackDestination {
     }
   }
 
-  _ownerClient(ownerUserId, cache) {
+  async _ownerClient(ownerUserId, cache) {
     if (ownerUserId == null) return this.client;
     const key = String(ownerUserId);
     if (cache.has(key)) return cache.get(key);
-    const connection = plexConnectionStore.getConnection(ownerUserId);
+    const connection = await plexConnectionStore.getConnection(ownerUserId);
     if (!connection) {
       cache.set(key, this.client);
       return this.client;
@@ -157,7 +157,7 @@ export class PlexPlaybackDestination {
   }
 
   async _recoverManagedUserToken(ownerUserId) {
-    const connection = plexConnectionStore.getConnection(ownerUserId);
+    const connection = await plexConnectionStore.getConnection(ownerUserId);
     if (!connection || connection.linkType !== "managed" || connection.plexAccountId == null) {
       return null;
     }
@@ -179,7 +179,7 @@ export class PlexPlaybackDestination {
         );
         if (match?.accessToken) serverToken = match.accessToken;
       } catch {}
-      plexConnectionStore.updateToken(ownerUserId, {
+      await plexConnectionStore.updateToken(ownerUserId, {
         token: serverToken,
         clientId: connection.clientId,
       });
@@ -187,13 +187,13 @@ export class PlexPlaybackDestination {
       client._machineIdentifier = this.client._machineIdentifier || null;
       return client;
     } catch (error) {
-      plexConnectionStore.setLastError(ownerUserId, error?.message || "Plex reconnect failed");
+      await plexConnectionStore.setLastError(ownerUserId, error?.message || "Plex reconnect failed");
       return null;
     }
   }
 
   async _withOwnerClient(ownerUserId, cache, run) {
-    const client = this._ownerClient(ownerUserId, cache);
+    const client = await this._ownerClient(ownerUserId, cache);
     try {
       return await run(client);
     } catch (error) {
@@ -206,7 +206,7 @@ export class PlexPlaybackDestination {
         try {
           return await run(recovered);
         } catch (retryError) {
-          plexConnectionStore.setLastError(
+          await plexConnectionStore.setLastError(
             ownerUserId,
             retryError?.message || "Plex sync failed after reconnect",
           );
@@ -216,7 +216,7 @@ export class PlexPlaybackDestination {
           return SYNC_SKIPPED;
         }
       }
-      plexConnectionStore.setLastError(ownerUserId, error?.message || "Plex sync failed (401)");
+      await plexConnectionStore.setLastError(ownerUserId, error?.message || "Plex sync failed (401)");
       console.warn(
         `[PlexPlaybackDestination] Plex sync skipped for owner ${ownerUserId}: reconnect needed`,
       );
@@ -224,9 +224,9 @@ export class PlexPlaybackDestination {
     }
   }
 
-  _ownerUser(ownerUserId, cache) {
+  async _ownerUser(ownerUserId, cache) {
     const key = String(ownerUserId);
-    if (!cache.has(key)) cache.set(key, userOps.getUserById(ownerUserId));
+    if (!cache.has(key)) cache.set(key, await userOps.getUserById(ownerUserId));
     return cache.get(key);
   }
 
@@ -237,27 +237,27 @@ export class PlexPlaybackDestination {
     return !owner || owner.role === "admin";
   }
 
-  _isOwnerBlocked(ownerUserId, clientCache, userCache = new Map()) {
+  async _isOwnerBlocked(ownerUserId, clientCache, userCache = new Map()) {
     if (ownerUserId == null) return false;
-    if (this._ownerClient(ownerUserId, clientCache) !== this.client) return false;
+    if ((await this._ownerClient(ownerUserId, clientCache)) !== this.client) return false;
     if (this._configuredByUserId != null) {
       return Number(ownerUserId) !== this._configuredByUserId;
     }
-    const owner = this._ownerUser(ownerUserId, userCache);
+    const owner = await this._ownerUser(ownerUserId, userCache);
     return Boolean(owner) && owner.role !== "admin";
   }
 
-  _title(ownerUserId, desired, clientCache, userCache = new Map()) {
+  async _title(ownerUserId, desired, clientCache, userCache = new Map()) {
     if (ownerUserId == null) return desired;
-    if (this._ownerClient(ownerUserId, clientCache) !== this.client) return desired;
-    const owner = this._ownerUser(ownerUserId, userCache);
+    if ((await this._ownerClient(ownerUserId, clientCache)) !== this.client) return desired;
+    const owner = await this._ownerUser(ownerUserId, userCache);
     if (this._ownsGlobalFallback(ownerUserId, owner)) return desired;
     return `${desired} (${owner?.username || "unlinked"})`;
   }
 
-  _location(ownerUserId) {
+  async _location(ownerUserId) {
     if (ownerUserId == null) return "global";
-    const connection = plexConnectionStore.getConnection(ownerUserId);
+    const connection = await plexConnectionStore.getConnection(ownerUserId);
     if (!connection) return "global";
     return `${connection.linkType}:${connection.plexAccountId ?? connection.plexUuid ?? ownerUserId}`;
   }
@@ -349,9 +349,9 @@ export class PlexPlaybackDestination {
     const targetKey = this._targetKey(ownerUserId);
     const client = pointer.location === "global"
       ? this.client
-      : this._ownerClient(ownerUserId, clientCache);
+      : await this._ownerClient(ownerUserId, clientCache);
     if (client === this.client && pointer.location !== "global") {
-      plexPlaylistPointerStore.deletePointer(entityId, targetKey);
+      await plexPlaylistPointerStore.deletePointer(entityId, targetKey);
       return;
     }
     try {
@@ -361,14 +361,14 @@ export class PlexPlaybackDestination {
         console.warn("[PlexPlaybackDestination] Failed to delete playlist:", error?.message);
       }
     }
-    plexPlaylistPointerStore.deletePointer(entityId, targetKey);
+    await plexPlaylistPointerStore.deletePointer(entityId, targetKey);
   }
 
   async _deleteCurrent(identity, clientCache = new Map()) {
     const targetKey = this._targetKey(identity.ownerUserId);
-    const pointer = plexPlaylistPointerStore.getPointer(identity.entityId, targetKey);
+    const pointer = await plexPlaylistPointerStore.getPointer(identity.entityId, targetKey);
     if (!pointer) return;
-    const location = this._location(identity.ownerUserId);
+    const location = await this._location(identity.ownerUserId);
     if (pointer.location === location) {
       await this._withOwnerClient(identity.ownerUserId, clientCache, async (client) => {
         if (!client) return;
@@ -381,7 +381,7 @@ export class PlexPlaybackDestination {
     } else {
       await this._cleanupRelocatedPointer(pointer);
     }
-    plexPlaylistPointerStore.deletePointer(identity.entityId, targetKey);
+    await plexPlaylistPointerStore.deletePointer(identity.entityId, targetKey);
     this._syncHashes.delete(`${identity.entityId}:${targetKey}`);
   }
 
@@ -396,11 +396,11 @@ export class PlexPlaybackDestination {
       if (!this._libraryTracks.length) return playbackOperationSuccess();
       const clientCache = new Map();
       const userCache = new Map();
-      if (this._isOwnerBlocked(snapshot.ownerUserId, clientCache, userCache)) {
+      if (await this._isOwnerBlocked(snapshot.ownerUserId, clientCache, userCache)) {
         await this._deleteCurrent(snapshot, clientCache);
         return playbackOperationSuccess();
       }
-      const title = this._title(
+      const title = await this._title(
         snapshot.ownerUserId,
         snapshot.displayName.trim(),
         clientCache,
@@ -415,8 +415,8 @@ export class PlexPlaybackDestination {
       const cacheKey = `${snapshot.entityId}:${targetKey}`;
       const hash = this._hash(snapshot, ratingKeys, title);
       if (this._syncHashes.get(cacheKey) === hash) return playbackOperationSuccess();
-      const location = this._location(snapshot.ownerUserId);
-      const pointer = plexPlaylistPointerStore.getPointer(snapshot.entityId, targetKey);
+      const location = await this._location(snapshot.ownerUserId);
+      const pointer = await plexPlaylistPointerStore.getPointer(snapshot.entityId, targetKey);
       if (pointer && pointer.location !== location) await this._cleanupRelocatedPointer(pointer);
       const reusable = pointer?.location === location ? pointer : null;
       const result = await this._withOwnerClient(snapshot.ownerUserId, clientCache, (client) =>
@@ -431,14 +431,14 @@ export class PlexPlaybackDestination {
       );
       if (result === SYNC_SKIPPED) return playbackOperationSuccess();
       if (result?.ratingKey) {
-        plexPlaylistPointerStore.setPointer(snapshot.entityId, targetKey, {
+        await plexPlaylistPointerStore.setPointer(snapshot.entityId, targetKey, {
           location,
           ratingKey: result.ratingKey,
           title,
           description: snapshot.description || null,
         });
       } else {
-        plexPlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
+        await plexPlaylistPointerStore.deletePointer(snapshot.entityId, targetKey);
       }
       this._syncHashes.set(cacheKey, hash);
       return playbackOperationSuccess();
@@ -467,14 +467,14 @@ export class PlexPlaybackDestination {
   async deleteOwnerPlaylists(ownerUserId) {
     const targetKey = this._targetKey(ownerUserId);
     const clientCache = new Map();
-    for (const pointer of plexPlaylistPointerStore.getPointersForTarget(targetKey)) {
+    for (const pointer of await plexPlaylistPointerStore.getPointersForTarget(targetKey)) {
       await this._deletePointer(pointer.entityId, ownerUserId, pointer, clientCache);
     }
   }
 
   async deleteEntityPlaylists(entityId) {
     const clientCache = new Map();
-    for (const pointer of plexPlaylistPointerStore.getPointersForEntity(entityId)) {
+    for (const pointer of await plexPlaylistPointerStore.getPointersForEntity(entityId)) {
       const ownerUserId = pointer.targetKey === "global" ? null : Number(pointer.targetKey);
       await this._deletePointer(entityId, ownerUserId, pointer, clientCache);
     }
@@ -510,13 +510,13 @@ export class PlexPlaybackDestination {
     const playlists = await this.client.getPlaylists();
     const clientCache = new Map();
     const userCache = new Map();
-    const managedNames = new Set(
-      snapshots
-        .filter((snapshot) => !this._isOwnerBlocked(snapshot.ownerUserId, clientCache, userCache))
-        .map((snapshot) =>
-          this._title(snapshot.ownerUserId, snapshot.displayName, clientCache, userCache),
-        ),
-    );
+    const managedNames = new Set();
+    for (const snapshot of snapshots) {
+      if (await this._isOwnerBlocked(snapshot.ownerUserId, clientCache, userCache)) continue;
+      managedNames.add(
+        await this._title(snapshot.ownerUserId, snapshot.displayName, clientCache, userCache),
+      );
+    }
     this._scheduleCatchup(loadSnapshots);
     return {
       configured: true,

@@ -2,8 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
 import { lidarrClient } from "../../backend/services/lidarrClient.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 async function readJsonBody(req) {
   const chunks = [];

@@ -90,7 +90,7 @@ function collectPlaylistTrackEntries(playlist) {
     }));
 }
 
-function buildOwnerMap(flows, sharedPlaylists) {
+async function buildOwnerMap(flows, sharedPlaylists) {
   const ownerIds = new Set();
   for (const item of [
     ...(Array.isArray(flows) ? flows : []),
@@ -103,7 +103,7 @@ function buildOwnerMap(flows, sharedPlaylists) {
   }
   const ownerMap = new Map();
   for (const ownerUserId of ownerIds) {
-    const owner = userOps.getUserById(ownerUserId);
+    const owner = await userOps.getUserById(ownerUserId);
     if (owner?.username) {
       ownerMap.set(ownerUserId, owner.username);
     }
@@ -111,7 +111,7 @@ function buildOwnerMap(flows, sharedPlaylists) {
   return ownerMap;
 }
 
-export function getWeeklyFlowStatusSnapshot({
+export async function getWeeklyFlowStatusSnapshot({
   user = null,
 } = {}) {
   const workerStatus = weeklyFlowWorker.getStatus();
@@ -156,7 +156,7 @@ export function getWeeklyFlowStatusSnapshot({
         : null,
     };
   });
-  const ownerMap = buildOwnerMap(flows, sharedPlaylists);
+  const ownerMap = await buildOwnerMap(flows, sharedPlaylists);
   const flowsWithOwners = flows.map((flow) => ({
     ...flow,
     ownerUsername: ownerMap.get(Number(flow?.ownerUserId)) || null,

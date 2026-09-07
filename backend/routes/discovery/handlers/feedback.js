@@ -7,9 +7,9 @@ export function registerFeedback(router) {
     });
   });
 
-  router.post("/feedback", requireAuth, (req, res) => {
+  router.post("/feedback", requireAuth, async (req, res) => {
     try {
-      const feedback = addDiscoveryFeedback(
+      const feedback = await addDiscoveryFeedback(
         req.user?.id || "global",
         req.body || {},
       );
@@ -26,8 +26,8 @@ export function registerFeedback(router) {
     }
   });
 
-  router.delete("/feedback/:id", requireAuth, (req, res) => {
-    const feedbackList = removeDiscoveryFeedback(
+  router.delete("/feedback/:id", requireAuth, async (req, res) => {
+    const feedbackList = await removeDiscoveryFeedback(
       req.user?.id || "global",
       req.params.id,
     );
@@ -37,8 +37,8 @@ export function registerFeedback(router) {
     });
   });
 
-  router.post("/feedback/reset", requireAuth, (req, res) => {
-    const feedbackList = resetDiscoveryFeedback(req.user?.id || "global");
+  router.post("/feedback/reset", requireAuth, async (req, res) => {
+    const feedbackList = await resetDiscoveryFeedback(req.user?.id || "global");
     res.json({
       success: true,
       feedbackList,

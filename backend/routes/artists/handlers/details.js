@@ -13,8 +13,8 @@ import { getArtistByMbid } from "../../../services/providers/brainzmashProvider.
 import { getArtistTagPayload, buildArtistBase } from "../shared/transform.js";
 import { getCanonicalArtistProjection } from "../../../services/libraryQueryService.js";
 
-export function getCanonicalLidarrArtist(reference) {
-  const artist = getCanonicalArtistProjection({ reference })[0] || null;
+export async function getCanonicalLidarrArtist(reference) {
+  const artist = (await getCanonicalArtistProjection({ reference }))[0] || null;
   if (!artist?.lidarrManaged) return null;
   return {
     id: artist.providerId || artist.id,
@@ -54,7 +54,7 @@ export function registerDetails(router) {
         message: `"${mbid}" is not a valid MusicBrainz ID. MBIDs must be UUIDs.`,
       });
     }
-    const override = dbOps.getArtistOverride(mbid);
+    const override = await dbOps.getArtistOverride(mbid);
     return res.json({
       mbid,
       musicbrainzId: override?.musicbrainzId || null,
@@ -98,8 +98,8 @@ export function registerDetails(router) {
     }
 
     if (!musicbrainzId && !deezerArtistId) {
-      dbOps.deleteArtistOverride(mbid);
-      dbOps.deleteImage(mbid);
+      await dbOps.deleteArtistOverride(mbid);
+      await dbOps.deleteImage(mbid);
       return res.json({
         mbid,
         musicbrainzId: null,
@@ -107,11 +107,11 @@ export function registerDetails(router) {
       });
     }
 
-    const saved = dbOps.setArtistOverride(mbid, {
+    const saved = await dbOps.setArtistOverride(mbid, {
       musicbrainzId,
       deezerArtistId,
     });
-    dbOps.deleteImage(mbid);
+    await dbOps.deleteImage(mbid);
     return res.json(saved);
   });
 
@@ -159,12 +159,12 @@ export function registerDetails(router) {
       logger.info("api", "Fetching artist details", { mbid });
 
       let data = null;
-      const override = dbOps.getArtistOverride(mbid);
+      const override = await dbOps.getArtistOverride(mbid);
       const resolvedMbid = override?.musicbrainzId || mbid;
 
       const lidarrArtist =
-        getCanonicalLidarrArtist(resolvedMbid) ||
-        (resolvedMbid === mbid ? null : getCanonicalLidarrArtist(mbid));
+        (await getCanonicalLidarrArtist(resolvedMbid)) ||
+        (resolvedMbid === mbid ? null : await getCanonicalLidarrArtist(mbid));
 
       if (lidarrArtist) {
         const artistMbid = override?.musicbrainzId || mbid;

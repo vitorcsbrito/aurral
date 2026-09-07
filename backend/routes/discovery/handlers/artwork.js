@@ -4,7 +4,7 @@ import { ensureDiscoverArtworkForPreset } from "../../../services/discovery/play
 
 export function registerArtwork(router) {
   router.get("/artwork/:presetId", async (req, res) => {
-    if (!verifyTokenAuth(req)) {
+    if (!(await verifyTokenAuth(req))) {
       return res.status(401).json({ error: "Unauthorized", message: "Authentication required" });
     }
 

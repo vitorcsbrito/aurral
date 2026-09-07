@@ -222,7 +222,7 @@ export function registerReleaseGroup(router) {
         const tracks = await getAlbumTracksByAlbumMbid(mbid);
         let deezerArtistId = "";
         if (artistMbid) {
-          const override = dbOps.getArtistOverride(artistMbid);
+          const override = await dbOps.getArtistOverride(artistMbid);
           deezerArtistId = override?.deezerArtistId || "";
           if (!deezerArtistId) {
             const resolvedArtistMbid = override?.musicbrainzId || artistMbid;

@@ -17,31 +17,31 @@ const webhookArtistId = (body) => {
   return Number.isSafeInteger(artistId) && artistId > 0 ? artistId : null;
 };
 
-const scheduleWebhookScan = (eventType, body) => {
+const scheduleWebhookScan = async (eventType, body) => {
   try {
-    if (FULL_SCAN_EVENTS.has(eventType)) return scheduleLibraryScan({ includeLidarr: true });
+    if (FULL_SCAN_EVENTS.has(eventType)) return await scheduleLibraryScan({ includeLidarr: true });
     if (!ARTIST_SCOPED_EVENTS.has(eventType)) return null;
     const artistId = webhookArtistId(body);
-    if (artistId) return scheduleLibraryScan({ artistIds: [artistId] });
+    if (artistId) return await scheduleLibraryScan({ artistIds: [artistId] });
     // A delete without an artist id cannot be scoped; reconcile everything.
-    return eventType === "albumdelete" ? scheduleLibraryScan({ includeLidarr: true }) : null;
+    return eventType === "albumdelete" ? await scheduleLibraryScan({ includeLidarr: true }) : null;
   } catch {
     return null;
   }
 };
 
-export const handleLidarrWebhook = (req, res) => {
+export const handleLidarrWebhook = async (req, res) => {
   const eventType = String(req.body?.eventType || req.body?.EventType || "")
     .trim()
     .toLowerCase();
-  const scanJobId = scheduleWebhookScan(eventType, req.body);
+  const scanJobId = await scheduleWebhookScan(eventType, req.body);
   if (eventType !== "download") {
     return scanJobId ? res.json({ handled: true, scanJobId }) : res.status(204).end();
   }
 
   const album = req.body?.album || req.body?.Album || {};
   const artist = album.artist || album.Artist || {};
-  const entry = recordAlbumImportCompleted({
+  const entry = await recordAlbumImportCompleted({
     albumId: album.id ?? album.Id,
     albumName: album.title ?? album.Title,
     artistName: artist.artistName ?? artist.ArtistName,

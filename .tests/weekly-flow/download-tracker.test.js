@@ -9,29 +9,34 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, trackerModule, qualityProfileService, workerModule] = await setupIsolatedBackend(
+const [isolatedState, { dbOps }, trackerModule, qualityProfileService, workerModule] = await setupIsolatedBackend(
   "download-tracker",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/weeklyFlow/weeklyFlowDownloadTracker.js",
   "backend/services/qualityProfileService.js",
   "backend/services/weeklyFlow/weeklyFlowWorker.js",
 );
 
-const { WeeklyFlowDownloadTracker } = trackerModule;
+const { WeeklyFlowDownloadTracker, flushDownloadTrackerWrites } = trackerModule;
 const { WeeklyFlowWorker } = workerModule;
 
+// Trackers no longer read the DB in their constructor.
+const newTracker = () => new WeeklyFlowDownloadTracker().init();
+
+await trackerModule.downloadTracker.init();
+
 test.beforeEach(async () => {
-  await resetDatabase(db);
+  await resetDatabase();
   trackerModule.downloadTracker.clearAll();
+  await flushDownloadTrackerWrites();
 });
 
 test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("getNextPendingMatching skips future-dated retry jobs and returns ready work", () => {
-  const tracker = new WeeklyFlowDownloadTracker();
+test("getNextPendingMatching skips future-dated retry jobs and returns ready work", async () => {
+  const tracker = await newTracker();
   const [firstId, secondId] = tracker.addJobs(
     [
       { artistName: "Artist A", trackName: "Song A" },
@@ -63,8 +68,8 @@ test("worker does not select a job that is already active", () => {
   assert.equal(worker._getNextReadyPendingJob(), null);
 });
 
-test("persists enriched album context for slskd matching", () => {
-  const tracker = new WeeklyFlowDownloadTracker();
+test("persists enriched album context for slskd matching", async () => {
+  const tracker = await newTracker();
   const jobId = tracker.addJob(
     {
       artistName: "Artist",
@@ -80,7 +85,8 @@ test("persists enriched album context for slskd matching", () => {
     albumTrackTitles: ["Intro", "Other Song", "Song"],
   });
 
-  const reloaded = new WeeklyFlowDownloadTracker();
+  await flushDownloadTrackerWrites();
+  const reloaded = await newTracker();
   const job = reloaded.getJob(jobId);
 
   assert.equal(job.trackNumber, 3);
@@ -88,8 +94,8 @@ test("persists enriched album context for slskd matching", () => {
   assert.deepEqual(job.albumTrackTitles, ["Intro", "Other Song", "Song"]);
 });
 
-test("returns complete playlist job lists unless a caller explicitly limits them", () => {
-  const tracker = new WeeklyFlowDownloadTracker();
+test("returns complete playlist job lists unless a caller explicitly limits them", async () => {
+  const tracker = await newTracker();
   const tracks = Array.from({ length: 650 }, (_, index) => ({
     artistName: `Artist ${index}`,
     trackName: `Song ${index}`,
@@ -104,8 +110,8 @@ test("returns complete playlist job lists unless a caller explicitly limits them
   );
 });
 
-test("drops orphaned upgrade jobs on restart and updates every shared file reference", () => {
-  const tracker = new WeeklyFlowDownloadTracker();
+test("drops orphaned upgrade jobs on restart and updates every shared file reference", async () => {
+  const tracker = await newTracker();
   const firstId = tracker.addJob(
     { artistName: "Artist", trackName: "Song", albumName: "Album" },
     "flow-one",
@@ -122,7 +128,8 @@ test("drops orphaned upgrade jobs on restart and updates every shared file refer
   const upgradeId = tracker.addUpgradeJob(tracker.getJob(firstId));
   assert.ok(upgradeId);
   assert.equal(tracker.addUpgradeJob(tracker.getJob(secondId)), null);
-  const reloaded = new WeeklyFlowDownloadTracker();
+  await flushDownloadTrackerWrites();
+  const reloaded = await newTracker();
   assert.equal(reloaded.getJob(upgradeId), null);
   assert.ok(reloaded.addUpgradeJob(reloaded.getJob(secondId)));
 
@@ -173,7 +180,7 @@ test("classifies reused Lidarr files without making them eligible for upgrades",
       "base64",
     ),
   );
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...dbOps.getSettings(),
     downloadFolderPath: path.join(isolatedState.baseDir, "managed"),
   });

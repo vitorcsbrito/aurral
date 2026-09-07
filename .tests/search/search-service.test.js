@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createMockHttpServer } from "../helpers/backendTestHarness.js";
+import {
+  createMockHttpServer,
+  ensureTestDatabase,
+  reloadMirrors,
+} from "../helpers/backendTestHarness.js";
 import { dbOps } from "../../backend/db/helpers/index.js";
 import { clearMetadataProviderCaches } from "../../backend/services/providers/brainzmashProvider.js";
 import {
@@ -10,6 +14,9 @@ import {
 } from "../../backend/services/searchService.js";
 import { libraryManager } from "../../backend/services/libraryManager.js";
 import { lidarrClient } from "../../backend/services/lidarrClient.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 test("searchArtists normalizes BrainzMash artists", async () => {
   let requests = 0;
@@ -40,7 +47,7 @@ test("searchArtists normalizes BrainzMash artists", async () => {
     );
   });
   const originalSettings = dbOps.getSettings();
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     ...originalSettings,
     integrations: {
       ...originalSettings.integrations,
@@ -63,7 +70,7 @@ test("searchArtists normalizes BrainzMash artists", async () => {
     assert.equal(requests, 2);
   } finally {
     clearMetadataProviderCaches();
-    dbOps.updateSettings(originalSettings);
+    await dbOps.updateSettings(originalSettings);
     await server.close();
   }
 });

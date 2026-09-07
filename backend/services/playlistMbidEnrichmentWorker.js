@@ -13,7 +13,7 @@ async function processPlaylistMbidEnrichment(payload = {}) {
       });
     }
     case "playlist-mbid-enrichment-sweep": {
-      const jobIds = schedulePlaylistMbidEnrichmentForMissingPlaylists({
+      const jobIds = await schedulePlaylistMbidEnrichmentForMissingPlaylists({
         reason: payload?.reason || "sweep",
         reconcileArtistMbids: payload?.reconcileArtistMbids === true,
       });

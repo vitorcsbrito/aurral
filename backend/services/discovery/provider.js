@@ -70,9 +70,9 @@ export { DISCOVERY_QUALITY_ENRICHED };
 
 const pendingUserDiscoveryProfiles = new Map();
 
-const collectListeningHistoryRefreshProfiles = () => {
+const collectListeningHistoryRefreshProfiles = async () => {
   const profiles = new Map();
-  for (const user of userOps.getAllListeningHistoryUsers()) {
+  for (const user of await userOps.getAllListeningHistoryUsers()) {
     const profile = getListenHistoryProfile(user);
     const cacheNamespace = getListenHistoryCacheNamespace(profile);
     if (!cacheNamespace || !hasListenHistoryProfile(profile)) continue;
@@ -96,13 +96,13 @@ const collectListeningHistoryRefreshProfiles = () => {
   return [...profiles.values()];
 };
 
-const enqueueListeningHistoryUserRefreshes = ({
+const enqueueListeningHistoryUserRefreshes = async ({
   reason = "global_refresh_completed",
   delaySeconds = getDiscoveryUserRefreshDelaySeconds(),
   staggerSeconds = 30,
   onProgress,
 } = {}) => {
-  const profiles = collectListeningHistoryRefreshProfiles();
+  const profiles = await collectListeningHistoryRefreshProfiles();
   if (profiles.length === 0) return 0;
 
   profiles.forEach((entry, index) => {
@@ -185,20 +185,21 @@ const fetchListenHistoryArtists = async (
     const artists = Array.isArray(data?.payload?.artists)
       ? data.payload.artists
       : [];
-    return artists
-      .map((artist) => {
+    const mapped = await Promise.all(
+      artists.map(async (artist) => {
         const mbid = Array.isArray(artist.artist_mbids)
           ? artist.artist_mbids.find(Boolean)
           : artist.artist_mbid || null;
         const resolvedMbid =
-          mbid || musicbrainzGetCachedArtistMbidByName(artist.artist_name);
+          mbid || (await musicbrainzGetCachedArtistMbidByName(artist.artist_name));
         return {
           mbid: resolvedMbid || null,
           artistName: artist.artist_name,
           playcount: parseInt(artist.listen_count || 0, 10) || 0,
         };
-      })
-      .filter((artist) => artist.artistName);
+      }),
+    );
+    return mapped.filter((artist) => artist.artistName);
   }
 
   if (profile.listenHistoryProvider === "koito") {
@@ -228,20 +229,21 @@ const fetchListenHistoryArtists = async (
     ? userTopArtists.topartists.artist
     : [userTopArtists.topartists.artist];
 
-  return artists
-    .map((artist) => {
+  const mapped = await Promise.all(
+    artists.map(async (artist) => {
       const artistName = String(artist?.name || "").trim();
       if (!artistName) return null;
       return {
         mbid:
           String(artist.mbid || "").trim() ||
-          musicbrainzGetCachedArtistMbidByName(artistName) ||
+          (await musicbrainzGetCachedArtistMbidByName(artistName)) ||
           null,
         artistName,
         playcount: parseInt(artist.playcount || 0, 10) || 0,
       };
-    })
-    .filter(Boolean);
+    }),
+  );
+  return mapped.filter(Boolean);
 };
 
 export const rerankCachedRecommendations = ({
@@ -281,7 +283,7 @@ const resolveRecommendationCandidates = async (
     getDiscoveryNetworkConcurrency(),
     async (item) => {
       if (item?.id || !item?.name) return;
-      const cached = musicbrainzGetCachedArtistMbidByName(item.name);
+      const cached = await musicbrainzGetCachedArtistMbidByName(item.name);
       const resolved =
         cached || (await musicbrainzResolveArtistMbidByName(item.name));
       if (!resolved) return;
@@ -441,7 +443,7 @@ export const updateDiscoveryCache = async (options = {}) => {
 
   try {
     recordDiscoveryUpdateProgress("loading_sources", "Loading library artists", 12);
-    const allLibraryArtists = getCanonicalArtistKeys();
+    const allLibraryArtists = await getCanonicalArtistKeys();
     const recentLibraryArtists = allLibraryArtists.slice(0, 40);
     const libraryArtists =
       recentLibraryArtists.length > 0
@@ -478,7 +480,7 @@ export const updateDiscoveryCache = async (options = {}) => {
       Object.assign(discoveryCache, fallbackData, {
         isUpdating: false,
       });
-      dbOps.updateDiscoveryCache(fallbackData);
+      await dbOps.updateDiscoveryCache(fallbackData);
       websocketService.emitDiscoveryUpdate({
         ...fallbackData,
         isUpdating: false,
@@ -597,7 +599,7 @@ export const updateDiscoveryCache = async (options = {}) => {
           async (item) => {
             if (!item?.name || item?.id) return;
             const resolved =
-              musicbrainzGetCachedArtistMbidByName(item.name) ||
+              await musicbrainzGetCachedArtistMbidByName(item.name) ||
               (await musicbrainzResolveArtistMbidByName(item.name));
             if (!resolved) return;
             item.id = resolved;
@@ -719,7 +721,7 @@ export const updateDiscoveryCache = async (options = {}) => {
     };
 
     Object.assign(discoveryCache, discoveryData, { isUpdating: false });
-    dbOps.updateDiscoveryCache(discoveryData);
+    await dbOps.updateDiscoveryCache(discoveryData);
     recordDiscoveryUpdateProgress(
       "saving_results",
       "Saving discovery recommendations",
@@ -742,14 +744,14 @@ export const updateDiscoveryCache = async (options = {}) => {
     discoveryCache.isUpdating = false;
     clearDiscoveryUpdateProgress();
 
-    const listeningHistoryUsersConfigured = userOps
-      .getAllListeningHistoryUsers()
-      .some((user) => hasListenHistoryProfile(getListenHistoryProfile(user)));
+    const listeningHistoryUsersConfigured = (await userOps.getAllListeningHistoryUsers()).some(
+      (user) => hasListenHistoryProfile(getListenHistoryProfile(user)),
+    );
     if (listeningHistoryUsersConfigured) {
       emitDiscoveryDataUpdate(discoveryData, {
         progressMessage: "Discovery refresh completed",
       });
-      const queuedUserRefreshes = enqueueListeningHistoryUserRefreshes({
+      const queuedUserRefreshes = await enqueueListeningHistoryUserRefreshes({
         reason: "global_refresh_completed",
       });
       if (queuedUserRefreshes > 0) {
@@ -789,14 +791,14 @@ export const updateDiscoveryCache = async (options = {}) => {
     });
 
     try {
-      const cleaned = dbOps.cleanOldImageCache(30);
+      const cleaned = await dbOps.cleanOldImageCache(30);
       if (cleaned?.changes > 0) {
         logger.info(
           'discovery',
           `[Discovery] Cleaned ${cleaned.changes} old image cache entries`,
         );
       }
-      dbOps.cleanOldMusicbrainzArtistMbidCache(90);
+      await dbOps.cleanOldMusicbrainzArtistMbidCache(90);
     } catch (e) {
       logger.warn('discovery', "[Discovery] Failed to clean old image cache:", e.message);
     }
@@ -818,7 +820,7 @@ export const updateDiscoveryCache = async (options = {}) => {
       .catch((err) => { logger.warn('discovery', err); });
   } finally {
     if (pendingUserDiscoveryProfiles.size > 0) {
-      const queuedUserRefreshes = enqueueListeningHistoryUserRefreshes({
+      const queuedUserRefreshes = await enqueueListeningHistoryUserRefreshes({
         reason: "global_refresh_finished",
       });
       if (queuedUserRefreshes > 0) {
@@ -894,7 +896,7 @@ export const updateUserDiscoveryCache = async (
   }
 
   try {
-    const existingArtistKeys = buildExistingArtistKeySet(getCanonicalArtistKeys());
+    const existingArtistKeys = buildExistingArtistKeySet(await getCanonicalArtistKeys());
 
     const lastfmHealth = { success: 0, failure: 0 };
     const discoveryPeriod = getLastfmDiscoveryPeriod();
@@ -931,7 +933,7 @@ export const updateUserDiscoveryCache = async (
 
     if (options.feedbackUserId) {
       historyArtists.push(
-        ...getTopPlayedArtists(options.feedbackUserId, { limit: 50 }).map((artist) => ({
+        ...(await getTopPlayedArtists(options.feedbackUserId, { limit: 50 })).map((artist) => ({
           ...artist,
           source: "local",
         })),
@@ -992,7 +994,7 @@ export const updateUserDiscoveryCache = async (
     const recommendationsArray = mergeRetainedRecommendationPool({
       freshRecommendations: freshRecommendations.length ? freshRecommendations : globalPool,
       existingRecommendations:
-        dbOps.getDiscoveryCache(cacheNamespace).recommendations || [],
+        await dbOps.getDiscoveryCache(cacheNamespace).recommendations || [],
       existingArtistKeys,
       limit: getDiscoveryRecommendationPoolLimit(),
       runStartedAt: recommendationRunStartedAt,
@@ -1020,7 +1022,7 @@ export const updateUserDiscoveryCache = async (
       enrichmentProgressMessage: null,
     };
 
-    dbOps.updateDiscoveryCache(userData, cacheNamespace);
+    await dbOps.updateDiscoveryCache(userData, cacheNamespace);
     scheduleDiscoverPlaylistBuild({
       cacheNamespace,
       listenHistoryProfile: profile,

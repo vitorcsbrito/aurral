@@ -33,8 +33,8 @@ const createAuthRequiredError = (message) => {
   return error;
 };
 
-const invalidateConnection = (userId, expectedConnection) => {
-  if (spotifyConnectionStore.clearConnectionIfMatches(userId, expectedConnection)) {
+const invalidateConnection = async (userId, expectedConnection) => {
+  if (await spotifyConnectionStore.clearConnectionIfMatches(userId, expectedConnection)) {
     bumpPlaylistTrackGeneration(userId);
   }
   return createAuthRequiredError("Spotify connection expired");
@@ -71,12 +71,12 @@ const refreshConnection = (userId, refreshToken, { force = false } = {}) =>
     tokenRefreshInflight,
     String(userId),
     async (signal) => {
-      const latest = spotifyConnectionStore.getConnection(userId);
+      const latest = await spotifyConnectionStore.getConnection(userId);
       if (!force && latest?.expiresAt - TOKEN_REFRESH_BUFFER_MS > Date.now()) {
         return latest;
       }
       const renewed = await renewAccessToken(latest?.refreshToken || refreshToken, signal);
-      const current = spotifyConnectionStore.getConnection(userId);
+      const current = await spotifyConnectionStore.getConnection(userId);
       if (!current) throw createAuthRequiredError("Spotify is not connected");
       if (
         current.accessToken !== latest?.accessToken ||
@@ -84,12 +84,12 @@ const refreshConnection = (userId, refreshToken, { force = false } = {}) =>
       ) {
         return current;
       }
-      return spotifyConnectionStore.updateTokens(userId, renewed);
+      return await spotifyConnectionStore.updateTokens(userId, renewed);
     },
   );
 
 async function getValidConnection(userId) {
-  let connection = spotifyConnectionStore.getConnection(userId);
+  let connection = await spotifyConnectionStore.getConnection(userId);
   if (!connection) {
     throw createAuthRequiredError("Spotify is not connected");
   }
@@ -99,7 +99,7 @@ async function getValidConnection(userId) {
   try {
     return await refreshConnection(userId, connection.refreshToken);
   } catch (error) {
-    if (error?.statusCode === 401) throw invalidateConnection(userId, connection);
+    if (error?.statusCode === 401) throw await invalidateConnection(userId, connection);
     throw error;
   }
 }
@@ -121,14 +121,14 @@ async function spotifyRequest(userId, path, { searchParams, url: absoluteUrl } =
   });
   let nextConnection = connection;
   if (response.status === 401) {
-    const latest = spotifyConnectionStore.getConnection(userId);
+    const latest = await spotifyConnectionStore.getConnection(userId);
     try {
       nextConnection =
         latest?.accessToken && latest.accessToken !== connection.accessToken
           ? latest
           : await refreshConnection(userId, connection.refreshToken, { force: true });
     } catch (error) {
-      if (error?.statusCode === 401) throw invalidateConnection(userId, connection);
+      if (error?.statusCode === 401) throw await invalidateConnection(userId, connection);
       throw error;
     }
     response = await fetch(url, {
@@ -140,7 +140,7 @@ async function spotifyRequest(userId, path, { searchParams, url: absoluteUrl } =
   }
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    if (response.status === 401) throw invalidateConnection(userId, nextConnection);
+    if (response.status === 401) throw await invalidateConnection(userId, nextConnection);
     const error = new Error(body || `Spotify request failed (${response.status})`);
     error.statusCode = response.status;
     throw error;
@@ -173,7 +173,7 @@ export const spotifyClient = {
     const playlists = await fetchAllPages(userId, "/me/playlists", {
       searchParams: { limit: 50 },
     });
-    const connection = spotifyConnectionStore.getPublicStatus(userId);
+    const connection = await spotifyConnectionStore.getPublicStatus(userId);
     return {
       user: connection.displayName || "Spotify",
       playlists: playlists

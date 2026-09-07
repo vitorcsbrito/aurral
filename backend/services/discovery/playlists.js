@@ -85,7 +85,7 @@ export const runQueuedDiscoverPlaylistBuild = async (payload = {}) => {
           recordDiscoverPlaylistBuildProgress("Building recommended playlists...");
         }
 
-        const allLibraryArtists = getCanonicalArtistKeys();
+        const allLibraryArtists = await getCanonicalArtistKeys();
         const existingArtistKeys = buildExistingArtistKeySet(allLibraryArtists);
         const { generateDiscoverPlaylists } =
           await import("./playlistBuilder.js");
@@ -111,7 +111,7 @@ export const runQueuedDiscoverPlaylistBuild = async (payload = {}) => {
         }
 
         discoveryCache.discoverPlaylists = discoverPlaylists;
-        dbOps.updateDiscoveryCache(
+        await dbOps.updateDiscoveryCache(
           { discoverPlaylists },
           cacheNamespace,
         );

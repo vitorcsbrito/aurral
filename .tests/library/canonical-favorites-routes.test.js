@@ -8,10 +8,9 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { userOps }, libraryService, libraryStore] =
+const [isolatedState, { userOps }, libraryService, libraryStore] =
   await setupIsolatedBackend(
     "canonical-favorites-route",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/subsonicLibraryService.js",
     "backend/services/libraryMediaStore.js",
@@ -31,68 +30,68 @@ const {
 let user;
 let artist;
 
-test.before(() => {
-  resetDatabase(db);
-  user = userOps.getUserById(userOps.createUser("native", "hash").id);
-  artist = upsertLibraryArtist({
+test.before(async () => {
+  await resetDatabase();
+  user = await userOps.getUserById((await userOps.createUser("native", "hash")).id);
+  artist = await upsertLibraryArtist({
     identityKey: "favorite-artist",
     mbid: "11111111-1111-4111-8111-111111111111",
     name: "Favorite Artist",
     metadata: { genres: ["Indie Rock"] },
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: "favorite-album",
     mbid: "22222222-2222-4222-8222-222222222222",
     artistId: artist.id,
     title: "Favorite Album",
     albumArtist: artist.name,
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: "favorite-track",
     mbid: "33333333-3333-4333-8333-333333333333",
     title: "Favorite Track",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
+  await upsertLibraryMediaFile({
     trackId: track.id,
     source: "aurral",
     path: "/library/Favorite Artist/Favorite Album/01 Favorite Track.flac",
     format: "flac",
     available: true,
   });
-  const secondTrack = upsertLibraryTrack({
+  const secondTrack = await upsertLibraryTrack({
     identityKey: "favorite-track-two",
     mbid: "44444444-4444-4444-8444-444444444444",
     title: "Favorite Track Two",
     artistName: artist.name,
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: secondTrack.id, trackNumber: 2 });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: secondTrack.id, trackNumber: 2 });
+  await upsertLibraryMediaFile({
     trackId: secondTrack.id,
     source: "aurral",
     path: "/library/Favorite Artist/Favorite Album/02 Favorite Track Two.flac",
     format: "flac",
     available: false,
   });
-  const otherArtist = upsertLibraryArtist({
+  const otherArtist = await upsertLibraryArtist({
     identityKey: "other-artist",
     name: "Other Artist",
     metadata: { genres: ["Jazz"] },
   });
-  const otherAlbum = upsertLibraryAlbum({
+  const otherAlbum = await upsertLibraryAlbum({
     identityKey: "other-album",
     artistId: otherArtist.id,
     title: "Other Album",
     albumArtist: otherArtist.name,
   });
-  const otherTrack = upsertLibraryTrack({
+  const otherTrack = await upsertLibraryTrack({
     identityKey: "other-track",
     title: "Other Track",
     artistName: otherArtist.name,
   });
-  linkLibraryAlbumTrack({ albumId: otherAlbum.id, trackId: otherTrack.id, trackNumber: 1 });
-  upsertLibraryMediaFile({
+  await linkLibraryAlbumTrack({ albumId: otherAlbum.id, trackId: otherTrack.id, trackNumber: 1 });
+  await upsertLibraryMediaFile({
     trackId: otherTrack.id,
     source: "aurral",
     path: "/library/Other Artist/Other Album/01 Other Track.flac",
@@ -153,10 +152,10 @@ function responseFor() {
   return response;
 }
 
-test("native favorites return changed identities and reuse Subsonic star identity", () => {
+test("native favorites return changed identities and reuse Subsonic star identity", async () => {
   const target = `artist:${encodeURIComponent(artist.identity_key)}`;
   const postResponse = responseFor();
-  getRoute("POST /favorites")(
+  await getRoute("POST /favorites")(
     { user, body: { ids: [target], starred: true } },
     postResponse,
   );
@@ -166,13 +165,13 @@ test("native favorites return changed identities and reuse Subsonic star identit
   assert.equal(postResponse.body.library, undefined);
 
   const getResponse = responseFor();
-  getRoute("GET /favorites")({ user }, getResponse);
+  await getRoute("GET /favorites")({ user }, getResponse);
   assert.deepEqual(getResponse.body.artist.map((entry) => entry.id), [target]);
 });
 
-test("native favorites include the canonical favorite subset", () => {
+test("native favorites include the canonical favorite subset", async () => {
   const response = responseFor();
-  getRoute("GET /favorites")({ user }, response);
+  await getRoute("GET /favorites")({ user }, response);
 
   assert.deepEqual(response.body.library.artists.map((entry) => entry.name), ["Favorite Artist"]);
   assert.deepEqual(response.body.library.albums.map((entry) => entry.title), ["Favorite Album"]);
@@ -183,9 +182,9 @@ test("native favorites include the canonical favorite subset", () => {
   assert.equal(response.body.library.tracks[0].files[0].path, undefined);
 });
 
-test("canonical library pages return bounded collection responses", () => {
+test("canonical library pages return bounded collection responses", async () => {
   const response = responseFor();
-  getRoute("GET /canonical")(
+  await getRoute("GET /canonical")(
     { user, query: { kind: "tracks", page: "1", pageSize: "1" } },
     response,
   );
@@ -203,7 +202,7 @@ test("canonical library pages return bounded collection responses", () => {
   assert.equal(response.body.items[0].files[0].path, undefined);
 
   const availableResponse = responseFor();
-  getRoute("GET /canonical")(
+  await getRoute("GET /canonical")(
     { user, query: { kind: "albums", page: "1", pageSize: "1", availableOnly: "true" } },
     availableResponse,
   );
@@ -211,36 +210,36 @@ test("canonical library pages return bounded collection responses", () => {
   assert.equal(availableResponse.body.items[0].availableTrackCount, 1);
 
   const artistResponse = responseFor();
-  getRoute("GET /canonical")(
+  await getRoute("GET /canonical")(
     { user, query: { kind: "artists", page: "1", pageSize: "1" } },
     artistResponse,
   );
   assert.equal(artistResponse.body.items[0].userFavorite, true);
 });
 
-test("canonical library rejects unbounded requests", () => {
+test("canonical library rejects unbounded requests", async () => {
   const response = responseFor();
-  getRoute("GET /canonical")({ user, query: { kind: "tracks" } }, response);
+  await getRoute("GET /canonical")({ user, query: { kind: "tracks" } }, response);
 
   assert.equal(response.statusCode, 400);
   assert.equal(response.body.error, "kind and pageSize (1-100) are required");
 });
 
-test("native favorites rejects unknown targets without changing stars", () => {
+test("native favorites rejects unknown targets without changing stars", async () => {
   const response = responseFor();
-  getRoute("POST /favorites")(
+  await getRoute("POST /favorites")(
     { user, body: { ids: ["album:missing"], starred: true } },
     response,
   );
 
   assert.equal(response.statusCode, 400);
   assert.equal(response.body.error, "Invalid favorite target");
-  assert.equal(libraryService.getStarred(user).artist.length, 1);
+  assert.equal((await libraryService.getStarred(user)).artist.length, 1);
 });
 
-test("canonical pages filter, count, and paginate in the read query", () => {
+test("canonical pages filter, count, and paginate in the read query", async () => {
   const response = responseFor();
-  getRoute("GET /canonical")(
+  await getRoute("GET /canonical")(
     {
       query: {
         kind: "albums",

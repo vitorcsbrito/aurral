@@ -7,6 +7,10 @@ import {
   setDateTimeFormat,
 } from "../../frontend/src/utils/dateTime.js";
 import { dbOps } from "../../backend/db/helpers/index.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 test("formats dates in the selected international order", () => {
   const date = new Date(2026, 7, 9, 14, 5);
@@ -26,7 +30,7 @@ test("formats dates in the selected international order", () => {
   setDateTimeFormat("browser");
 });
 
-test("persists the application date and time format", () => {
-  dbOps.updateSettings({ dateTimeFormat: "year-first" });
+test("persists the application date and time format", async () => {
+  await dbOps.updateSettings({ dateTimeFormat: "year-first" });
   assert.equal(dbOps.getSettings().dateTimeFormat, "year-first");
 });

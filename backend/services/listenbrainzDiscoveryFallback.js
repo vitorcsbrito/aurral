@@ -251,7 +251,7 @@ const normalizeCuratedArtist = async (entry, genre) => {
   const explicitMbid = normalizeMbid(typeof entry === "object" ? entry.mbid || entry.id : null);
   const mbid =
     explicitMbid ||
-    musicbrainzGetCachedArtistMbidByName(name) ||
+    await musicbrainzGetCachedArtistMbidByName(name) ||
     (await musicbrainzResolveArtistMbidByName(name).catch(() => null));
   if (!mbid) return null;
   return {
@@ -430,7 +430,7 @@ const enrichListenbrainzArtistPoolWithGenres = async (artists = []) => {
         let mbid = normalizeMbid(artist?.mbid || artist?.id);
         if (!mbid) {
           mbid =
-            musicbrainzGetCachedArtistMbidByName(artist.name) ||
+            await musicbrainzGetCachedArtistMbidByName(artist.name) ||
             (await musicbrainzResolveArtistMbidByName(artist.name).catch(() => null));
         }
         if (!mbid) return null;
@@ -678,7 +678,7 @@ export const buildListenbrainzFallbackDiscovery = async ({
     let mbid = normalizeMbid(artist.id);
     if (!mbid) {
       mbid =
-        musicbrainzGetCachedArtistMbidByName(artist.name) ||
+        await musicbrainzGetCachedArtistMbidByName(artist.name) ||
         (await musicbrainzResolveArtistMbidByName(artist.name).catch(() => null));
     }
     if (!mbid) continue;

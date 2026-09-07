@@ -8,9 +8,8 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, notifications] = await setupIsolatedBackend(
+const [isolatedState, { dbOps }, notifications] = await setupIsolatedBackend(
   "notifications",
-  "backend/config/db-sqlite.js",
   "backend/db/helpers/index.js",
   "backend/services/notificationService.js",
 );
@@ -73,8 +72,8 @@ async function waitFor(predicate, timeoutMs = 5000) {
   throw new Error("Timed out waiting for notification result");
 }
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
@@ -161,7 +160,7 @@ test("deliverQueuedNotification interpolates request webhook bodies", async () =
 test("notifyRequestMade queues Gotify with actor and webhook payload", async () => {
   await withCaptureServer(async ({ baseUrl, waitFor }) => {
     const settings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         ...settings.integrations,
         gotify: {
@@ -210,7 +209,7 @@ test("notifyRequestMade queues Gotify with actor and webhook payload", async () 
 test("notifyRequestAvailable omits actor text when username is missing", async () => {
   await withCaptureServer(async ({ baseUrl, waitFor }) => {
     const settings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         ...settings.integrations,
         gotify: {
@@ -241,7 +240,7 @@ test("notifyRequestAvailable omits actor text when username is missing", async (
 test("notifyRequestMade does not queue Gotify when the event toggle is off", async () => {
   await withCaptureServer(async ({ baseUrl, requests }) => {
     const settings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         ...settings.integrations,
         gotify: {
@@ -291,7 +290,7 @@ test("failed notification delivery is logged without an unhandled rejection", as
 
   try {
     const settings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         ...settings.integrations,
         gotify: { ...settings.integrations?.gotify, notifyRequestMade: false },
@@ -353,7 +352,7 @@ test("failed notification delivery is logged without an unhandled rejection", as
 test("notifyWeeklyFlowDone uses display name and track library path placeholders", async () => {
   await withCaptureServer(async ({ baseUrl, waitFor }) => {
     const settings = dbOps.getSettings();
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         ...settings.integrations,
         gotify: {

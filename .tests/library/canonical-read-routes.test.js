@@ -4,10 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { db } from "../../backend/config/db-sqlite.js";
+import { db } from "../../backend/config/database.js";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { registerAlbums } from "../../backend/routes/library/handlers/albums.js";
 import { registerTracks } from "../../backend/routes/library/handlers/tracks.js";
 import { indexLidarrLibrary } from "../../backend/services/libraryLidarrIndexer.js";
+
+test.before(async () => {
+  await ensureTestDatabase();
+  await reloadMirrors();
+});
 
 test("bounded backend callers do not materialize the compatibility library", async () => {
   const boundedCallers = [
@@ -156,9 +162,10 @@ test("canonical track reads remove nested filesystem paths", async () => {
       delete() {},
       put() {},
     });
-    const artist = db.prepare(
-      "SELECT id, identity_key AS identityKey, mbid FROM library_artists WHERE mbid = ?",
-    ).get("71111111-1111-4111-8111-111111111111");
+    const artist = await db.get(
+      `SELECT id, identity_key AS "identityKey", mbid FROM library_artists WHERE mbid = ?`,
+      ["71111111-1111-4111-8111-111111111111"],
+    );
     for (const artistId of [artist.id, artist.identityKey, artist.mbid]) {
       await routes.get("/albums")(
         { query: { readPath: "canonical", artistId } },
@@ -175,25 +182,27 @@ test("canonical track reads remove nested filesystem paths", async () => {
       assert.deepEqual(body.map((album) => album.title), ["Route Album"]);
     }
   } finally {
-    const track = db.prepare(
-      "SELECT track_id AS trackId FROM library_media_files WHERE source = ? AND path = ?",
-    ).get("lidarr", filePath);
-    db.prepare("DELETE FROM library_media_files WHERE source = ? AND path = ?").run(
+    const track = await db.get(
+      `SELECT track_id AS "trackId" FROM library_media_files WHERE source = ? AND path = ?`,
+      ["lidarr", filePath],
+    );
+    await db.run("DELETE FROM library_media_files WHERE source = ? AND path = ?", [
       "lidarr",
       filePath,
-    );
+    ]);
     if (track) {
-      const link = db.prepare(
-        `SELECT album_track.album_id AS albumId, album.artist_id AS artistId
+      const link = await db.get(
+        `SELECT album_track.album_id AS "albumId", album.artist_id AS "artistId"
          FROM library_album_tracks AS album_track
          JOIN library_albums AS album ON album.id = album_track.album_id
          WHERE album_track.track_id = ?`,
-      ).get(track.trackId);
-      db.prepare("DELETE FROM library_album_tracks WHERE track_id = ?").run(track.trackId);
-      db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.trackId);
+        [track.trackId],
+      );
+      await db.run("DELETE FROM library_album_tracks WHERE track_id = ?", [track.trackId]);
+      await db.run("DELETE FROM library_tracks WHERE id = ?", [track.trackId]);
       if (link) {
-        db.prepare("DELETE FROM library_albums WHERE id = ?").run(link.albumId);
-        db.prepare("DELETE FROM library_artists WHERE id = ?").run(link.artistId);
+        await db.run("DELETE FROM library_albums WHERE id = ?", [link.albumId]);
+        await db.run("DELETE FROM library_artists WHERE id = ?", [link.artistId]);
       }
     }
     await rm(root, { recursive: true, force: true });

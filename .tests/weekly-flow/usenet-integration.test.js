@@ -16,7 +16,6 @@ const [
   { getEnabledDownloadSources },
   { rankUsenetReleases, selectRankedUsenetCandidates },
   { dbOps },
-  { db },
 ] = await setupIsolatedBackend(
   "usenet-integration",
   "backend/services/prowlarrClient.js",
@@ -25,11 +24,10 @@ const [
   "backend/services/downloadSourceService.js",
   "backend/services/weeklyFlow/weeklyFlowUsenetMatcher.js",
   "backend/db/helpers/index.js",
-  "backend/config/db-sqlite.js",
 );
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
@@ -116,7 +114,7 @@ test("Prowlarr client lists enabled Usenet indexers and searches audio releases"
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         prowlarr: {
           enabled: true,
@@ -186,7 +184,7 @@ test("NZBGet client uses JSON-RPC append signature and exposes completed paths",
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       integrations: {
         nzbget: {
           enabled: true,
@@ -236,8 +234,8 @@ test("SABnzbd client reads the completed download folder", async () => {
   );
 });
 
-test("download source selection orders enabled sources by priority", () => {
-  dbOps.updateSettings({
+test("download source selection orders enabled sources by priority", async () => {
+  await dbOps.updateSettings({
     integrations: {
       slskd: {
         enabled: true,

@@ -131,12 +131,11 @@ test("single-pass refresh: applyHydratedCandidateTags recalculates score when ca
 });
 
 test("single-pass refresh: db discovery cache stores enriched quality after single-pass write", async () => {
-  const { db } = await importFromRepo("backend/config/db-sqlite.js");
   const { dbOps } = await importFromRepo("backend/db/helpers/index.js");
-  resetDatabase(db);
+  await resetDatabase();
 
   const enrichedAt = new Date().toISOString();
-  dbOps.updateDiscoveryCache({
+  await dbOps.updateDiscoveryCache({
     recommendations: [{ id: "artist-1", name: "Test Artist" }],
     recommendationQuality: "enriched",
     isEnriching: false,
@@ -147,7 +146,7 @@ test("single-pass refresh: db discovery cache stores enriched quality after sing
     lastUpdated: enrichedAt,
   });
 
-  const cache = dbOps.getDiscoveryCache();
+  const cache = await dbOps.getDiscoveryCache();
   assert.equal(cache.recommendationQuality, "enriched");
   assert.equal(cache.isEnriching, false);
   assert.equal(cache.enrichmentStartedAt, null);

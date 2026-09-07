@@ -25,7 +25,8 @@ import {
   finalizePipelineJobSuccess,
 } from "./pipelineHelpers.js";
 
-const ytdlpClient = getDownloadClient("ytdlp");
+// Resolved per call: the settings mirror is not loaded at import time.
+const ytdlpClient = () => getDownloadClient("ytdlp");
 
 function hasEnoughCandidates(aggregated, resolvedTrack) {
   return rankYtdlpResults(aggregated, resolvedTrack).some((entry) => entry.preDownloadValid);
@@ -57,7 +58,7 @@ async function handleYtdlpSearch(payload, helpers) {
   for (const query of queries) {
     if (hasEnoughCandidates(aggregated, resolvedTrack)) break;
     try {
-      const results = await ytdlpClient.search(query, { limit: 5 });
+      const results = await ytdlpClient().search(query, { limit: 5 });
       mergeSearchResults(aggregated, seen, results, (entry) =>
         String(entry.id || entry.url || "").trim().toLowerCase(),
       );
@@ -121,7 +122,7 @@ async function handleYtdlpDownload(payload, helpers) {
 
   let downloaded;
   try {
-    downloaded = await ytdlpClient.downloadAudio(url, { jobId: job.id });
+    downloaded = await ytdlpClient().downloadAudio(url, { jobId: job.id });
   } catch (error) {
     const message = error?.message || String(error);
     logger.warn("ytdlp", "yt-dlp download failed", {
@@ -194,7 +195,7 @@ async function handleYtdlpFinalize(payload, helpers) {
       return null;
     }
     await fs.rm(filePath, { force: true }).catch(() => {});
-    await ytdlpClient.cleanupStaging(job.id);
+    await ytdlpClient().cleanupStaging(job.id);
     const reason = validation.reason || "yt-dlp download failed track validation";
     if (hasNextCandidate(payload)) {
       return buildNextCandidatePayload(payload, { downloadedPath: null });
@@ -215,7 +216,7 @@ async function handleYtdlpFinalize(payload, helpers) {
   const finalName = `${sanitizePathPart(job.trackName, "Unknown Track")}${ext || ".m4a"}`;
   const finalPath = path.join(finalDir, finalName);
   const committedFinalPath = await commitImportToPlaylistLibrary(filePath, finalPath);
-  await ytdlpClient.cleanupStaging(job.id);
+  await ytdlpClient().cleanupStaging(job.id);
   return finalizePipelineJobSuccess({
     downloadTracker,
     job,

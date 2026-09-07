@@ -73,9 +73,9 @@ function loadMigrationState(rootPath) {
   };
 }
 
-function saveMigrationState(state) {
+async function saveMigrationState(state) {
   state.updatedAt = Date.now();
-  dbOps.setJSONSetting(AURRAL_DOWNLOAD_FOLDER_MIGRATION_SETTING, state);
+  await dbOps.setJSONSetting(AURRAL_DOWNLOAD_FOLDER_MIGRATION_SETTING, state);
 }
 
 function pathMatches(candidate, expected, rootPath) {
@@ -91,10 +91,10 @@ function pathsOverlap(left, right) {
   return a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
 }
 
-function configuredLidarrRoots(options) {
+async function configuredLidarrRoots(options) {
   if (Array.isArray(options.lidarrRoots)) return options.lidarrRoots.filter(Boolean);
   const settings = dbOps.getSettings();
-  const users = typeof userOps.getAllUsers === "function" ? userOps.getAllUsers() : [];
+  const users = typeof userOps.getAllUsers === "function" ? await userOps.getAllUsers() : [];
   return [
     settings.rootFolderPath,
     settings.integrations?.lidarr?.rootFolderPath,
@@ -314,7 +314,7 @@ async function repairCompletedMigrationState(state, rootPath, jobs, logger) {
     const destinationStat = await fs.stat(destination).catch(() => null);
     if (!isPathInsideRoot(destination, rootPath) || !destinationStat?.isFile()) {
       const reason = "completed migration destination is missing";
-      retainItem(state, sourcePath, reason, logger);
+      await retainItem(state, sourcePath, reason, logger);
       result.failed += 1;
       result.failures.push({ sourcePath, reason });
       continue;
@@ -327,7 +327,7 @@ async function repairCompletedMigrationState(state, rootPath, jobs, logger) {
       updateJobPaths(staleJobs, destination);
       result.repaired += staleJobs.length;
     } catch (error) {
-      retainItem(state, sourcePath, error.message, logger);
+      await retainItem(state, sourcePath, error.message, logger);
       result.failed += 1;
       result.failures.push({ sourcePath, reason: error.message });
     }
@@ -379,7 +379,7 @@ async function resolveIdentity(sourcePath, rootPath, playlistId, jobs, metadataR
 
 async function defaultIndexDestination({ rootPath, targetPath, metadataReader }) {
   await scanMusicRoot({ rootPath, source: "aurral", filePaths: [targetPath], metadataReader });
-  const media = getLibraryMediaFile({ source: "aurral", path: targetPath });
+  const media = await getLibraryMediaFile({ source: "aurral", path: targetPath });
   if (!media?.available) {
     throw new Error("Destination was not indexed as available Aurral media");
   }
@@ -395,7 +395,7 @@ async function defaultIndexDestinations({ rootPath, entries, metadataReader }) {
   });
   const indexed = new Map();
   for (const entry of entries) {
-    const media = getLibraryMediaFile({ source: "aurral", path: entry.targetPath });
+    const media = await getLibraryMediaFile({ source: "aurral", path: entry.targetPath });
     if (media?.available) indexed.set(entry.targetPath, media);
   }
   return indexed;
@@ -405,14 +405,14 @@ function itemState(state, sourcePath) {
   return state.items[sourcePath] || {};
 }
 
-function retainItem(state, sourcePath, reason, logger) {
+async function retainItem(state, sourcePath, reason, logger) {
   state.items[sourcePath] = {
     ...itemState(state, sourcePath),
     status: "retained",
     reason,
     updatedAt: Date.now(),
   };
-  saveMigrationState(state);
+  await saveMigrationState(state);
   log(logger, "warn", `[AurralMigration] Retained ${sourcePath}: ${reason}`);
 }
 
@@ -431,14 +431,14 @@ async function commitIndexedMigrationItem({
     identity,
     updatedAt: Date.now(),
   };
-  saveMigrationState(state);
+  await saveMigrationState(state);
   updateJobPaths(jobs, committedPath);
   state.items[sourcePath] = {
     ...itemState(state, sourcePath),
     status: "referenced",
     updatedAt: Date.now(),
   };
-  saveMigrationState(state);
+  await saveMigrationState(state);
   if (path.resolve(sourcePath) !== path.resolve(committedPath)) {
     await removeSource(sourcePath, rootPath);
   }
@@ -447,7 +447,7 @@ async function commitIndexedMigrationItem({
     status: "complete",
     updatedAt: Date.now(),
   };
-  saveMigrationState(state);
+  await saveMigrationState(state);
 }
 
 function resolveOwnership(sourcePath, rootPath, jobs, knownIds) {
@@ -469,7 +469,7 @@ function resolveOwnership(sourcePath, rootPath, jobs, knownIds) {
 export async function migrateAurralDownloadFolder(options = {}) {
   const rootPath = path.resolve(options.root || resolvePlaylistRoot());
   const logger = options.logger || console;
-  const lidarrRoots = configuredLidarrRoots(options);
+  const lidarrRoots = await configuredLidarrRoots(options);
   if (lidarrRoots.some((candidate) => pathsOverlap(rootPath, candidate))) {
     const reason = "Aurral DL_FOLDER overlaps a configured Lidarr root";
     log(logger, "error", `[AurralMigration] ${reason}`);
@@ -481,7 +481,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
   if (state.status === "complete") {
     const repair = await repairCompletedMigrationState(state, rootPath, jobs, logger);
     if (repair.failed > 0) state.status = "needs-review";
-    if (repair.repaired > 0 || repair.failed > 0) saveMigrationState(state);
+    if (repair.repaired > 0 || repair.failed > 0) await saveMigrationState(state);
     return {
       status: state.status,
       rootPath,
@@ -536,7 +536,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
       continue;
     }
     if (isPartialFile(sourcePath, stat)) {
-      retainItem(state, sourcePath, "partial file", logger);
+      await retainItem(state, sourcePath, "partial file", logger);
       result.retained += 1;
       continue;
     }
@@ -548,7 +548,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
       knownIds,
     );
     if (!playlistId || (!flow && !sharedPlaylist)) {
-      retainItem(state, sourcePath, "ambiguous playlist ownership", logger);
+      await retainItem(state, sourcePath, "ambiguous playlist ownership", logger);
       result.retained += 1;
       continue;
     }
@@ -556,10 +556,10 @@ export async function migrateAurralDownloadFolder(options = {}) {
       try {
         await removeSource(sourcePath, rootPath);
         state.items[sourcePath] = { status: "removed", reason: "unkept flow media", updatedAt: Date.now() };
-        saveMigrationState(state);
+        await saveMigrationState(state);
         result.removed += 1;
       } catch (error) {
-        retainItem(state, sourcePath, `could not remove unkept flow media: ${error.message}`, logger);
+        await retainItem(state, sourcePath, `could not remove unkept flow media: ${error.message}`, logger);
         result.failed += 1;
         result.failures.push({ sourcePath, reason: error.message });
       }
@@ -570,12 +570,12 @@ export async function migrateAurralDownloadFolder(options = {}) {
     try {
       identity = await resolveIdentity(sourcePath, rootPath, playlistId, jobsForSource, metadataReader);
     } catch (error) {
-      retainItem(state, sourcePath, `could not resolve media identity: ${error.message}`, logger);
+      await retainItem(state, sourcePath, `could not resolve media identity: ${error.message}`, logger);
       result.retained += 1;
       continue;
     }
     if (!identity) {
-      retainItem(state, sourcePath, "ambiguous media identity", logger);
+      await retainItem(state, sourcePath, "ambiguous media identity", logger);
       result.retained += 1;
       continue;
     }
@@ -585,7 +585,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
     const albumDir = safePathPart(identity.albumName);
     const trackName = safePathPart(identity.trackName);
     if (!artistDir || !albumDir || !trackName) {
-      retainItem(state, sourcePath, "unsafe media identity", logger);
+      await retainItem(state, sourcePath, "unsafe media identity", logger);
       result.retained += 1;
       continue;
     }
@@ -595,7 +595,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
       `${trackName}${path.extname(sourcePath).toLowerCase() || ".mp3"}`,
     );
     if (!isPathInsideRoot(destination, rootPath)) {
-      retainItem(state, sourcePath, "destination escaped Aurral root", logger);
+      await retainItem(state, sourcePath, "destination escaped Aurral root", logger);
       result.retained += 1;
       continue;
     }
@@ -622,7 +622,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
           identity,
           updatedAt: Date.now(),
         };
-        saveMigrationState(state);
+        await saveMigrationState(state);
       }
       if (!flow && useBatchIndex) {
         pendingPermanent.push({
@@ -658,7 +658,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
       result.migrated += 1;
       if (flow) result.flowMigrated += 1;
     } catch (error) {
-      retainItem(state, sourcePath, `migration verification failed: ${error.message}`, logger);
+      await retainItem(state, sourcePath, `migration verification failed: ${error.message}`, logger);
       result.failed += 1;
       result.failures.push({ sourcePath, reason: error.message });
     }
@@ -692,7 +692,7 @@ export async function migrateAurralDownloadFolder(options = {}) {
         });
         result.migrated += 1;
       } catch (error) {
-        retainItem(state, entry.sourcePath, `migration verification failed: ${error.message}`, logger);
+        await retainItem(state, entry.sourcePath, `migration verification failed: ${error.message}`, logger);
         result.failed += 1;
         result.failures.push({ sourcePath: entry.sourcePath, reason: error.message });
       }
@@ -715,6 +715,6 @@ export async function migrateAurralDownloadFolder(options = {}) {
     failed: result.failed,
     failures: result.failures,
   };
-  saveMigrationState(state);
+  await saveMigrationState(state);
   return result;
 }

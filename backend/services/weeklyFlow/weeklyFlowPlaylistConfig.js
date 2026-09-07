@@ -5,6 +5,25 @@ import { getDiscoverPlaylistPreset } from "../../config/discoverPlaylistPresets.
 import { EDITORIAL_PLAYLIST_POOL } from "../../config/editorialPlaylistPresets.js";
 
 const LEGACY_TYPES = ["discover", "mix", "trending"];
+
+// Per-key writes only; a whole-blob write would clobber concurrent changes.
+// Chained per key: an unawaited self-heal must not overwrite a later write.
+const writeChains = new Map();
+const persistKey = (key, value) => {
+  const next = (writeChains.get(key) || Promise.resolve()).then(() =>
+    dbOps.setJSONSetting(key, value),
+  );
+  writeChains.set(
+    key,
+    next.catch(() => {}),
+  );
+  return next;
+};
+
+const persistKeyDetached = (key, value) =>
+  persistKey(key, value).catch((error) => {
+    console.warn(`[WeeklyFlow] Failed to persist ${key}:`, error?.message || error);
+  });
 export const IMPORT_SOURCE_PROVIDERS = new Set([
   "spotify-playlist",
   "listenbrainz-playlist",
@@ -524,10 +543,7 @@ const getStoredFlows = () => {
       return normalizeFlow(flow);
     });
     if (idMap.size > 0 || needsSave) {
-      dbOps.updateSettings({
-        ...settings,
-        flows: nextFlows,
-      });
+      persistKeyDetached("flows", nextFlows);
       downloadTracker.migratePlaylistTypes(idMap);
     }
     cachedFlows = nextFlows;
@@ -537,21 +553,15 @@ const getStoredFlows = () => {
     cachedFlows = [];
     return cachedFlows;
   }
-  dbOps.updateSettings({
-    ...settings,
-    flows: [],
-  });
+  persistKeyDetached("flows", []);
   cachedFlows = [];
   return cachedFlows;
 };
 
-const setFlows = (flows) => {
+// Cache first so sync getters see the change before the write lands.
+const setFlows = async (flows) => {
   cachedFlows = flows;
-  const current = dbOps.getSettings();
-  dbOps.updateSettings({
-    ...current,
-    flows,
-  });
+  await persistKey("flows", flows);
 };
 
 const getStoredSharedPlaylists = () => {
@@ -566,29 +576,20 @@ const getStoredSharedPlaylists = () => {
       next.length !== stored.length ||
       next.some((playlist, index) => JSON.stringify(playlist) !== JSON.stringify(stored[index]));
     if (needsSave) {
-      dbOps.updateSettings({
-        ...settings,
-        sharedPlaylists: next,
-      });
+      persistKeyDetached("sharedPlaylists", next);
     }
     cachedSharedPlaylists = next;
     return cachedSharedPlaylists;
   }
-  dbOps.updateSettings({
-    ...settings,
-    sharedPlaylists: [],
-  });
+  persistKeyDetached("sharedPlaylists", []);
   cachedSharedPlaylists = [];
   return cachedSharedPlaylists;
 };
 
-const setSharedPlaylists = (playlists) => {
+// Cache first so sync getters see the change before the write lands.
+const setSharedPlaylists = async (playlists) => {
   cachedSharedPlaylists = playlists;
-  const current = dbOps.getSettings();
-  dbOps.updateSettings({
-    ...current,
-    sharedPlaylists: playlists,
-  });
+  await persistKey("sharedPlaylists", playlists);
 };
 
 const normalizeNameKey = (value) =>
@@ -679,7 +680,7 @@ export const flowPlaylistConfig = {
     return this.canUserAccessFlow(user, flow) ? flow : null;
   },
 
-  ensureLidarrFeedToken(flowId) {
+  async ensureLidarrFeedToken(flowId) {
     const flows = getStoredFlows();
     const index = flows.findIndex((flow) => flow.id === flowId);
     if (index === -1) return null;
@@ -690,7 +691,7 @@ export const flowPlaylistConfig = {
       lidarrFeedToken: randomBytes(24).toString("hex"),
     });
     flows[index] = next;
-    setFlows(flows);
+    await setFlows(flows);
     return next;
   },
 
@@ -699,7 +700,7 @@ export const flowPlaylistConfig = {
     return flow?.enabled === true;
   },
 
-  createFlow({
+  async createFlow({
     name,
     mix,
     size,
@@ -749,11 +750,11 @@ export const flowPlaylistConfig = {
       lastRunAt: null,
     });
     flows.push(flow);
-    setFlows(flows);
+    await setFlows(flows);
     return flow;
   },
 
-  updateFlow(flowId, updates) {
+  async updateFlow(flowId, updates) {
     const flows = getStoredFlows();
     const index = flows.findIndex((flow) => flow.id === flowId);
     if (index === -1) return null;
@@ -805,19 +806,19 @@ export const flowPlaylistConfig = {
       next.nextRunAt = computeNextRunAt(effectiveSchedule, nextScheduleTime, now);
     }
     flows[index] = next;
-    setFlows(flows);
+    await setFlows(flows);
     return next;
   },
 
-  deleteFlow(flowId) {
+  async deleteFlow(flowId) {
     const flows = getStoredFlows();
     const next = flows.filter((flow) => flow.id !== flowId);
     if (next.length === flows.length) return false;
-    setFlows(next);
+    await setFlows(next);
     return true;
   },
 
-  setEnabled(flowId, enabled) {
+  async setEnabled(flowId, enabled) {
     const flows = getStoredFlows();
     const index = flows.findIndex((flow) => flow.id === flowId);
     if (index === -1) return null;
@@ -826,11 +827,11 @@ export const flowPlaylistConfig = {
       flow.nextRunAt = null;
     }
     flows[index] = flow;
-    setFlows(flows);
+    await setFlows(flows);
     return flow;
   },
 
-  markLastRunAt(flowId, lastRunAt = Date.now()) {
+  async markLastRunAt(flowId, lastRunAt = Date.now()) {
     const flows = getStoredFlows();
     const index = flows.findIndex((flow) => flow.id === flowId);
     if (index === -1) return null;
@@ -838,11 +839,11 @@ export const flowPlaylistConfig = {
     flow.lastRunAt =
       lastRunAt != null && Number.isFinite(Number(lastRunAt)) ? Number(lastRunAt) : Date.now();
     flows[index] = flow;
-    setFlows(flows);
+    await setFlows(flows);
     return flow;
   },
 
-  scheduleNextRun(flowId) {
+  async scheduleNextRun(flowId) {
     const flows = getStoredFlows();
     const index = flows.findIndex((flow) => flow.id === flowId);
     if (index === -1) return null;
@@ -854,7 +855,7 @@ export const flowPlaylistConfig = {
     flow.scheduleTime = normalizeScheduleTime(flow.scheduleTime);
     flow.nextRunAt = computeNextRunAt(flow.scheduleDays, flow.scheduleTime, now);
     flows[index] = flow;
-    setFlows(flows);
+    await setFlows(flows);
     return flow;
   },
 
@@ -888,7 +889,7 @@ export const flowPlaylistConfig = {
     return this.canUserAccessSharedPlaylist(user, playlist) ? playlist : null;
   },
 
-  createSharedPlaylist({
+  async createSharedPlaylist({
     id = null,
     name,
     sourceName,
@@ -924,11 +925,11 @@ export const flowPlaylistConfig = {
       createdAt: Date.now(),
     });
     playlists.push(playlist);
-    setSharedPlaylists(playlists);
+    await setSharedPlaylists(playlists);
     return playlist;
   },
 
-  appendSharedPlaylistTracks(playlistId, tracks) {
+  async appendSharedPlaylistTracks(playlistId, tracks) {
     const playlists = getStoredSharedPlaylists();
     const index = playlists.findIndex((playlist) => playlist.id === playlistId);
     if (index === -1) return null;
@@ -941,11 +942,11 @@ export const flowPlaylistConfig = {
       createdAt: current.createdAt,
     });
     playlists[index] = next;
-    setSharedPlaylists(playlists);
+    await setSharedPlaylists(playlists);
     return next;
   },
 
-  updateSharedPlaylist(playlistId, updates) {
+  async updateSharedPlaylist(playlistId, updates) {
     const playlists = getStoredSharedPlaylists();
     const index = playlists.findIndex((playlist) => playlist.id === playlistId);
     if (index === -1) return null;
@@ -972,16 +973,16 @@ export const flowPlaylistConfig = {
       createdAt: current.createdAt,
     });
     playlists[index] = next;
-    setSharedPlaylists(playlists);
+    await setSharedPlaylists(playlists);
     import("../../services/unifiedSearchService.js").then(({ clearSearchContextCache }) => clearSearchContextCache()).catch(() => {});
     return next;
   },
 
-  deleteSharedPlaylist(playlistId) {
+  async deleteSharedPlaylist(playlistId) {
     const playlists = getStoredSharedPlaylists();
     const next = playlists.filter((playlist) => playlist.id !== playlistId);
     if (next.length === playlists.length) return false;
-    setSharedPlaylists(next);
+    await setSharedPlaylists(next);
     return true;
   },
 };

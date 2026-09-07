@@ -17,7 +17,7 @@ export async function processSystemTask(payload = {}, job = null) {
       return;
     }
     case "session-cleanup":
-      cleanExpiredSessions();
+      await cleanExpiredSessions();
       return;
     case "weekly-flow-reuse-repair": {
       const { weeklyFlowWorker } = await import("./weeklyFlow/weeklyFlowWorker.js");
@@ -62,7 +62,7 @@ export async function processSystemTask(payload = {}, job = null) {
       const { hasCompletedLibraryScan, scheduleLibraryScan } = await import(
         "./libraryScanWorker.js"
       );
-      if (!hasCompletedLibraryScan()) scheduleLibraryScan();
+      if (!(await hasCompletedLibraryScan())) await scheduleLibraryScan();
       return;
     }
     case "weekly-flow-startup-check": {
@@ -170,7 +170,7 @@ export async function processSystemTask(payload = {}, job = null) {
         await playlistManager.ensurePlaylists();
       }
       if (metadataRepair.failed === 0) {
-        dbOps.setJSONSetting(PLAYLIST_STARTUP_MIGRATION_SETTING, {
+        await dbOps.setJSONSetting(PLAYLIST_STARTUP_MIGRATION_SETTING, {
           version: PLAYLIST_STARTUP_MIGRATION_VERSION,
           rootPath: resolvePlaylistRoot(),
           completedAt: Date.now(),

@@ -77,7 +77,7 @@ export function registerMain(router) {
       let recommendations = discoveryCache.recommendations || [];
       let globalTop = discoveryCache.globalTop || [];
 
-      const existingArtistKeys = buildArtistKeySet(getCanonicalArtistKeys());
+      const existingArtistKeys = buildArtistKeySet(await getCanonicalArtistKeys());
 
       recommendations = recommendations.filter(
         (artist) => !isLibraryArtist(artist, existingArtistKeys),

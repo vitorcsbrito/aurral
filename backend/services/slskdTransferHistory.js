@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { db } from "../config/db-sqlite.js";
+import { db } from "../config/database.js";
 
 const RECENT_HISTORY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const CLEANUP_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-const insertOutcomeStmt = db.prepare(`
+const INSERT_OUTCOME_SQL = `
   INSERT INTO slskd_transfer_history (
     id,
     job_id,
@@ -26,38 +26,38 @@ const insertOutcomeStmt = db.prepare(`
     cleaned_at
   )
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-`);
+`;
 
-const recentPeerRowsStmt = db.prepare(`
+const RECENT_PEER_ROWS_SQL = `
   SELECT
     LOWER(username) AS user_key,
-    username,
-    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes,
-    SUM(CASE WHEN status IN (
+    MAX(username) AS username,
+    COUNT(*) FILTER (WHERE status = 'success') AS successes,
+    COUNT(*) FILTER (WHERE status IN (
       'batch_empty',
       'enqueue_failed',
       'missing_file',
       'transfer_failed',
       'transfer_timeout',
       'validation_failed'
-    ) THEN 1 ELSE 0 END) AS failures,
-    SUM(CASE WHEN status = 'validation_failed' THEN 1 ELSE 0 END) AS validation_failures,
+    )) AS failures,
+    COUNT(*) FILTER (WHERE status = 'validation_failed') AS validation_failures,
     MAX(created_at) AS latest_at
   FROM slskd_transfer_history
   WHERE created_at >= ?
   GROUP BY LOWER(username)
-`);
+`;
 
-const activePeerRowsStmt = db.prepare(`
-  SELECT LOWER(remote_username) AS user_key, remote_username AS username, COUNT(*) AS active
+const ACTIVE_PEER_ROWS_SQL = `
+  SELECT LOWER(remote_username) AS user_key, MAX(remote_username) AS username, COUNT(*) AS active
   FROM playlist_download_jobs
   WHERE status = 'downloading'
     AND remote_username IS NOT NULL
     AND TRIM(remote_username) != ''
   GROUP BY LOWER(remote_username)
-`);
+`;
 
-const cleanupRowsStmt = db.prepare(`
+const CLEANUP_ROWS_SQL = `
   SELECT id, username, remote_filename, transfer_id, search_id
   FROM slskd_transfer_history
   WHERE cleaned_at IS NULL
@@ -72,14 +72,14 @@ const cleanupRowsStmt = db.prepare(`
       'validation_failed'
     )
   ORDER BY created_at ASC
-`);
+`;
 
-const markCleanedStmt = db.prepare(`
+const MARK_CLEANED_SQL = `
   UPDATE slskd_transfer_history
   SET cleaned_at = ?
   WHERE cleaned_at IS NULL
     AND created_at >= ?
-`);
+`;
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -124,7 +124,7 @@ function readTransferId(transfer) {
   );
 }
 
-export function recordSlskdTransferOutcome({
+export async function recordSlskdTransferOutcome({
   job = null,
   candidate = null,
   status,
@@ -143,7 +143,7 @@ export function recordSlskdTransferOutcome({
   const normalizedStatus = normalizeText(status) || "unknown";
   const actualTransferId = normalizeText(transferId) || readTransferId(transfer);
   const rowId = randomUUID();
-  insertOutcomeStmt.run(
+  await db.run(INSERT_OUTCOME_SQL, [
     rowId,
     job?.id || null,
     username,
@@ -163,14 +163,18 @@ export function recordSlskdTransferOutcome({
       ? Math.round(Number(validation.actualDurationMs))
       : null,
     Date.now(),
-  );
+  ]);
   return rowId;
 }
 
-export function buildSlskdRankingHistoryOptions() {
+export async function buildSlskdRankingHistoryOptions() {
   const cutoff = Date.now() - RECENT_HISTORY_WINDOW_MS;
   const peerStats = new Map();
-  for (const row of recentPeerRowsStmt.all(cutoff)) {
+  const [recentRows, activeRows] = await Promise.all([
+    db.all(RECENT_PEER_ROWS_SQL, [cutoff]),
+    db.all(ACTIVE_PEER_ROWS_SQL),
+  ]);
+  for (const row of recentRows) {
     const key = normalizeUsername(row.user_key || row.username);
     if (!key) continue;
     peerStats.set(key, {
@@ -180,7 +184,7 @@ export function buildSlskdRankingHistoryOptions() {
       active: 0,
     });
   }
-  for (const row of activePeerRowsStmt.all()) {
+  for (const row of activeRows) {
     const key = normalizeUsername(row.user_key || row.username);
     if (!key) continue;
     const stats = peerStats.get(key) || {
@@ -213,9 +217,9 @@ export function buildSlskdRankingHistoryOptions() {
   };
 }
 
-export function getSlskdCleanupTargets() {
+export async function getSlskdCleanupTargets() {
   const cutoff = Date.now() - CLEANUP_HISTORY_WINDOW_MS;
-  const rows = cleanupRowsStmt.all(cutoff);
+  const rows = await db.all(CLEANUP_ROWS_SQL, [cutoff]);
   const searchIds = new Set();
   const transfers = [];
   const seenTransfers = new Set();
@@ -245,7 +249,7 @@ export function getSlskdCleanupTargets() {
   };
 }
 
-export function markSlskdCleanupTargetsCleaned() {
+export async function markSlskdCleanupTargetsCleaned() {
   const cutoff = Date.now() - CLEANUP_HISTORY_WINDOW_MS;
-  markCleanedStmt.run(Date.now(), cutoff);
+  await db.run(MARK_CLEANED_SQL, [Date.now(), cutoff]);
 }

@@ -143,7 +143,7 @@ export function markDiscoveryRefreshDequeued() {
 export async function isDiscoveryRefreshConfigured() {
   const hasLastfm = !!getLastfmApiKey();
   if (hasLastfm) return true;
-  return getCanonicalArtistProjection({ page: 1, pageSize: 1 }).length > 0;
+  return (await getCanonicalArtistProjection({ page: 1, pageSize: 1 })).length > 0;
 }
 
 export function discoveryNeedsRefresh(cache = getDiscoveryCache()) {
@@ -262,7 +262,7 @@ export async function bootstrapDiscoveryRefresh() {
   if (!(await isDiscoveryRefreshConfigured())) {
     console.log("Discovery not configured (no Last.fm API key and no artists). Clearing cache.");
     try {
-      dbOps.updateDiscoveryCache({
+      await dbOps.updateDiscoveryCache({
         recommendations: [],
         globalTop: [],
         basedOn: [],

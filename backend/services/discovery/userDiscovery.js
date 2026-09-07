@@ -29,11 +29,11 @@ import { getTopPlayedArtists } from "../playEventService.js";
 
 export async function getUserDiscovery(userId, limit = 50, offset = 0) {
   const hasLastfmKey = !!getLastfmApiKey();
-  const libraryArtists = getCanonicalArtistKeys();
+  const libraryArtists = await getCanonicalArtistKeys();
 
-  const reqUser = userOps.getUserById(userId);
+  const reqUser = await userOps.getUserById(userId);
   const externalListenHistoryProfile = getListenHistoryProfile(reqUser || {});
-  const localHistoryArtists = getTopPlayedArtists(userId, { limit: 50 });
+  const localHistoryArtists = await getTopPlayedArtists(userId, { limit: 50 });
   const localOnlyProfile = externalListenHistoryProfile.listenHistoryProvider === "local";
   const hasExternalListenHistory =
     !localOnlyProfile && hasListenHistoryProfile(externalListenHistoryProfile);

@@ -11,10 +11,10 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps, userOps }, { hashPassword }, { indexLidarrLibrary }, { flowPlaylistConfig }, { downloadTracker }, { weeklyFlowWorker }, { updateSharedPlaylist }, { resolveArtworkUrl, createSubsonicPlaylist, star }, { warmImageProxy }, { playlistManager }] =
+const [isolatedState, { db }, { dbOps, userOps }, { hashPassword }, { indexLidarrLibrary }, { flowPlaylistConfig }, { downloadTracker, flushDownloadTrackerWrites }, { weeklyFlowWorker }, { updateSharedPlaylist }, { resolveArtworkUrl, createSubsonicPlaylist, star }, { warmImageProxy }, { playlistManager }] =
   await setupIsolatedBackend(
     "subsonic-canonical",
-    "backend/config/db-sqlite.js",
+    "backend/config/database.js",
     "backend/db/helpers/index.js",
     "backend/middleware/passwordHash.js",
     "backend/services/libraryLidarrIndexer.js",
@@ -91,13 +91,13 @@ async function waitFor(check, timeoutMs = 5000) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({
+  await resetDatabase();
+  await dbOps.updateSettings({
     integrations: { general: { authUser: "alice", authPassword: "password123" } },
     security: { localNetworkBypass: { enabled: false } },
     onboardingComplete: true,
   });
-  const alice = userOps.createUser("alice", hashPassword("password123"), "admin");
+  const alice = await userOps.createUser("alice", hashPassword("password123"), "admin");
 
   fixtureRoot = await mkdtemp(path.join(isolatedState.baseDir, "media-"));
   fixturePath = path.join(fixtureRoot, "Canonical Artist", "Canonical Album", "01 Canonical Song.flac");
@@ -139,7 +139,7 @@ test.before(async () => {
     },
   });
 
-  const flow = flowPlaylistConfig.createFlow({ name: "Canonical Flow", size: 1 });
+  const flow = await flowPlaylistConfig.createFlow({ name: "Canonical Flow", size: 1 });
   const jobId = downloadTracker.addJob({
     artistName: "Flow Artist",
     albumName: "Flow Album",
@@ -148,7 +148,7 @@ test.before(async () => {
     durationMs: 1000,
   }, flow.id);
   downloadTracker.setDone(jobId, fixturePath);
-  sharedPlaylist = flowPlaylistConfig.createSharedPlaylist({
+  sharedPlaylist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Canonical Shared",
     ownerUserId: alice.id,
     tracks: [{
@@ -166,7 +166,7 @@ test.before(async () => {
     durationMs: 1000,
   }, sharedPlaylist.id);
   downloadTracker.setDone(sharedJobId, fixturePath);
-  canonicalFavoritePlaylist = flowPlaylistConfig.createSharedPlaylist({
+  canonicalFavoritePlaylist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Canonical Favorite Playlist",
     ownerUserId: alice.id,
     tracks: [{
@@ -192,7 +192,7 @@ test.before(async () => {
     trackName: "Synced Favorite Song",
     durationMs: 1000,
   };
-  syncedFavoritePlaylist = flowPlaylistConfig.createSharedPlaylist({
+  syncedFavoritePlaylist = await flowPlaylistConfig.createSharedPlaylist({
     name: "Synced Favorite Playlist",
     ownerUserId: alice.id,
     tracks: [syncedFavoriteTrack],
@@ -216,7 +216,7 @@ test.before(async () => {
   await writeFile(syncedFavoriteSourcePath, "synced favorite");
   syncedFavoriteSourceJobId = downloadTracker.addJob(syncedFavoriteTrack, syncedFavoritePlaylist.id);
   downloadTracker.setDone(syncedFavoriteSourceJobId, syncedFavoriteSourcePath, syncedFavoriteTrack.albumName);
-  const favoriteFlow = flowPlaylistConfig.createFlow({ name: "Favorite Toggle Flow", size: 1 });
+  const favoriteFlow = await flowPlaylistConfig.createFlow({ name: "Favorite Toggle Flow", size: 1 });
   const favoritePath = path.join(fixtureRoot, "Favorite Artist", "Favorite Album", "Favorite Song.flac");
   await mkdir(path.dirname(favoritePath), { recursive: true });
   await writeFile(favoritePath, "favorite");
@@ -229,11 +229,14 @@ test.before(async () => {
   downloadTracker.setDone(favoriteJobId, favoritePath);
   await mkdir(playlistManager.libraryRoot, { recursive: true });
   await writeFile(
-    path.join(playlistManager.libraryRoot, `${playlistManager.getPlaylistName(flow.id)}.webp`),
+    path.join(playlistManager.libraryRoot, `${await playlistManager.getPlaylistName(flow.id)}.webp`),
     "flow-artwork",
   );
   await writeFile(
-    path.join(playlistManager.libraryRoot, `${playlistManager.getPlaylistName(sharedPlaylist.id)}.webp`),
+    path.join(
+      playlistManager.libraryRoot,
+      `${await playlistManager.getPlaylistName(sharedPlaylist.id)}.webp`,
+    ),
     "shared-artwork",
   );
   aurral = await startServerProcess();
@@ -250,7 +253,7 @@ test.after(async () => {
   await aurral?.stop();
   if (syncedFavoritePlaylist) {
     downloadTracker.clearByPlaylistType(syncedFavoritePlaylist.id);
-    flowPlaylistConfig.deleteSharedPlaylist(syncedFavoritePlaylist.id);
+    await flowPlaylistConfig.deleteSharedPlaylist(syncedFavoritePlaylist.id);
   }
   await rm(syncedFavoriteSourcePath, { force: true }).catch(() => {});
   await rm(fixtureRoot, { recursive: true, force: true });
@@ -317,7 +320,7 @@ test("browses canonical artists, albums, and songs with stable protocol IDs", as
   assert.equal(starred.album[0].id, album.id);
   assert.equal(starred.artist[0].id, artist.id);
   assert.equal(responseJson(await request("getStarred2")).starred2.song[0].id, song.id);
-  userOps.createUser("bob", hashPassword("bob-password"), "user");
+  await userOps.createUser("bob", hashPassword("bob-password"), "user");
   assert.deepEqual(
     responseJson(await request("getStarred", { u: "bob", p: "bob-password" })).starred,
     { album: [], artist: [], song: [] },
@@ -436,7 +439,7 @@ test("exposes owned static playlists and keeps their entries playable", async ()
 });
 
 test("does not expose another user's static playlist", async () => {
-  userOps.createUser("bob", hashPassword("bob-password"), "user");
+  await userOps.createUser("bob", hashPassword("bob-password"), "user");
   const result = responseJson(await request("getPlaylist", {
     id: `shared:${encodeURIComponent(sharedPlaylist.id)}`,
     u: "bob",
@@ -479,9 +482,10 @@ test("creates durable Subsonic playlists around one promoted library job", async
   );
   assert.equal(jobIdFromSong(second.entry[0].id), canonicalJobId);
 
-  await waitFor(() => db.prepare(
+  await waitFor(async () => (await db.get(
     "SELECT status FROM playlist_download_jobs WHERE id = ?",
-  ).get(canonicalJobId)?.status === "done");
+    [canonicalJobId],
+  ))?.status === "done");
   const firstReady = await waitFor(async () => {
     const result = responseJson(await request("getPlaylist", { id: first.id }));
     return result.playlist?.entry?.[0];
@@ -491,9 +495,10 @@ test("creates durable Subsonic playlists around one promoted library job", async
   assert.equal(stream.response.status, 200);
   assert.equal(stream.body, "0123456789");
 
-  const libraryJobs = db.prepare(
-    "SELECT id, final_path AS finalPath FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ?",
-  ).all("library", "Flow Song");
+  const libraryJobs = await db.all(
+    `SELECT id, final_path AS "finalPath" FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ?`,
+    ["library", "Flow Song"],
+  );
   assert.equal(libraryJobs.length, 1);
 
   const aurralPlaylistId = decodeURIComponent(firstId.slice("shared:".length));
@@ -537,12 +542,12 @@ test("creates durable Subsonic playlists around one promoted library job", async
 
 test("failed Subsonic playlist creation rolls back its playlist and jobs", async () => {
   const canonicalSong = responseJson(await request("search3", { query: "Canonical Song" })).searchResult3.song[0];
-  const user = userOps.getUserByUsername("alice");
+  const user = await userOps.getUserByUsername("alice");
   const originalUpdate = flowPlaylistConfig.updateSharedPlaylist;
   flowPlaylistConfig.updateSharedPlaylist = () => null;
   try {
     assert.equal(
-      createSubsonicPlaylist(user, { name: "Failed Subsonic Playlist", songIds: [canonicalSong.id] }),
+      await createSubsonicPlaylist(user, { name: "Failed Subsonic Playlist", songIds: [canonicalSong.id] }),
       null,
     );
     assert.equal(
@@ -551,10 +556,13 @@ test("failed Subsonic playlist creation rolls back its playlist and jobs", async
       ),
       false,
     );
+    // Tracker rows persist on a serialized write chain, not inline.
+    await flushDownloadTrackerWrites();
     assert.equal(
-      db.prepare(
+      await db.get(
         "SELECT id FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
-      ).get("library", "Canonical Song"),
+        ["library", "Canonical Song"],
+      ),
       undefined,
     );
   } finally {
@@ -604,18 +612,20 @@ test("favorites can keep Flow tracks and respect the auto-keep setting", async (
   assert.equal((await saveSettings({ favoriteAutoKeep: false })).status, 200);
   assert.equal(responseJson(await request("star", { id: entry.id })).status, "ok");
   assert.equal(
-    Boolean(db.prepare(
+    Boolean(await db.get(
       "SELECT 1 FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
-    ).get("library", "Favorite Song")),
+      ["library", "Favorite Song"],
+    )),
     false,
   );
   assert.equal(responseJson(await request("getStarred")).starred.song[0].id, entry.id);
   assert.equal((await saveSettings({ favoriteAutoKeep: true })).status, 200);
   assert.equal(responseJson(await request("unstar", { id: entry.id })).status, "ok");
   assert.equal(responseJson(await request("star", { id: entry.id })).status, "ok");
-  const autoKeepJob = db.prepare(
+  const autoKeepJob = await db.get(
     "SELECT id FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
-  ).get("library", "Favorite Song");
+    ["library", "Favorite Song"],
+  );
   assert.ok(autoKeepJob);
   downloadTracker.removeJob(autoKeepJob.id);
   assert.equal(responseJson(await request("unstar", { id: entry.id })).status, "ok");
@@ -631,11 +641,13 @@ test("favoriting a synced playlist track keeps it when the source removes it", a
   try {
     weeklyFlowWorker.start = async () => false;
     const songId = `shared-song:${encodeURIComponent(`${playlist.id}:${syncedFavoriteSourceJobId}`)}`;
-    assert.equal(star(userOps.getUserByUsername("alice"), songId), true);
+    assert.equal(await star(await userOps.getUserByUsername("alice"), songId), true);
 
-    const libraryJob = db.prepare(
-      "SELECT id, status, final_path AS finalPath FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
-    ).get("library", track.trackName);
+    await flushDownloadTrackerWrites();
+    const libraryJob = await db.get(
+      `SELECT id, status, final_path AS "finalPath" FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1`,
+      ["library", track.trackName],
+    );
     assert.ok(libraryJob);
     assert.equal(libraryJob.status, "done");
     libraryJobId = libraryJob.id;
@@ -653,9 +665,11 @@ test("favoriting a synced playlist track keeps it when the source removes it", a
       mergeImportSource: true,
     });
 
-    const updatedLibraryJob = db.prepare(
-      "SELECT final_path AS finalPath FROM playlist_download_jobs WHERE id = ?",
-    ).get(libraryJobId);
+    await flushDownloadTrackerWrites();
+    const updatedLibraryJob = await db.get(
+      `SELECT final_path AS "finalPath" FROM playlist_download_jobs WHERE id = ?`,
+      [libraryJobId],
+    );
     await stat(updatedLibraryJob.finalPath);
     await assert.rejects(stat(sourcePath));
   } finally {
@@ -663,7 +677,7 @@ test("favoriting a synced playlist track keeps it when the source removes it", a
     downloadTracker.clearByPlaylistType(playlist.id);
     if (libraryJobId) downloadTracker.removeJob(libraryJobId);
     await rm(path.join(weeklyFlowRoot, track.artistName), { recursive: true, force: true });
-    flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
+    await flowPlaylistConfig.deleteSharedPlaylist(playlist.id);
   }
 });
 
@@ -787,7 +801,7 @@ test("keeps canonical protocol IDs and flow entries after restart", async () => 
 test("returns the canonical artwork redirect contract", async () => {
   const artist = responseJson(await request("getArtists")).artists.index[0].artist[0];
   const source = "https://example.com/cover.jpg";
-  dbOps.setImage("11111111-1111-4111-8111-111111111111", source);
+  await dbOps.setImage("11111111-1111-4111-8111-111111111111", source);
   const result = await request("getCoverArt", { id: artist.id }, { redirect: "manual" });
   assert.equal(result.response.status, 302);
   assert.equal(result.response.headers.get("location"), source);
@@ -807,7 +821,7 @@ test("resolves playlist release-group artwork without a canonical album row", as
   try {
     const cached = await warmImageProxy("https://images.example/playlist.webp");
     const releaseGroupId = "44444444-4444-4444-8444-444444444444";
-    dbOps.setImage(`rg:${releaseGroupId}`, cached.localUrl);
+    await dbOps.setImage(`rg:${releaseGroupId}`, cached.localUrl);
 
     const artwork = await resolveArtworkUrl(
       `album:${encodeURIComponent(`release-group:${releaseGroupId}`)}`,
@@ -830,12 +844,12 @@ test("uses cached album artwork for artist artwork", async () => {
       { headers: { "content-type": "image/png" } },
     );
   try {
-    const artist = db.prepare("SELECT mbid, identity_key FROM library_artists LIMIT 1").get();
-    const album = db.prepare("SELECT mbid, release_group_mbid FROM library_albums LIMIT 1").get();
+    const artist = await db.get("SELECT mbid, identity_key FROM library_artists LIMIT 1");
+    const album = await db.get("SELECT mbid, release_group_mbid FROM library_albums LIMIT 1");
     const cacheId = album.release_group_mbid || album.mbid;
     const cached = await warmImageProxy(`https://images.example/artist-album-${cacheId}.png`);
-    dbOps.deleteImage(artist.mbid);
-    dbOps.setImage(`rg:${cacheId}`, cached.localUrl);
+    await dbOps.deleteImage(artist.mbid);
+    await dbOps.setImage(`rg:${cacheId}`, cached.localUrl);
 
     const artwork = await resolveArtworkUrl(`artist:${encodeURIComponent(artist.identity_key)}`);
     const libraryArtwork = await warmImageProxy(cached.localUrl, "library");

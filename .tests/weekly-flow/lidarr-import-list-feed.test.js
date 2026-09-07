@@ -4,6 +4,11 @@ import {
   buildLidarrImportListItems,
   verifyFlowLidarrFeedToken,
 } from "../../backend/services/lidarrImportListFeed.js";
+import { ensureTestDatabase } from "../helpers/backendTestHarness.js";
+import { loadSettingsCache } from "../../backend/db/helpers/settings.js";
+
+await ensureTestDatabase();
+await loadSettingsCache();
 
 test("buildLidarrImportListItems maps jobs to lidarr custom list rows", () => {
   const items = buildLidarrImportListItems([

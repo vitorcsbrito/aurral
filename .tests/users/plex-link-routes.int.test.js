@@ -10,10 +10,9 @@ import {
   startServerProcess,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { userOps, dbOps }, { plexConnectionStore }] =
+const [isolatedState, { userOps, dbOps }, { plexConnectionStore }] =
   await setupIsolatedBackend(
     "plex-link-routes",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/plex/plexConnectionStore.js",
   );
@@ -53,16 +52,18 @@ async function apiFetch(token, path, options = {}) {
 }
 
 test.before(async () => {
-  resetDatabase(db);
-  dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
-  const admin = userOps.createUser("plex-admin", bcrypt.hashSync("password123", 4), "admin");
-  const userA = userOps.createUser("plex-user-a", bcrypt.hashSync("password123", 4), "user");
-  const userB = userOps.createUser("plex-user-b", bcrypt.hashSync("password123", 4), "user");
+  await resetDatabase();
+  await dbOps.updateSettings({ integrations: {}, onboardingComplete: true });
+  const admin = await userOps.createUser("plex-admin", bcrypt.hashSync("password123", 4), "admin");
+  const userA = await userOps.createUser("plex-user-a", bcrypt.hashSync("password123", 4), "user");
+  const userB = await userOps.createUser("plex-user-b", bcrypt.hashSync("password123", 4), "user");
   adminId = admin.id;
   userAId = userA.id;
   userBId = userB.id;
 
-  server = await startServerProcess();
+  server = await startServerProcess({
+    extraEnv: { AURRAL_PG_SCHEMA: process.env.AURRAL_PG_SCHEMA },
+  });
   adminToken = await login("plex-admin", "password123");
   userAToken = await login("plex-user-a", "password123");
   userBToken = await login("plex-user-b", "password123");
@@ -79,7 +80,7 @@ test("GET /me/plex-link/status requires authentication", async () => {
 });
 
 test("GET /me/plex-link/status reflects only the caller's own connection", async () => {
-  plexConnectionStore.saveConnection(userAId, {
+  await plexConnectionStore.saveConnection(userAId, {
     linkType: "self",
     token: "user-a-token",
     clientId: "user-a-client",
@@ -104,7 +105,7 @@ test("GET /me/plex-link/status reflects only the caller's own connection", async
 });
 
 test("DELETE /me/plex-link only ever clears the caller's own connection, never another user's", async () => {
-  plexConnectionStore.saveConnection(userAId, {
+  await plexConnectionStore.saveConnection(userAId, {
     linkType: "self",
     token: "user-a-token",
     clientId: "user-a-client",
@@ -117,13 +118,16 @@ test("DELETE /me/plex-link only ever clears the caller's own connection, never a
   });
   assert.equal(response.status, 200);
 
-  assert.equal(plexConnectionStore.getConnection(userAId)?.plexUsername, "friendA");
+  assert.equal(
+    (await plexConnectionStore.getConnection(userAId))?.plexUsername,
+    "friendA",
+  );
 
   const { response: responseA } = await apiFetch(userAToken, "/api/users/me/plex-link", {
     method: "DELETE",
   });
   assert.equal(responseA.status, 200);
-  assert.equal(plexConnectionStore.getConnection(userAId), null);
+  assert.equal(await plexConnectionStore.getConnection(userAId), null);
 });
 
 test("POST /me/plex-link/oauth/complete validates required fields before touching Plex, and ignores any userId in the body", async () => {
@@ -137,8 +141,8 @@ test("POST /me/plex-link/oauth/complete validates required fields before touchin
   );
   assert.equal(response.status, 400);
   assert.match(payload.error, /pinId, code and clientId are required/);
-  assert.equal(plexConnectionStore.getConnection(userAId), null);
-  assert.equal(plexConnectionStore.getConnection(userBId), null);
+  assert.equal(await plexConnectionStore.getConnection(userAId), null);
+  assert.equal(await plexConnectionStore.getConnection(userBId), null);
 });
 
 test("admin-only Plex routes reject non-admin users with 403", async () => {
@@ -185,7 +189,7 @@ test("POST /:id/plex-link/managed requires the global Plex connection to be conf
 });
 
 test("admin DELETE /:id/plex-link unlinks a managed user", async () => {
-  plexConnectionStore.saveConnection(userBId, {
+  await plexConnectionStore.saveConnection(userBId, {
     linkType: "managed",
     token: "managed-token",
     clientId: "managed-client",
@@ -196,5 +200,5 @@ test("admin DELETE /:id/plex-link unlinks a managed user", async () => {
     method: "DELETE",
   });
   assert.equal(response.status, 200);
-  assert.equal(plexConnectionStore.getConnection(userBId), null);
+  assert.equal(await plexConnectionStore.getConnection(userBId), null);
 });
