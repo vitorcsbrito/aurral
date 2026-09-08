@@ -24,6 +24,23 @@ jobs:
       issues: write
       pull-requests: write
       packages: write
+    services:
+      # The smoke test boots the built image against a real database.
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: aurral
+          POSTGRES_PASSWORD: aurral
+          POSTGRES_DB: aurral_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U aurral -d aurral_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://aurral:aurral@localhost:5433/aurral_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -43,7 +60,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push preview image
+      # Loaded, not pushed: smoke test must pass before publishing.
+      - name: Build preview image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/${{ github.repository }}:pr-${{ github.event.number }}
+          platforms: linux/amd64
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
+            GITHUB_REPO=${{ github.repository }}
+            RELEASE_CHANNEL=preview
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test production container
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:pr-${{ github.event.number }}
+        run: |
+          CONTAINER="aurral-preview-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          cleanup() {
+            docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          # Host networking reaches the postgres service published on localhost:5433.
+          docker run --detach --name "$CONTAINER" --network host \
+            --env PUID=3007 --env PGID=3001 \
+            --env DATABASE_URL="$DATABASE_URL" --env AURRAL_PG_SCHEMA=ci_container \
+            "$IMAGE"
+
+          ready=0
+          for i in {1..30}; do
+            if docker exec "$CONTAINER" node -e \
+              'fetch("http://127.0.0.1:3001/api/health").then((response) => { if (!response.ok) process.exit(1); })'; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            docker logs "$CONTAINER"
+            exit 1
+          fi
+
+          docker exec "$CONTAINER" node --input-type=module -e \
+            'import fs from "node:fs/promises"; const status = await fs.readFile("/proc/1/status", "utf8"); const groups = status.match(/^Groups:\s*(.*)$/m)?.[1].trim().split(/\s+/).filter(Boolean) || []; if (!groups.includes("3001")) { console.error(status); process.exit(1); }'
+
+          docker logs "$CONTAINER"
+
+      - name: Push preview image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -57,7 +126,6 @@ jobs:
             GITHUB_REPO=${{ github.repository }}
             RELEASE_CHANNEL=preview
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Summarize preview image
         run: |
