@@ -134,6 +134,7 @@ function getPool() {
     pool = new Pool({
       connectionString: poolConfig.connectionString,
       max: poolConfig.max,
+      allowExitOnIdle: true,
       application_name: poolConfig.applicationName,
       // Test processes each get their own schema on a shared database.
       ...(poolConfig.schema ? { options: `-c search_path=${poolConfig.schema},public` } : {}),

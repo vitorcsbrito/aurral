@@ -82,7 +82,7 @@ services:
       retries: 10
 ```
 
-Aurral stores its data in Postgres. Point `DATABASE_URL` at an existing server instead of the bundled `postgres` service if you already run one. Upgrading from a SQLite install? Run `node backend/scripts/migrateSqliteToPostgres.js` once inside the container; see [Database](https://docs.aurral.org/admin/environment/#database).
+Aurral stores its data in Postgres. Point `DATABASE_URL` at an existing server instead of the bundled `postgres` service if you already run one. Upgrading from a SQLite install? Stop the app and copy your `aurral.db` across once with `docker compose run --rm aurral node backend/scripts/migrateSqliteToPostgres.js`; see [Migrating from SQLite](https://docs.aurral.org/admin/environment/#migrating-from-sqlite).
 
 Set `MEDIA_ROOT` to the **same host media path that Lidarr already mounts**. Keep `/data` as the container path and use that same mapping for your download clients and Navidrome or Plex. Then set Aurral's Downloads Folder to a container path such as `/data/downloads/aurral`. See [Filesystem and mounts](https://docs.aurral.org/getting-started/storage/).
 
