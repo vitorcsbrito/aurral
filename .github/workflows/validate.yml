@@ -30,6 +30,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://aurral:aurral@localhost:5433/aurral_test
+      # Hosted runners have 4 vCPUs; unset locally, Node picks its own default.
+      AURRAL_TEST_CONCURRENCY: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
