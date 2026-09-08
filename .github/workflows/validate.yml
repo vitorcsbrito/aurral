@@ -30,8 +30,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://aurral:aurral@localhost:5433/aurral_test
-      # Hosted runners have 4 vCPUs; unset locally, Node picks its own default.
-      AURRAL_TEST_CONCURRENCY: 4
+      # Suite waits on I/O, so oversubscribing the 4 vCPUs pays off.
+      AURRAL_TEST_CONCURRENCY: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -39,7 +39,9 @@ jobs:
         with:
           node-version: 22.23.2
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            docs/package-lock.json
 
       - name: Ensure validation runtime dependencies
         run: |
