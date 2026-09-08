@@ -73,11 +73,17 @@ test("malformed artist metadata does not break indexed reference lookup", async 
 });
 
 test("the reference expressions are indexed and the planner can use them", async () => {
+  // Concurrent test schemas hold these index names too, and pg_indexes
+  // fails mid-scan when one of those schemas is dropped.
   const definitions = new Map(
     (
-      await db.all("SELECT indexname, indexdef FROM pg_indexes WHERE indexname = ANY(?)", [
-        [PROVIDER_INDEX, FOREIGN_INDEX],
-      ])
+      await db.all(
+        `SELECT c.relname AS indexname, pg_get_indexdef(c.oid) AS indexdef
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = current_schema() AND c.relname = ANY(?)`,
+        [[PROVIDER_INDEX, FOREIGN_INDEX]],
+      )
     ).map((row) => [row.indexname, row.indexdef]),
   );
 
