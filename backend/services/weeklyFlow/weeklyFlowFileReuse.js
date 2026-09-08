@@ -730,7 +730,7 @@ export async function repairJobsUnderRemovedPlaylistDir(playlistType, options = 
     for (const changedPlaylistType of changedPlaylistTypes) {
       await playlistManager.refreshPlaylist(changedPlaylistType).catch(() => {});
     }
-    playlistManager.scheduleScanLibrary();
+    if (changedPlaylistTypes.has("library")) playlistManager.scheduleScanLibrary();
   }
 
   return {
@@ -862,7 +862,7 @@ export async function repairReusableTrackLinks(options = {}) {
     for (const playlistType of changedPlaylistTypes) {
       await playlistManager.refreshPlaylist(playlistType).catch(() => {});
     }
-    playlistManager.scheduleScanLibrary();
+    if (changedPlaylistTypes.has("library")) playlistManager.scheduleScanLibrary();
     if (requeued > 0) {
       const [{ weeklyFlowWorker }, { restartWorkerIfPending }] = await Promise.all([
         import("./weeklyFlowWorker.js"),
@@ -885,10 +885,10 @@ export async function repairReusableTrackLinks(options = {}) {
   };
 }
 
-async function refreshPlaylistAfterReuse(playlistType) {
+async function refreshPlaylistAfterReuse(playlistType, scheduleLibraryScan = false) {
   const { playlistManager } = await import("./weeklyFlowPlaylistManager.js");
   await playlistManager.refreshPlaylist(playlistType);
-  playlistManager.scheduleScanLibrary();
+  if (scheduleLibraryScan) playlistManager.scheduleScanLibrary();
 }
 
 export async function reuseTrackForPlaylist(track, playlistType, options = {}) {
@@ -961,7 +961,7 @@ export async function reuseTrackForPlaylist(track, playlistType, options = {}) {
       )
       .catch(() => {});
   }
-  refreshPlaylistAfterReuse(playlistType).catch((error) => {
+  refreshPlaylistAfterReuse(playlistType, targetPlaylistType === "library").catch((error) => {
     console.warn(
       `[WeeklyFlowReuse] Failed to refresh playlist ${playlistType}: ${error?.message || error}`,
     );
