@@ -1,8 +1,17 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import { rehypeBaseLinks } from "./src/plugins/rehype-base-links.mjs";
+
+// Unset builds the canonical site; the GitHub Pages project page sets both.
+const site = process.env.DOCS_SITE || "https://docs.aurral.org";
+const base = process.env.DOCS_BASE || "/";
 
 export default defineConfig({
-  site: "https://docs.aurral.org",
+  site,
+  base,
+  markdown: {
+    rehypePlugins: [[rehypeBaseLinks, { base }]],
+  },
   integrations: [
     starlight({
       title: "Aurral",
