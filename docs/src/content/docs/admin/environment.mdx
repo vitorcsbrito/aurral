@@ -29,13 +29,22 @@ Aurral stores everything except the background job queue in Postgres.
 
 ### Migrating from SQLite
 
-Installs created before the Postgres switch keep their data in `aurral.db` inside the data directory. Copy it into Postgres once, with Aurral stopped:
+Installs created before the Postgres switch keep their data in `aurral.db` inside the data directory. Copy it into Postgres once.
+
+Stop the running app first so nothing writes to `aurral.db` during the copy, then preview the migration and run it:
 
 ```bash
+docker compose stop aurral
+docker compose run --rm aurral node backend/scripts/migrateSqliteToPostgres.js --dry-run
 docker compose run --rm aurral node backend/scripts/migrateSqliteToPostgres.js
+docker compose up -d aurral
 ```
 
-The script reads `aurral.db` from the data directory (override with `--sqlite <path>`), applies the Postgres schema, and inserts every row it finds, skipping rows that already exist. Add `--dry-run` to see row counts without writing, or `--truncate` to empty the Postgres tables first. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
+`docker compose run` starts a separate throwaway container from the same service definition, so it works while the app itself is stopped, and it starts the `postgres` service if it is not already up.
+
+The script reads `aurral.db` from the data directory (override with `--sqlite <path>`), applies the Postgres schema, and inserts every row it finds in batches, skipping rows that already exist and resetting each id sequence past the highest copied row. Add `--dry-run` to see row counts without writing, or `--truncate` to empty the Postgres tables first and start over. Running it twice is safe.
+
+Genres, search text, and recency are rebuilt by the database as rows arrive, so they are not copied. The background job queue keeps its own `honker.db` file; leave it in place. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
 
 ## Path mappings
 
