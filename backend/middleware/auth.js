@@ -69,7 +69,9 @@ export const rotateApiKey = async () =>
   persistApiKey(dbOps.getSettings(), crypto.randomBytes(32).toString("hex"));
 
 export const isProxyAuthEnabled = () => {
-  if (process.env.AUTH_PROXY_ENABLED === "true") return true;
+  if (process.env.AUTH_PROXY_ENABLED !== undefined) {
+    return process.env.AUTH_PROXY_ENABLED === "true";
+  }
   return !!process.env.AUTH_PROXY_HEADER;
 };
 
