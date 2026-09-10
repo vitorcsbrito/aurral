@@ -3,7 +3,11 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { db } from "../config/database.js";
 import { getLastfmApiKey, getLastfmApiSecret, lastfmGetSession, listenbrainzValidateToken } from "../services/apiClients/index.js";
 import { userOps } from "../db/helpers/index.js";
-import { requireAuth, requirePermission } from "../middleware/requirePermission.js";
+import {
+  requireAuth,
+  requirePermission,
+  requireUserAccount,
+} from "../middleware/requirePermission.js";
 import { validateExternalUrl } from "../middleware/urlValidator.js";
 import { getKoitoListenBrainzBaseUrl, normalizeKoitoBaseUrl } from "../services/koitoClient.js";
 import { getScrobbleEncryptionKey, scrobbleConnectionStore } from "../services/scrobbleConnectionStore.js";
@@ -128,7 +132,7 @@ router.get("/status", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/lastfm/link", requireAuth, async (req, res, next) => {
+router.get("/lastfm/link", requireAuth, requireUserAccount, async (req, res, next) => {
   try {
     const configured = Boolean(getLastfmApiKey() && getLastfmApiSecret());
     if (!configured) {
@@ -227,7 +231,7 @@ router.get("/listenbrainz/link", requireAuth, async (req, res, next) => {
   }
 });
 
-router.put("/listenbrainz/link", requireAuth, async (req, res) => {
+router.put("/listenbrainz/link", requireAuth, requireUserAccount, async (req, res) => {
   const token = String(req.body?.token || "").trim();
   if (!token) return res.status(400).json({ error: "Token is required" });
   let validation;
@@ -259,7 +263,7 @@ router.put("/listenbrainz/link", requireAuth, async (req, res) => {
 
 router.delete("/listenbrainz/link", requireAuth, deleteProviderLink("listenbrainz"));
 
-router.put("/koito/link", requirePermission("accessSettings"), async (req, res) => {
+router.put("/koito/link", requirePermission("accessSettings"), requireUserAccount, async (req, res) => {
   const rawUrl = String(
     req.body?.url || (await userOps.getUserById(req.user.id))?.listenHistoryUrl || "",
   ).trim();
