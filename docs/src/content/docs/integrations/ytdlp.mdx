@@ -25,7 +25,7 @@ The yt-dlp default priority is `50`. The slskd default is `10`. The Usenet defau
 
 ## Behavior
 
-Aurral tries download sources in priority order. With default settings, Aurral tries configured slskd and Usenet sources first.
+Aurral tries download sources in priority order. With default settings, Aurral tries configured slskd, deemix, and Usenet sources first.
 
 yt-dlp downloads tracks that the other sources cannot find. It can also be the only download source.
 
@@ -39,9 +39,9 @@ After validation, Aurral writes the playlist's title, artist, album, album artis
 
 When a downloaded file matches the requested track but its duration differs significantly, Aurral retains it under **Activity > Queue** for preview, approval, or denial.
 
-Audio from YouTube is usually lossy. Prefer slskd or Usenet when you want higher quality.
+Audio from YouTube is usually lossy. Prefer slskd, deemix, or Usenet when you want higher quality.
 
-yt-dlp can supply the first acceptable file for a track. Automatic and manual upgrade searches use slskd or Usenet, not yt-dlp.
+yt-dlp can supply the first acceptable file for a track. Automatic and manual upgrade searches use slskd, deemix, or Usenet, not yt-dlp.
 
 ## Download source priority
 

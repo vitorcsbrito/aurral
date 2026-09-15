@@ -83,13 +83,14 @@ instance API key for WebSocket connections.
 | `GET` | `/api/library/tracks` | List album tracks |
 | `DELETE` | `/api/library/tracks/:id` | Delete a library track file and prune canonical records when no media remains |
 | `POST` | `/api/library/refresh` | Queue a canonical library scan |
+| `GET` | `/api/library/refresh` | Read the currently scheduled scan, if any |
 | `GET` | `/api/library/refresh/:jobId` | Read canonical library scan status |
 | `GET` | `/api/library/canonical` | Read a bounded canonical page; provide a supported `kind` and `pageSize` (1-100) |
 | `GET` | `/api/library/favorites` | Read the current user's library favorites |
 | `POST` | `/api/library/favorites` | Add or remove a library favorite |
 | `GET` | `/api/library/playback-queue` | Build a bounded playback queue page; optional `page` and `pageSize` (1-100) |
 | `GET` | `/api/library/stream/:songId` | Stream a library song |
-| `GET` | `/api/library/canonical-stream/:trackId` | Stream a canonical library track |
+| `GET` | `/api/library/canonical-stream/:albumId/:trackId` | Stream a canonical library track |
 | `GET` | `/api/library/file-stream/:albumId/:trackId` | Stream an album track file |
 | `GET` | `/api/library/rootfolder` | List Lidarr root-folder paths |
 | `GET` | `/api/library/lookup/:mbid` | Check whether an artist is in the library |
@@ -178,11 +179,11 @@ accept `releaseTypes` and `sort`. `GET /api/requests` accepts `refresh=true`.
 | `PATCH` | `/api/news/preferences` | Replace the current user's blocked publishers |
 | `POST` | `/api/news/feeds/disable` | Disable a news feed |
 
-`/api/news` accepts an optional `limit` query parameter. News preferences are
-user-scoped; the `blockedPublishers` request field is an array of publisher
-names. The response includes `refresh.checkedArtistCount`,
-`refresh.queuedArtistCount`, `refresh.callsRemaining`, and an optional
-`refresh.warning` so clients can explain partial coverage and provider limits.
+`/api/news` accepts optional `limit` (1-100, default 60), `offset`, and `mode`
+(`matched` or `top`) query parameters. The response includes `articles`,
+`hasMore`, and `refresh` with `checkedAt`, `failedFeeds`, and an optional
+`warning`. News preferences are user-scoped; the `blockedPublishers` request
+field is an array of publisher names.
 
 ## Inbox
 
@@ -312,7 +313,8 @@ Every route in this section requires an administrator.
 | --- | --- | --- |
 | `GET` | `/api/settings` | Read settings |
 | `POST` | `/api/settings` | Update settings |
-| `GET` | `/api/settings/storage-health` | Run or return the storage health check |
+| `GET` | `/api/settings/storage-health` | Return the last storage health result |
+| `POST` | `/api/settings/storage-health/check` | Run the storage health check now |
 | `GET` | `/api/settings/tasks` | List scheduled maintenance tasks |
 | `POST` | `/api/settings/tasks/clear-stale` | Clear stale task runs |
 | `GET` | `/api/settings/lidarr/profiles` | List Lidarr quality profiles |

@@ -210,19 +210,19 @@ Different container paths can work, but each mismatch needs its own setting. A p
 
 ### Paths reported by Lidarr or download clients
 
-Use **Settings > Download clients > Remote Path Mappings**. Enter:
+Use **Settings > Download clients > Remote path mappings**. Enter:
 
-- **Remote Path**: the absolute path reported by the other application.
-- **Local Path**: the path for the same folder inside Aurral.
-- **Source**: the application that reports the path, such as **Lidarr**, **slskd**, **NZBGet**, or **SABnzbd**.
+- **Remote path**: the absolute path reported by the other application.
+- **Local path**: the path for the same folder inside Aurral.
+- **Applies to**: the application that reports the path, such as **Lidarr**, **slskd**, **NZBGet**, or **SABnzbd**.
 
 Example:
 
 | | Value |
 | --- | --- |
-| Source | Lidarr |
-| Remote Path | `/downloads/music` |
-| Local Path | `/data/music` |
+| Applies to | Lidarr |
+| Remote path | `/downloads/music` |
+| Local path | `/data/music` |
 
 The local path must exist inside the Aurral container. If it does not, add or correct the Docker mount first.
 

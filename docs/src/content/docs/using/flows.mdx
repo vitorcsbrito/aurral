@@ -66,12 +66,12 @@ Deep dive requires a Last.fm API key. It does not change the schedule or source 
 
 ## Focus
 
-Focus is a dedicated fourth source. It does not change Discover, Library, or Trending.
+Focus is a dedicated fourth source. It does not change Discover, Library, or Trending. Its fields are grouped under **Focus filters** in the flow form.
 
-- **Genre tags** tell Focus which genres to target.
+- **Tags (genre, decade, mood)** tell Focus which tags to target, for example `indie, 80s, happy`.
 - **Related artists** tell Focus which similarity seeds to target.
 - **Release year(s)** limits Focus picks to a from-to year range. Leave blank for no year limit.
-- If you enable Focus, add at least one genre tag or related artist.
+- If you enable Focus, add at least one tag or related artist.
 - If you disable Focus, Aurral saves your tags, artists, and year range but does not use them.
 
 Year range examples:
@@ -84,7 +84,7 @@ Aurral resolves release years from metadata when needed. Focus tracks without a 
 
 ### Focus match behavior
 
-When both genre tags and related artists are present, Focus broadens in this order:
+When both tags and related artists are present, Focus broadens in this order:
 
 1. Artists related to all entered related artists that match all tags
 2. Artists related to all entered related artists that match at least one tag
@@ -138,4 +138,4 @@ Only flows can generate replacement tracks when downloads fail. You can save a c
 
 ## Lidarr import list
 
-Each flow can publish a token URL for Lidarr **Custom List** import. Copy it from the flow menu on **Playlists**. See [Lidarr: Import list feeds](/integrations/lidarr/#import-list-feeds).
+Each flow can publish a token URL for Lidarr **Custom List** import. Select **Lidarr import URL** in the flow menu on **Flows** to copy it. See [Lidarr: Import list feeds](/integrations/lidarr/#import-list-feeds).

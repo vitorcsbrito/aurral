@@ -58,12 +58,12 @@ which notifications are sent.
 
 If the file does not appear in **Library**, use the **Refresh** button there.
 Refresh waits for the canonical scan to finish. If it still does not appear,
-run **Test library access** and check [Filesystem and mounts](/getting-started/storage/)
+run **Settings > Storage health > Run checks** and check [Filesystem and mounts](/getting-started/storage/)
 for a path mismatch.
 
 See [Library access fails on a folder that is not your root folder](/admin/troubleshooting/#library-access-fails-on-a-folder-that-is-not-your-root-folder).
 
-In mixed Windows and Docker setups, **Test library access** shows the exact path that Lidarr reports. If that path differs from the path inside Aurral, add a mapping under **Settings > Download clients > Remote Path Mappings** with **Source** set to **Lidarr**.
+In mixed Windows and Docker setups, the **Lidarr library** check in **Settings > Storage health** shows the exact path that Lidarr reports. If that path differs from the path inside Aurral, add a mapping under **Settings > Download clients > Remote path mappings** with **Applies to** set to **Lidarr**.
 
 This mapping only helps Aurral read Lidarr files. Navidrome must scan the corresponding Lidarr music folder before Aurral can add a reused song to an API playlist. See [Path mismatches](/getting-started/storage/#when-paths-cannot-match).
 

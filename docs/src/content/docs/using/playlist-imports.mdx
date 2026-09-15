@@ -207,7 +207,7 @@ Imported playlists behave differently from flows when downloads fail:
 - Aurral queues each imported track as a separate worker job.
 - The active download pipeline can try multiple candidates and configured sources.
 - If all options fail, the track stays in the failed state after a restart.
-- Choose **Re-search missing** from the playlist menu to explicitly queue failed tracks again.
+- Choose **Re-search** from a track's action menu to queue it again, or **Search all** on **Activity > Wanted** to retry every missing track.
 - Only flows can generate replacement tracks.
 
 ## Existing file reuse
@@ -228,6 +228,6 @@ Lidarr-aware reuse requires Aurral to read the files at the paths Lidarr reports
 
 If Lidarr runs on Windows and Aurral runs in Docker, run **Test library access** in **Settings > Lidarr**.
 
-Use the reported path to add a mapping under **Settings > Download clients > Remote Path Mappings**.
+Use the reported path to add a mapping under **Settings > Download clients > Remote path mappings**.
 
 Navidrome must scan the corresponding Lidarr library before Aurral can add a reused track to a Navidrome API playlist. See [Navidrome](/integrations/navidrome/#different-navidrome-paths).
