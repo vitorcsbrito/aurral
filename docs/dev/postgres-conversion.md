@@ -53,7 +53,7 @@ connection.
 | `rowid` | `id` |
 | `PRAGMA table_info(t)` | `SELECT column_name FROM information_schema.columns WHERE table_name = 't'` |
 | `sqlite_master` lookups | `SELECT to_regclass('t')` (NULL when missing) |
-| `library_search_fts MATCH ?` | `search_document.search_text LIKE '%' \|\| lower(?) \|\| '%'` (pg_trgm GIN index) |
+| `library_search_fts MATCH ?` | `library_search_documents.search_text LIKE '%' \|\| lower(?) \|\| '%'` (pg_trgm GIN index) |
 | `WITHOUT ROWID`, `AUTOINCREMENT`, `PRAGMA ...` | remove; schema lives in `backend/db/pg/schema.js` |
 | `db.exec` of `CREATE TABLE ...` at runtime | remove; add to the schema migrations instead |
 | boolean-ish `col = 1` on INTEGER flag columns | keep as is (columns stay INTEGER 0/1) |

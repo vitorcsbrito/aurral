@@ -3,12 +3,14 @@ title: Docker setup
 description: Run Aurral in Docker and connect it to the shared media filesystem.
 ---
 
-Aurral runs in Docker. It needs two mounts:
+Aurral runs in Docker. It needs a Postgres database and two mounts:
 
-- `/config` for Aurral's database, settings, users, and jobs.
+- `/config` for the background job queue, cached artwork, staging files, and diagnostic reports.
 - A shared media mount for the Lidarr library, completed downloads, and Aurral output.
 
-Read [Filesystem and mounts](/getting-started/storage/) before you create the Compose file. Aurral must share a media mount with Lidarr, your download clients, and Navidrome or Plex.
+Settings, users, sessions, the library index, and job history live in Postgres, not in `/config`.
+
+Read [Filesystem and mounts](/getting-started/storage/) before you create the Compose file. Aurral must share a media mount with Lidarr, your download clients, and Navidrome, Plex, or Jellyfin.
 
 ## Minimal Compose file
 
@@ -52,7 +54,9 @@ Replace `/srv/media` with the host directory that Lidarr already uses. Keep `:/d
 
 For example, the host folder `/srv/media/downloads/aurral` is `/data/downloads/aurral` inside Aurral. Set the Downloads Folder to the container path in **Settings > Download clients**, not to the host path.
 
-`/config` holds Aurral's background job queue, cached images, and logs. Do not share it with another service.
+`/config` holds the background job queue (`honker.db`), cached images, download staging, and diagnostic reports. Logs go to the container's stdout. Do not share `/config` with another service.
+
+Back up both `./config` and `./postgres`. Losing the Postgres volume loses settings, users, and the library index.
 
 ## Start Aurral
 
@@ -81,7 +85,7 @@ Aurral checks for a newer build in your channel. When one exists, an update icon
 Non-stable channels also mark the sidebar.
 
 :::caution
-`nightly` is not a stable release. Back up `./config` before switching to it.
+`nightly` is not a stable release. Back up `./config` and `./postgres` before switching to it.
 
 Nightly images currently support `linux/amd64` only. On ARM, use `latest` or a versioned stable tag.
 :::
@@ -92,7 +96,7 @@ For the current Nightly scope, see the [Release Readiness issues](https://github
 
 When a pull request has a preview image, its GitHub conversation contains the exact `pr-<number>` image tag and test instructions.
 
-1. Back up `./config`.
+1. Back up `./config` and `./postgres`.
 2. Temporarily change the Aurral image to the preview tag.
 3. Run `docker compose pull aurral && docker compose up -d aurral`.
 4. Test the behavior changed by the pull request.

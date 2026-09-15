@@ -72,6 +72,9 @@ If Aurral writes a file as `/data/downloads/aurral/track.flac` but Navidrome see
 | Download clients | API access and readable completed-download paths | Mount the same media root in Aurral and the client at the same container path. Aurral imports completed files into its Downloads Folder. |
 | Navidrome | URL, username, password, and access to Aurral's downloaded files | Mount the Aurral Downloads Folder in Navidrome. Use the same container path when possible. |
 | Plex | Plex account, server URL, and access to Aurral's downloaded files | Mount the Aurral Downloads Folder in Plex. Leave **Plex Aurral Library path** blank when both containers use the same path. |
+| Jellyfin | Server URL, API key, user ID, and an existing music library that contains Aurral's downloaded files | Mount the Aurral Downloads Folder in Jellyfin at the same container path, or add a **Jellyfin** path mapping. |
+
+Download clients are slskd, SABnzbd or NZBGet, and deemix. Each writes completed files to its own folder; Aurral must be able to read that folder at the same path or through a path mapping.
 
 The built-in **yt-dlp** source is part of Aurral. It does not need another container. It stages files in `/config/_staging` by default, then imports completed files into the Downloads Folder.
 
@@ -145,7 +148,7 @@ services:
       - ${MEDIA_ROOT:-/srv/media}:/data:ro
 ```
 
-`./config:/config` is only for Aurral's job queue, cached images, and logs (settings, users, and the library index live in Postgres). Do not share `/config` with Lidarr, Navidrome, Plex, or a download client.
+`./config:/config` is only for Aurral's job queue, cached images, staging files, and diagnostic reports. Settings, users, and the library index live in Postgres. Logs go to stdout. Do not share `/config` with Lidarr, Navidrome, Plex, Jellyfin, or a download client.
 
 The containers can use different Docker networks and service URLs. They must still be able to see the media files through compatible mounts.
 
@@ -158,9 +161,11 @@ After you add the mounts, use the container paths shown below.
 | Lidarr | Root folder | `/data/music` |
 | slskd | Completed download folder | `/data/downloads/slskd/complete` |
 | SABnzbd or NZBGet | Completed download folder | `/data/downloads/usenet/complete` |
+| deemix | Download folder | `/data/downloads/deemix` |
 | Aurral | **Settings > Download clients > Downloads Folder > Path** | `/data/downloads/aurral` |
 | Navidrome | Aurral library | Aurral creates `/data/downloads/aurral` through the API. |
 | Plex | Aurral library | Aurral creates the library through the API at the path Plex uses for the Aurral Downloads Folder. |
+| Jellyfin | Music library | An existing Jellyfin library that includes `/data/downloads/aurral`. Aurral does not create it. |
 
 The exact download-client folder names are not important. The important rules are:
 
@@ -179,15 +184,15 @@ Follow this order so you can check each filesystem connection separately.
 5. In Aurral, open **Settings > Lidarr**, enter the URL and API key, and select **Test connection**.
 6. In Aurral, open **Settings > Download clients** and set **Downloads Folder > Path** to a writable folder under `/data`, such as `/data/downloads/aurral`.
 7. Connect and test each download client that you use.
-8. Open **Settings > Storage health** and select **Run Checks**. Fix any failed library, download, or transfer check.
-9. Open **Settings > Playback**, connect Navidrome or Plex, and follow the path rules below.
+8. Open **Settings > Storage health** and select **Run checks**. Fix any failed library, download, or transfer check.
+9. Open **Settings > Playback**, connect Navidrome, Plex, or Jellyfin, and follow the path rules below.
 
 ## Verify the two connections
 
 Use these checks in order:
 
 1. **API check:** each integration's **Test connection** button must pass.
-2. **File check:** **Settings > Lidarr > Test library access** and **Settings > Storage health** must be able to read the paths.
+2. **File check:** the **Lidarr library** section of **Settings > Storage health** must be able to read the paths.
 3. **Output check:** after a flow or playlist downloads a track, the file must exist under:
 
    ```text
@@ -195,7 +200,7 @@ Use these checks in order:
    /data/downloads/aurral/_flows/<flow-id>/Artist/Album/Track.flac
    ```
 
-4. **Playback check:** Navidrome or Plex must have the Downloads Folder in its own filesystem and must scan it.
+4. **Playback check:** Navidrome, Plex, or Jellyfin must have the Downloads Folder in its own filesystem and must scan it.
 
 If the API check passes but the file check fails, do not change the API URL. Fix the volume mapping, permissions, or path mapping.
 
@@ -221,7 +226,7 @@ Example:
 
 The local path must exist inside the Aurral container. If it does not, add or correct the Docker mount first.
 
-For a native Windows service, the remote path can be `N:\ServerFolders\Music`. Mount that host folder in Aurral, then map the Windows path to the Aurral container path. Run **Test library access** after saving the mapping.
+For a native Windows service, the remote path can be `N:\ServerFolders\Music`. Mount that host folder in Aurral, then map the Windows path to the Aurral container path. Run **Settings > Storage health > Run checks** after saving the mapping.
 
 ### Navidrome sees a different path
 
