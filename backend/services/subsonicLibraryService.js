@@ -30,7 +30,8 @@ import { weeklyFlowWorker } from "./weeklyFlow/weeklyFlowWorker.js";
 import { hasPermission } from "../middleware/auth.js";
 import { recordTrackJobQueued } from "./aurralHistoryService.js";
 
-const idFor = (kind, key) => `${kind}:${encodeURIComponent(String(key))}`;
+const idFor = (kind, key) =>
+  `${kind}:${encodeURIComponent(String(key)).replaceAll("%3A", ":")}`;
 const LIBRARY_IMAGE_PROFILE = "library";
 
 const parseId = (value) => {
