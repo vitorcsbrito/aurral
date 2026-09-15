@@ -87,11 +87,11 @@ Aurral only reads from this library - it never writes to it, rescans it, or modi
 
 The operation also builds or updates playlists.
 
-Aurral also schedules catch-up synchronization while Plex scans the files.
+Aurral also schedules catch-up synchronization while Plex scans the files. The same catch-up runs after every scan Aurral requests on its own - for example when a flow finishes downloading - so playlists fill in without a manual sync once Plex has indexed the new files.
 
 Plex music scans can take minutes. If sync returns zero indexed tracks, wait for the scan to finish.
 
-Catch-up starts automatically. You can also select **Sync to Plex now** again.
+While files exist on disk that Plex has not indexed yet, Aurral keeps the existing Plex playlist as it is rather than emptying or deleting it, then retries after the scan. You can also select **Sync to Plex now** again.
 
 Aurral skips a rebuild if the track set has not changed. If you disable a flow, the next sync removes its Plex playlist.
 
