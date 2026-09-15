@@ -1,4 +1,5 @@
 import { defineConfig } from "astro/config";
+import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
 import { rehypeBaseLinks } from "./src/plugins/rehype-base-links.mjs";
 
@@ -10,7 +11,10 @@ export default defineConfig({
   site,
   base,
   markdown: {
-    rehypePlugins: [[rehypeBaseLinks, { base }]],
+    // Astro 7 defaults to Sätteri; rehype plugins need the unified pipeline.
+    processor: unified({
+      rehypePlugins: [[rehypeBaseLinks, { base }]],
+    }),
   },
   integrations: [
     starlight({
