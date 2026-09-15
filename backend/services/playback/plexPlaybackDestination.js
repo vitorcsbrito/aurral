@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { userOps } from "../../db/helpers/index.js";
 import { PlexClient } from "../plex.js";
 import { plexConnectionStore } from "../plex/plexConnectionStore.js";
@@ -49,7 +50,10 @@ export class PlexPlaybackDestination {
     this._libraryTracks = null;
     this._mainLibraryTracks = null;
     this._syncHashes = new Map();
+    // Snapshots whose files Plex has not indexed yet; republished after a scan.
+    this._pendingSnapshots = new Map();
     this._catchupRunning = false;
+    this._catchupPromise = null;
   }
 
   updateConfig(config = {}) {
@@ -74,6 +78,7 @@ export class PlexPlaybackDestination {
     this._libraryTracks = null;
     this._mainLibraryTracks = null;
     this._syncHashes.clear();
+    this._pendingSnapshots.clear();
   }
 
   isConfigured() {
@@ -286,6 +291,10 @@ export class PlexPlaybackDestination {
   }
 
   async _resolveRatingKeys(snapshot) {
+    return (await this._resolvePlaylist(snapshot)).ratingKeys;
+  }
+
+  async _resolvePlaylist(snapshot) {
     const managedByPath = new Map();
     for (const track of this._libraryTracks || []) {
       for (const file of track.files || []) {
@@ -306,10 +315,12 @@ export class PlexPlaybackDestination {
       }
     }
     const keys = [];
+    let unresolved = 0;
     for (const track of snapshot.tracks) {
       const localPath = path.resolve(track.path);
       const ratingKey = managedByPath.get(localPath)?.[0]?.ratingKey || mainByPath.get(localPath);
       if (ratingKey) keys.push(ratingKey);
+      else unresolved += 1;
     }
     const entityRoot = path.join(this.weeklyFlowRoot, AURRAL_FLOWS_DIR, snapshot.entityId);
     for (const [localPath, group] of managedByPath) {
@@ -322,7 +333,7 @@ export class PlexPlaybackDestination {
       const ratingKey = group[0]?.ratingKey;
       if (ratingKey) keys.push(ratingKey);
     }
-    return [...new Set(keys.map(String))];
+    return { ratingKeys: [...new Set(keys.map(String))], unresolved };
   }
 
   _hash(snapshot, ratingKeys, title) {
@@ -366,6 +377,7 @@ export class PlexPlaybackDestination {
 
   async _deleteCurrent(identity, clientCache = new Map()) {
     const targetKey = this._targetKey(identity.ownerUserId);
+    this._pendingSnapshots.delete(`${identity.entityId}:${targetKey}`);
     const pointer = await plexPlaylistPointerStore.getPointer(identity.entityId, targetKey);
     if (!pointer) return;
     const location = await this._location(identity.ownerUserId);
@@ -393,7 +405,13 @@ export class PlexPlaybackDestination {
         const ensured = await this.ensureLibrary();
         if (!ensured.ok) return ensured;
       }
-      if (!this._libraryTracks.length) return playbackOperationSuccess();
+      const targetKey = this._targetKey(snapshot.ownerUserId);
+      const cacheKey = `${snapshot.entityId}:${targetKey}`;
+      if (!this._libraryTracks.length) {
+        // Empty after weekly reset trash or fresh library; retry post-scan.
+        if (snapshot.tracks.length) this._pendingSnapshots.set(cacheKey, snapshot);
+        return playbackOperationSuccess();
+      }
       const clientCache = new Map();
       const userCache = new Map();
       if (await this._isOwnerBlocked(snapshot.ownerUserId, clientCache, userCache)) {
@@ -406,13 +424,18 @@ export class PlexPlaybackDestination {
         clientCache,
         userCache,
       );
-      const ratingKeys = await this._resolveRatingKeys(snapshot);
+      const { ratingKeys, unresolved } = await this._resolvePlaylist(snapshot);
       if (!ratingKeys.length) {
+        if (snapshot.tracks.length) {
+          // Deleting here would drop a playlist Plex merely hasn't scanned yet.
+          this._pendingSnapshots.set(cacheKey, snapshot);
+          return playbackOperationSuccess();
+        }
         await this._deleteCurrent(snapshot, clientCache);
         return playbackOperationSuccess();
       }
-      const targetKey = this._targetKey(snapshot.ownerUserId);
-      const cacheKey = `${snapshot.entityId}:${targetKey}`;
+      if (unresolved > 0) this._pendingSnapshots.set(cacheKey, snapshot);
+      else this._pendingSnapshots.delete(cacheKey);
       const hash = this._hash(snapshot, ratingKeys, title);
       if (this._syncHashes.get(cacheKey) === hash) return playbackOperationSuccess();
       const location = await this._location(snapshot.ownerUserId);
@@ -486,6 +509,8 @@ export class PlexPlaybackDestination {
       const ensured = await this.ensureLibrary();
       if (!ensured.ok) return ensured;
       await this.client.scanLibrary(this._sectionId);
+      // Plex scans asynchronously; tracks loaded above predate the scan.
+      this._scheduleCatchup();
       return playbackOperationSuccess();
     } catch (error) {
       return playbackOperationFailure({
@@ -529,16 +554,27 @@ export class PlexPlaybackDestination {
     };
   }
 
-  _scheduleCatchup(loadSnapshots, delaysMs = [30000, 90000, 180000]) {
-    if (this._catchupRunning || typeof loadSnapshots !== "function") return;
+  _scheduleCatchup(loadSnapshots = null, delaysMs = [30000, 90000, 180000]) {
+    if (this._catchupRunning) return;
+    if (typeof loadSnapshots !== "function" && !this._pendingSnapshots.size) return;
     this._catchupRunning = true;
     const run = async () => {
       try {
         for (const delay of delaysMs) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await wait(delay, undefined, { ref: false });
           if (!this.isConfigured()) break;
+          const snapshots =
+            typeof loadSnapshots === "function"
+              ? await loadSnapshots()
+              : [...this._pendingSnapshots.values()];
+          if (!snapshots.length) break;
           await this._loadTracks();
-          for (const snapshot of await loadSnapshots()) await this.publishPlaylist(snapshot);
+          for (const snapshot of snapshots) {
+            const key = `${snapshot.entityId}:${this._targetKey(snapshot.ownerUserId)}`;
+            // Hash can match while Plex emptied the playlist; force real diff.
+            this._syncHashes.delete(key);
+            await this.publishPlaylist(snapshot);
+          }
         }
       } catch (error) {
         console.warn("[PlexPlaybackDestination] Plex catch-up failed:", error?.message);
@@ -546,6 +582,7 @@ export class PlexPlaybackDestination {
         this._catchupRunning = false;
       }
     };
-    run();
+    this._catchupPromise = run();
+    return this._catchupPromise;
   }
 }
