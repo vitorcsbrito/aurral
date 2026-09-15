@@ -475,13 +475,16 @@ export async function linkLibraryAlbumTrack({
   trackNumber = 0,
   syncSearch = true,
 }) {
+  // INTEGER columns: Lidarr track numbers are strings ("A1", "44.1").
+  const normalizedDisc = Math.trunc(Number(discNumber)) || 1;
+  const normalizedTrack = Math.trunc(Number(trackNumber)) || 0;
   const changed = await db.transaction(async () => {
     const result = await db.run(
       `INSERT INTO library_album_tracks
         (album_id, track_id, disc_number, track_number, created_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT DO NOTHING`,
-      [Number(albumId), Number(trackId), Number(discNumber) || 1, Number(trackNumber) || 0, now()],
+      [Number(albumId), Number(trackId), normalizedDisc, normalizedTrack, now()],
     );
     if (syncSearch) await syncLibrarySearchTrack(trackId);
     else if (result.changes > 0) deferSearchSync("track", trackId);

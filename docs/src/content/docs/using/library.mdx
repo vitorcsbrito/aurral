@@ -19,8 +19,9 @@ albums open listening-first library pages with their tracks, playback controls,
 and favorites. Those pages link to the full Discover artist or release page
 when a canonical identifier is available. Tracks without an available file
 stay visible but cannot play; missing album tracks are shown in a muted state.
-Use the track action menu to add a library track to a playlist, remove it, or
-promote an Aurral-owned track into the permanent Library. Favorites are stored
+Use the track action menu to play a library track, add it to a playlist, download
+it, or remove it. To promote a flow track into the permanent Library, use
+**Add to library** in the flow tracklist menu. Favorites are stored
 per user and work in both the built-in player and Subsonic clients. The page
 reports stale library data, partial or missing files, provider health problems,
 and empty results. Use **View info** in an artist, album, or track action menu
@@ -31,8 +32,8 @@ media for the track is available, it also removes the canonical track and any
 empty album or artist record. If one of several files cannot be deleted, Aurral
 keeps the track until a later deletion succeeds.
 
-Navidrome remains optional. Lidarr remains the library provider when it is
-configured.
+Navidrome, Plex, and Jellyfin remain optional. Lidarr remains the library
+provider when it is configured.
 
 ## Aurral-owned storage
 
@@ -51,9 +52,11 @@ identities, album and track metadata, and the readable media files that belong
 to them.
 
 When Lidarr imports a download, or a file changes in the Aurral root, Aurral's
-filesystem watcher queues a scan. The watcher waits briefly for a file move or
-rename to finish and ignores `_playlists`, `_staging`, `_fallback`, hidden
-folders, `_flows`, and `aurral-weekly-flow`.
+filesystem watcher queues a scan. The watcher waits two minutes after the last
+change before it scans, and at most ten minutes during a long import. Both
+limits are configurable through `LIBRARY_WATCH_DEBOUNCE_MS` and
+`LIBRARY_WATCH_MAX_WAIT_MS`. It ignores `_playlists`, `_staging`, `_fallback`,
+hidden folders, `_flows`, and `aurral-weekly-flow`.
 
 When the scan completes, an open Library page reloads its canonical records
 automatically. The home page and **Newest** album or track sorting use the time

@@ -464,6 +464,12 @@ export function SettingsPlaybackSection({
         );
       }
     } catch (err) {
+      if (err?.name === "AbortError") {
+        showError(
+          "Plex sync is taking longer than expected. It keeps running on the server; check the server log for \"Plex sync\" lines.",
+        );
+        return;
+      }
       const errorMsg = err.response?.data?.message || err.response?.data?.error || err.message;
       showError(`Plex sync failed: ${errorMsg}`);
     } finally {

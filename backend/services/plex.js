@@ -345,7 +345,7 @@ export class PlexClient {
   }
 
   async getTracks(sectionId) {
-    const pageSize = 200;
+    const pageSize = 1000;
     const out = [];
     let start = 0;
     for (;;) {

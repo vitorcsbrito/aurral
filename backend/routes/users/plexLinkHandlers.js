@@ -152,6 +152,7 @@ export function registerPlexLink(router) {
       const saved = await plexConnectionStore.saveConnection(req.user.id, {
         linkType: "self",
         token: serverToken,
+        accountToken: token,
         clientId,
         plexAccountId: identity.id ?? null,
         plexUuid: identity.uuid || null,

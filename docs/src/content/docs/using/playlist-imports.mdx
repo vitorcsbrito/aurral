@@ -98,7 +98,9 @@ Accepted aliases:
 | Artist               | `artistName`, `artist`, `artist_name`, `Artist Name(s)` |
 | Track                | `trackName`, `title`, `name`, `track`, `Track Name`     |
 | Album (optional)     | `albumName`, `album`, `Album Name`                      |
-| Artist ID (optional) | `artistMbid`, `artistId`, `mbid`                        |
+| Artist ID (optional) | `artistMbid`, `artistId`                                |
+| Album ID (optional)  | `albumMbid`, `releaseGroupMbid`, `albumId`              |
+| Track ID (optional)  | `trackMbid`, `recordingMbid`, `recordingId`, `mbid`     |
 
 Minimum shape:
 
@@ -207,7 +209,7 @@ Imported playlists behave differently from flows when downloads fail:
 - Aurral queues each imported track as a separate worker job.
 - The active download pipeline can try multiple candidates and configured sources.
 - If all options fail, the track stays in the failed state after a restart.
-- Choose **Re-search missing** from the playlist menu to explicitly queue failed tracks again.
+- Choose **Re-search** from a track's action menu to queue it again, or **Search all** on **Activity > Wanted** to retry every missing track.
 - Only flows can generate replacement tracks.
 
 ## Existing file reuse
@@ -226,8 +228,8 @@ Before Aurral removes a playlist, it moves the other file references. Navidrome 
 
 Lidarr-aware reuse requires Aurral to read the files at the paths Lidarr reports. Mount the same media root at the same container path (for example `/data:/data` with root `/data/music`). See [Filesystem and mounts](/getting-started/storage/).
 
-If Lidarr runs on Windows and Aurral runs in Docker, run **Test library access** in **Settings > Lidarr**.
+If Lidarr runs on Windows and Aurral runs in Docker, open **Settings > Storage health**, select **Run checks**, and read the **Lidarr library** section.
 
-Use the reported path to add a mapping under **Settings > Download clients > Remote Path Mappings**.
+Use the reported path to add a mapping under **Settings > Download clients > Remote path mappings**.
 
 Navidrome must scan the corresponding Lidarr library before Aurral can add a reused track to a Navidrome API playlist. See [Navidrome](/integrations/navidrome/#different-navidrome-paths).

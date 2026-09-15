@@ -33,7 +33,7 @@ The built-in Aurral player records completed library tracks through the same loc
 
 ## Scrobbling without Navidrome
 
-Open **Settings > Playback > Scrobbling** to connect Last.fm or ListenBrainz. Aurral submits
+Admins connect Last.fm, ListenBrainz, or Koito in **Settings > Playback > Scrobbling**. Aurral submits
 provider events directly, so a Navidrome connection is not required for scrobbling.
 
 Aurral uses the Last.fm API key and API secret from **Settings > Connect > Last.fm**. It validates
@@ -89,7 +89,7 @@ Reused Lidarr tracks do not need matching path strings because Aurral resolves i
 
 ## API playlists and scans
 
-Aurral stores the Navidrome playlist ID for each flow or shared playlist. Names are only display values, so a rename updates the same Navidrome playlist.
+Aurral stores the Navidrome playlist ID for each flow or shared playlist. Names are only display values, so a rename updates the same Navidrome playlist. The Navidrome playlist is named `<username> - <name>` after its Aurral owner.
 
 Aurral also uploads its generated playlist artwork to API playlists and updates it when you change or regenerate artwork in Aurral. Aurral revalidates its local artwork response after restart, so the image stays current in the Aurral UI. Navidrome uses that uploaded image instead of its automatic tiled artwork when custom playlist artwork is supported.
 

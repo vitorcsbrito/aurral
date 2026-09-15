@@ -44,16 +44,16 @@ description: Common setup and runtime issues.
 
 Symptoms can include the message `Lidarr track exists but file is not accessible from Aurral`.
 
-Completed slskd or Usenet files can also remain in their source folders. **Test library access** can fail while Lidarr is operational.
+Completed slskd or Usenet files can also remain in their source folders. The **Lidarr library** check in **Settings > Storage health** can fail while Lidarr is operational.
 
 - Mount the same parent host folder that Lidarr uses into Aurral.
 - Do not use separate mounts for the library and downloads.
 - For example, use `N:/ServerFolders/Music:/music`.
 - Set **Downloads Folder > Path** under that mount, for example, `/music/Aurral`.
 - After you change Compose `volumes` or `environment`, recreate the container: `docker compose up -d --force-recreate`.
-- Run **Settings > Lidarr > Test library access** to see the exact path Aurral cannot read.
+- Run **Settings > Storage health > Run checks** to see the exact path Aurral cannot read.
 - If necessary, set `PATH_MAPPINGS=N:/ServerFolders/Music|/music` in the Compose file.
-- You can also add mappings under **Settings > Download clients > Remote Path Mappings**.
+- You can also add mappings under **Settings > Download clients > Remote path mappings**.
 - For NZBGet on Windows, open **Settings > Download clients > NZBGet**.
 - Set **Completed download path** if Aurral cannot detect the folder automatically.
 
@@ -61,7 +61,7 @@ See [Filesystem and mounts: Windows and mixed Docker setups](/getting-started/st
 
 ## Library access fails on a folder that is not your root folder
 
-**Test library access** and **Storage health** can fail on a sample track whose path sits outside every Lidarr root folder, even though the root folder itself passes.
+The **Lidarr library** section of **Storage health** can fail on a sample track whose path sits outside every Lidarr root folder, even though the root folder itself passes.
 
 Lidarr keeps each artist's own folder when you change or rename a root folder, so artists stay at the old location.
 
@@ -75,7 +75,7 @@ Flows or shared playlists can appear in Navidrome, but the tracks do not play.
 
 First, wait for Navidrome to finish its scan. Aurral creates the API playlist after Navidrome indexes the tracks.
 
-- Make sure that **Test library access** passes in Lidarr settings.
+- Make sure that the **Lidarr library** check passes in **Settings > Storage health**.
 - Make sure that Navidrome scans the Aurral download folder and each reused Lidarr library folder.
 - Make sure the Aurral download tree uses the same absolute path in both containers.
 - Run or save a flow. You can also edit and save a shared playlist.
@@ -125,7 +125,7 @@ Aurral returns provider image links to the web UI, so web artwork is fetched and
 
 The image-proxy disk cache has a 256MB limit and uses least-recently-used removal. Restart Aurral if you need a clean memory baseline.
 
-Aurral stores image links in SQLite separately from the native-library image bytes. When the byte cache evicts an image, Aurral can fetch it again without another metadata lookup.
+Aurral stores image links in Postgres separately from the native-library image bytes on disk. When the byte cache evicts an image, Aurral can fetch it again without another metadata lookup.
 
 After upgrading to link-first artwork, Aurral removes obsolete web-image bytes once and keeps native-library bytes. It retains only the small legacy metadata needed to translate older local image links.
 

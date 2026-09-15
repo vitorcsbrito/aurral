@@ -134,6 +134,67 @@ test("recovers a managed-user token and retries with the stored client identifie
   assert.equal((await plexConnectionStore.getConnection(owner.id)).token, "fresh-token");
 });
 
+test("re-derives a rotated self-link server token from the stored account token", async () => {
+  const owner = await userOps.createUser("selfie", "hash", "user");
+  await plexConnectionStore.saveConnection(owner.id, {
+    linkType: "self",
+    token: "rotated-server-token",
+    accountToken: "account-token",
+    clientId: "self-client",
+    plexAccountId: 66,
+  });
+  assert.equal((await plexConnectionStore.getConnection(owner.id)).accountToken, "account-token");
+  const switchCalls = mock.method(PlexClient, "switchHomeUser", async () => "unexpected");
+  mock.method(PlexClient, "getResources", async (token, clientId) => {
+    assert.equal(token, "account-token");
+    assert.equal(clientId, "self-client");
+    return { servers: [{ clientIdentifier: "server-id", accessToken: "fresh-server-token" }] };
+  });
+  const destination = makeDestination();
+  destination.client._machineIdentifier = "server-id";
+  const seen = [];
+
+  const result = await destination._withOwnerClient(owner.id, new Map(), async (client) => {
+    seen.push(client.token);
+    if (client.token === "rotated-server-token") {
+      const error = new Error("Request failed with status code 401");
+      error.response = { status: 401 };
+      throw error;
+    }
+    return "published";
+  });
+
+  assert.equal(result, "published");
+  assert.equal(switchCalls.mock.callCount(), 0);
+  assert.deepEqual(seen, ["rotated-server-token", "fresh-server-token"]);
+  const connection = await plexConnectionStore.getConnection(owner.id);
+  assert.equal(connection.token, "fresh-server-token");
+  assert.equal(connection.accountToken, "account-token");
+  assert.equal(connection.lastError, null);
+});
+
+test("self links without an account token still require a manual reconnect", async () => {
+  const owner = await userOps.createUser("legacy", "hash", "user");
+  await plexConnectionStore.saveConnection(owner.id, {
+    linkType: "self",
+    token: "dead-token",
+    clientId: "legacy-client",
+    plexAccountId: 55,
+  });
+  const resources = mock.method(PlexClient, "getResources", async () => ({ servers: [] }));
+  const destination = makeDestination();
+
+  const result = await destination._withOwnerClient(owner.id, new Map(), async () => {
+    const error = new Error("Request failed with status code 401");
+    error.response = { status: 401 };
+    throw error;
+  });
+
+  assert.equal(typeof result, "symbol");
+  assert.equal(resources.mock.callCount(), 0);
+  assert.match((await plexConnectionStore.getConnection(owner.id)).lastError.message, /401/);
+});
+
 test("resolves managed and reused Lidarr paths to private Plex rating keys", async () => {
   const destination = makeDestination({ downloadsPath: "/data", mainLibrarySectionId: "9" });
   const managedPath = path.join(
@@ -339,6 +400,109 @@ test("configures Plex with the canonical root and explicit flow location", async
     `/library/sections?name=Aurral&type=artist&agent=tv.plex.agents.music&scanner=Plex+Music&language=en-US&location=${encodeURIComponent(root)}&location=${encodeURIComponent(`${root}/_flows`)}`,
   );
   assert.equal(calls[0].options.method, "POST");
+});
+
+test("keeps the existing playlist and defers when Plex has not indexed the entity's files yet", async () => {
+  const destination = makeDestination({ downloadsPath: "/data" });
+  const trackPath = path.join(
+    destination.weeklyFlowRoot,
+    "_flows",
+    "flow-1",
+    "Artist",
+    "Album",
+    "New.flac",
+  );
+  // Stale index: only a track that no longer exists on disk.
+  destination._libraryTracks = [
+    { ratingKey: "101", files: ["/data/_flows/flow-1/Artist/Album/Gone.flac"] },
+  ];
+  destination._mainLibraryTracks = [];
+  await plexPlaylistPointerStore.setPointer("flow-1", "global", {
+    location: "global",
+    ratingKey: "88",
+    title: "Discover Weekly",
+  });
+  const deleted = [];
+  mock.method(PlexClient.prototype, "deletePlaylist", async (ratingKey) => {
+    deleted.push(ratingKey);
+  });
+  mock.method(PlexClient.prototype, "syncPlaylist", async () => {
+    throw new Error("should not sync with no resolvable tracks");
+  });
+
+  const value = snapshot({ tracks: [{ path: trackPath, title: "New", artist: "Artist" }] });
+  assert.deepEqual(await destination.publishPlaylist(value), { ok: true });
+  assert.deepEqual(deleted, []);
+  assert.equal((await plexPlaylistPointerStore.getPointer("flow-1", "global")).ratingKey, "88");
+  assert.deepEqual(destination._pendingSnapshots.get("flow-1:global"), value);
+
+  // Empty index (everything trashed after a weekly reset) defers the same way.
+  destination._libraryTracks = [];
+  assert.deepEqual(await destination.publishPlaylist(value), { ok: true });
+  assert.deepEqual(deleted, []);
+  assert.deepEqual(destination._pendingSnapshots.get("flow-1:global"), value);
+
+  // No local tracks at all still removes the playlist.
+  destination._libraryTracks = [{ ratingKey: "101", files: ["/data/x.flac"] }];
+  assert.deepEqual(await destination.publishPlaylist(snapshot()), { ok: true });
+  assert.deepEqual(deleted, ["88"]);
+  assert.equal(destination._pendingSnapshots.has("flow-1:global"), false);
+});
+
+test("republishes pending playlists with fresh rating keys after a scan", async () => {
+  const destination = makeDestination({ downloadsPath: "/data" });
+  const trackPath = path.join(
+    destination.weeklyFlowRoot,
+    "_flows",
+    "flow-1",
+    "Artist",
+    "Album",
+    "New.flac",
+  );
+  let indexed = [];
+  mock.method(PlexClient.prototype, "ensureWeeklyFlowLibrary", async () => ({ key: "7" }));
+  mock.method(PlexClient.prototype, "getTracks", async () => indexed);
+  mock.method(PlexClient.prototype, "scanLibrary", async () => {
+    indexed = [{ ratingKey: "555", files: ["/data/_flows/flow-1/Artist/Album/New.flac"] }];
+  });
+  const synced = [];
+  mock.method(PlexClient.prototype, "syncPlaylist", async (value) => {
+    synced.push(value.ratingKeys);
+    return { ratingKey: "88" };
+  });
+
+  const value = snapshot({ tracks: [{ path: trackPath, title: "New", artist: "Artist" }] });
+  assert.deepEqual(await destination.ensureLibrary(), { ok: true });
+  assert.deepEqual(await destination.publishPlaylist(value), { ok: true });
+  assert.deepEqual(synced, []);
+  assert.equal(destination._pendingSnapshots.size, 1);
+
+  destination._scheduleCatchup = function (loadSnapshots) {
+    return PlexPlaybackDestination.prototype._scheduleCatchup.call(this, loadSnapshots, [1]);
+  };
+  assert.deepEqual(await destination.requestScan(), { ok: true });
+  // Unref'd catch-up timer alone triggers beforeExit, which drops the schema.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    await destination._catchupPromise;
+  } finally {
+    clearInterval(keepAlive);
+  }
+
+  assert.deepEqual(synced, [["555"]]);
+  assert.equal(destination._pendingSnapshots.size, 0);
+  assert.equal((await plexPlaylistPointerStore.getPointer("flow-1", "global")).ratingKey, "88");
+});
+
+test("does not schedule a catch-up after a scan when nothing is pending", async () => {
+  const destination = makeDestination({ downloadsPath: "/data" });
+  mock.method(PlexClient.prototype, "ensureWeeklyFlowLibrary", async () => ({ key: "7" }));
+  mock.method(PlexClient.prototype, "getTracks", async () => []);
+  mock.method(PlexClient.prototype, "scanLibrary", async () => {});
+
+  assert.deepEqual(await destination.requestScan(), { ok: true });
+  assert.equal(destination._catchupRunning, false);
+  assert.equal(destination._catchupPromise, null);
 });
 
 test("keeps Navidrome and Plex failures isolated when both destinations are configured", async (t) => {

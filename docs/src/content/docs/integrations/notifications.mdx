@@ -13,13 +13,13 @@ Gotify is a self-hosted push notification server. Configure it in **Settings > C
 
 Enter these values:
 - **Server URL**: the base URL Aurral can reach (for example, `http://gotify:8888` in Docker)
-- **App token**: the token for a Gotify application
+- **Application token**: the token for a Gotify application
 
 Toggle which events fire:
-- **Notify when discovery updates**: sends a notification when the daily recommendation refresh finishes
-- **Notify when weekly flow finishes**: sends a notification with the number of completed and failed tracks
-- **Notify when a request is made**: sends a notification when a user requests an album
-- **Notify when a request is available**: sends a notification when a requested album is downloaded or already on disk
+- **Discover updated**: sends a notification when the daily recommendation refresh finishes
+- **Weekly flow finished**: sends a notification with the number of completed and failed tracks
+- **Request made**: sends a notification when a user requests an album
+- **Request available**: sends a notification when a requested album is downloaded or already on disk
 
 Select **Test notification** on the Gotify card to test the connection.
 
@@ -30,17 +30,17 @@ Webhooks send an HTTP request for each enabled event. Configure them in the **We
 Enter these values for each webhook:
 - **URL**: the endpoint to call (must start with `http://` or `https://`)
 - **Body**: optional JSON data. Use these placeholders:
-  - `$flowName`: playlist display name
-  - `$flowPath`: on-disk Aurral media path. For a Flow, this is `_flows/<flow-id>`; for a static playlist, it is the Downloads Folder root.
+  - `$flowName`: playlist name as published to Navidrome, `<username> - <name>`. Flows without an owner use the bare name.
+  - `$flowPath`: absolute path inside the Aurral container. For a Flow, this is `<Downloads Folder>/_flows/<flow-id>`; for a static playlist, it is the Downloads Folder itself.
   - `$albumName`, `$artistName`, `$username`, `$userId`, and `$event` for request events
 - **Headers**: optional key-value pairs
 
 Leave **Body** blank to send a GET request. Enter a body to send a POST request.
 
 Toggle which events fire for your webhooks:
-- **Notify when discovery updates**
-- **Notify when weekly flow finishes**
-- **Notify when a request is made**
-- **Notify when a request is available**
+- **Discover updated**
+- **Weekly flow finished**
+- **Request made**
+- **Request available**
 
 Aurral does not send events that you turn off, even if you configured webhook URLs.

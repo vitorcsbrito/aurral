@@ -5,7 +5,7 @@ description: Usenet-backed downloads for flows and playlists.
 
 Usenet downloads use **Prowlarr** for indexer searches. They use **SABnzbd** or **NZBGet** as the download client.
 
-Aurral treats each download client equally. You must configure only one download client for Usenet operation.
+Configure one Usenet client. If both SABnzbd and NZBGet are configured, Aurral uses SABnzbd.
 
 Enable and connect both components:
 
@@ -71,7 +71,7 @@ Aurral monitors NZBGet until the download is complete. Aurral then imports the b
 
 If NZBGet runs on Windows and reports host paths, mount the parent folder into Aurral.
 
-Then, add a path mapping under **Settings > Download clients > Remote Path Mappings**.
+Then, add a path mapping under **Settings > Download clients > Remote path mappings**.
 
 Aurral can find a track with an incorrect duration. Aurral retains this track under **Activity > Queue**.
 
@@ -85,14 +85,14 @@ Usenet can supply both missing tracks and upgrades. Upgrade searches follow the 
 
 ## Download source priority and fallback
 
-Aurral can run slskd, Usenet, and yt-dlp at the same time. Each source has a **source priority**. Aurral tries lower numbers first.
+Aurral can run slskd, deemix, Usenet, and yt-dlp at the same time. Each source has a **source priority**. Aurral tries lower numbers first. Defaults: slskd `10`, deemix `15`, Usenet `20`, yt-dlp `50`.
 
 If a source fails, Aurral tries the next source for the same track.
 
-Change the priorities if you want Aurral to try Usenet or yt-dlp first.
+Change the priorities if you want Aurral to try another source first.
 
 ## History
 
-When you configure Usenet, **History** shows a separate **SABnzbd** or **NZBGet** tab for flow and playlist download jobs.
+Usenet download jobs appear in **Activity** alongside other sources. Each row shows which client handled it.
 
 See [Activity](/using/activity/).

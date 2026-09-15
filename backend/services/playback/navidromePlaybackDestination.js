@@ -67,6 +67,17 @@ export class NavidromePlaybackDestination {
     this._syncHashes = new Map();
   }
 
+  setWeeklyFlowRoot(weeklyFlowRoot) {
+    const root = resolvePlaylistRoot(weeklyFlowRoot);
+    if (root === this.weeklyFlowRoot) return;
+    this.weeklyFlowRoot = root;
+    this.playlistLibraryRoot = path.join(root, PLAYLIST_LIBRARY_DIR);
+    this.mediaLibraryRoot = root;
+    this.libraryRoot = path.join(this.playlistLibraryRoot, "_playlists");
+    this._syncHashes.clear();
+    this._pendingSnapshots.clear();
+  }
+
   updateConfig(config = {}) {
     const key = JSON.stringify({
       url: config.url || "",

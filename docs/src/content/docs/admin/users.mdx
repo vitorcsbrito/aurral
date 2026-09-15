@@ -11,10 +11,15 @@ Aurral supports multiple local users with individual permissions.
 
 Admins can control whether users can:
 
-- Access playlists and flows
-- Add artists or albums
-- Change monitoring
-- Delete artists or albums
+- Access playlists and downloads
+- Add artist
+- Add album
+- Change artist monitoring
+- Delete artists
+- Delete albums
+- Delete tracks
+
+New users can add artists and albums by default. Every other permission is off until an admin enables it.
 
 ## Authentication
 
@@ -96,14 +101,24 @@ Each user can link their own flow and shared playlists to their own Plex account
 
 ## Reset admin password
 
-From the repository root:
+The script needs `DATABASE_URL` to reach Postgres.
+
+In Docker, run it inside the Aurral container, which already has `DATABASE_URL` set:
 
 ```bash
-npm run auth:reset-admin-password -- --password "new-password"
+docker compose exec aurral node backend/scripts/resetAdminPassword.js --password "new-password"
 ```
 
 Generate a random password:
 
 ```bash
+docker compose exec aurral node backend/scripts/resetAdminPassword.js --generate
+```
+
+From a source checkout, the `npm` alias reads `backend/.env`, which must exist and contain `DATABASE_URL`:
+
+```bash
 npm run auth:reset-admin-password -- --generate
 ```
+
+Without `--username`, the script targets the configured admin user (`AUTH_USER`, else `admin`). Pass `--username <name>` for another account; the script creates it with the admin role if it does not exist.

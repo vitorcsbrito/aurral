@@ -438,11 +438,15 @@ export async function indexLidarrLibrary({
             metadata: slimLidarrTrack(track),
             syncSearch,
           });
-          const trackNumber = Number(track.trackNumber || track.absoluteTrackNumber) || 0;
+          // Lidarr trackNumber is a string; vinyl sides ("A1") parse as NaN.
+          const trackNumber =
+            Math.trunc(Number(track.trackNumber)) ||
+            Math.trunc(Number(track.absoluteTrackNumber)) ||
+            0;
           await linkLibraryAlbumTrack({
             albumId: albumRecord.id,
             trackId: trackRecord.id,
-            discNumber: Number(track.mediumNumber || track.discNumber) || 1,
+            discNumber: Math.trunc(Number(track.mediumNumber || track.discNumber)) || 1,
             trackNumber,
             syncSearch,
           });

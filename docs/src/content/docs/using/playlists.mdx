@@ -21,11 +21,11 @@ Aurral does not write these files to your main music library.
 
 Flows refresh on a schedule and use your flow settings. Static playlists come from Spotify, Last.fm, ListenBrainz, JSON files, or exported flow tracklists. Synced imports follow provider membership; their removed-track file-retention setting is available in the import flow and playlist menu.
 
-Flow names and static playlist names must be unique across both types. Aurral uses the same bare name for Navidrome and Plex playlists.
+Flow names and static playlist names must be unique across both types for the same owner. The check ignores case. Two users can own entries with the same name. Plex playlists use the bare name; Navidrome playlists are named `<username> - <name>`.
 
 If all download sources fail, the track stays in the failed state after an Aurral restart.
 
-Select **Re-search missing** from the playlist menu to try the track again.
+Select **Re-search** from the track's action menu to try it again. To retry every missing track at once, open **Activity > Wanted** and select **Search all**.
 
 ## Import and Lidarr sync
 
@@ -39,10 +39,10 @@ Static playlist membership is stored as canonical track references. Aurral-owned
 permanent tracks use the canonical `artist/album/track` layout under the
 configured Aurral download folder. Set this path in **Settings > Download clients**.
 
-Flow media is temporary and lives under `_flows` below that root. Navidrome and
-Plex can use the roots they are configured to scan.
+Flow media is temporary and lives under `_flows` below that root. Navidrome, Plex, and
+Jellyfin can use the roots they are configured to scan.
 
-See [Navidrome](/integrations/navidrome/) and [Plex](/integrations/plex/) for playback setup.
+See [Navidrome](/integrations/navidrome/), [Plex](/integrations/plex/), and [Jellyfin](/integrations/jellyfin/) for playback setup.
 
 See [yt-dlp](/integrations/ytdlp/), [slskd](/integrations/slskd/), and [Usenet](/integrations/usenet/) for download setup.
 
@@ -92,7 +92,7 @@ A user who can open the playlist can start these searches. Manual searches work 
 
 To schedule upgrades, enable **Automatic upgrades** in the quality profile. The default is off. Set the interval from 1 to 365 days. The default is 2 days for each track.
 
-Upgrade jobs have a lower priority than missing-track downloads. Aurral uses slskd and Usenet for upgrades, in the configured source-priority order. It stops after the first source provides a valid, strictly better file. It waits for the next interval before it tries another automatic improvement for that track.
+Upgrade jobs have a lower priority than missing-track downloads. Aurral uses slskd, Usenet, and deemix for upgrades, in the configured source-priority order. It stops after the first source provides a valid, strictly better file. It waits for the next interval before it tries another automatic improvement for that track.
 
 If an upgrade download matches the requested track but has a significant duration mismatch, Aurral retains it under **Activity > Queue** for preview, approval, or denial. Approving it replaces the existing Aurral file.
 

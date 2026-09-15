@@ -71,12 +71,31 @@ export class WeeklyFlowPlaylistManager {
 
   updateConfig(triggerEnsurePlaylists = true) {
     const settings = dbOps.getSettings();
+    // The constructor ran before the stored download folder was loaded (and the
+    // folder can change at runtime); re-resolve before destinations use it.
+    this._syncPlaylistRoot();
     this.destinationRegistry.updateConfig(settings.integrations);
 
     if (triggerEnsurePlaylists) {
       this.ensurePlaylists().catch((err) =>
         console.warn("[WeeklyFlowPlaylistManager] ensurePlaylists on config:", err?.message),
       );
+    }
+  }
+
+  _syncPlaylistRoot() {
+    const root = resolvePlaylistRoot();
+    if (root === this.weeklyFlowRoot) return;
+    console.log(
+      `[WeeklyFlowPlaylistManager] Playlist root changed: ${this.weeklyFlowRoot} -> ${root}`,
+    );
+    this.weeklyFlowRoot = root;
+    this.playlistLibraryRoot = path.join(root, PLAYLIST_LIBRARY_DIR);
+    this.libraryRoot = path.join(this.playlistLibraryRoot, "_playlists");
+    for (const destination of this.destinationRegistry.destinations) {
+      if (typeof destination.setWeeklyFlowRoot === "function") {
+        destination.setWeeklyFlowRoot(root);
+      }
     }
   }
 

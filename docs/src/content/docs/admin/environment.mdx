@@ -9,9 +9,12 @@ Use the web UI for most settings. Use these variables for Docker deployment sett
 
 | Variable | Purpose |
 | -------- | ------- |
-| `PUID` / `PGID` | Run the container as the user that owns mounted folders. |
+| `PUID` / `PGID` | Run the container as the user that owns mounted folders. `AURRAL_UID` / `AURRAL_GID` are accepted as aliases and take precedence. |
 | `AURRAL_DATA_DIR` | Override app data directory. Default `/config`. |
-| `DOWNLOAD_FOLDER` | Initial Downloads Folder path. Prefer **Settings > Download clients > Downloads Folder > Path**. Use an absolute path under your media mount. |
+| `DOWNLOAD_FOLDER` | Initial Downloads Folder path. Prefer **Settings > Download clients > Downloads Folder > Path**. Use an absolute path under your media mount. `PLAYLIST_FOLDER` and `WEEKLY_FLOW_FOLDER` are older names for the same setting and win over `DOWNLOAD_FOLDER` when set. |
+| `FILE_BROWSE_ROOTS` | Comma-separated directories the folder picker in Settings may browse. Default: `/data`, the data directory, the Downloads Folder, and the working directory, whichever exist. |
+| `PORT` | HTTP port the server listens on. Default `3001`. |
+| `JSON_BODY_LIMIT` | Maximum JSON request body. Default `5mb`. |
 
 ## Database
 
@@ -44,20 +47,37 @@ docker compose up -d aurral
 
 The script reads `aurral.db` from the data directory (override with `--sqlite <path>`), applies the Postgres schema, and inserts every row it finds in batches, skipping rows that already exist and resetting each id sequence past the highest copied row. Add `--dry-run` to see row counts without writing, or `--truncate` to empty the Postgres tables first and start over. Running it twice is safe.
 
-Genres, search text, and recency are rebuilt by the database as rows arrive, so they are not copied. The background job queue keeps its own `honker.db` file; leave it in place. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
+Every table present in both databases is copied, including genres and search documents. The generated `search_text` column is rebuilt by Postgres as rows arrive. The background job queue keeps its own `honker.db` file; leave it in place. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
+
+## Tuning
+
+Defaults suit most installs. Change these only when diagnosing load or latency.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `LIBRARY_WATCH_DEBOUNCE_MS` | Quiet period after the last filesystem change before the watcher re-indexes. Default `120000` (two minutes). |
+| `LIBRARY_WATCH_MAX_WAIT_MS` | Longest a burst of changes can delay re-indexing. Default `600000` (ten minutes). |
+| `AURRAL_STORAGE_HEALTH_CACHE_MS` | How long **Storage health** results are cached. Default `60000`. |
+| `AURRAL_MEDIA_HEALTH_SAMPLE_LIMIT` | Number of media files sampled by the native-playback storage check. Default `500`. |
+| `AURRAL_WORKER_SUPERVISOR_POLL_MS` | How often the worker supervisor checks queues. Default `60000`. |
+| `AURRAL_WORKER_IDLE_STOP_MS` | Idle time before a background worker stops. Default `60000`. |
+| `AURRAL_HONKER_WATCHER_POLL_MS` | Poll interval for the job queue watcher, 1 to 1000. Default `25`. |
+| `AURRAL_DISCOVERY_USER_REFRESH_DELAY_SECONDS` | Delay between per-user discovery refreshes, 5 to 3600. Default `10`. |
+| `AURRAL_DISCOVERY_PLAYLIST_BUILD_CONCURRENCY` | Discover playlists built in parallel, 1 to 6. Default `3`. |
 
 ## Path mappings
 
 | Variable | Purpose |
 | -------- | ------- |
-| `PATH_MAPPINGS` | Translate paths for mixed Windows and Docker setups. Use the format `remote\|local`. Separate multiple mappings with `;`. To limit a mapping to one source, use `source\|remote\|local`. Aurral applies these mappings at runtime. Edit them under **Settings > Download clients > Remote Path Mappings**. |
+| `PATH_MAPPINGS` | Translate paths for mixed Windows and Docker setups. Use the format `remote\|local`. Separate multiple mappings with `;`. To limit a mapping to one source, use `source\|remote\|local`. Aurral applies these mappings at runtime. Edit them under **Settings > Download clients > Remote path mappings**. |
 
 ## Authentication
 
 | Variable | Purpose |
 | -------- | ------- |
-| `TRUST_PROXY` | Set when Aurral is behind a reverse proxy. |
-| `AURRAL_PUBLIC_URL` | Canonical public origin for OAuth callbacks (for example, `https://aurral.example.com`). |
+| `TRUST_PROXY` | Express `trust proxy` value. Default `1` (trust one proxy hop). Set `false` when no proxy sits in front of Aurral, a number for more hops, or `true` to trust every hop. |
+| `AURRAL_PUBLIC_URL` | Public origin used to build the Last.fm account-link callback (for example, `https://aurral.example.com`). OIDC uses `OIDC_REDIRECT_URI`; Spotify uses `SPOTIFY_OAUTH_REDIRECT_URI`. |
+| `AUTH_USER` / `AUTH_PASSWORD` | Legacy single-account login. `AUTH_USER` defaults to `admin`; `AUTH_PASSWORD` accepts a comma-separated list of accepted passwords and also enables Subsonic token auth for that user. A password saved in **Settings > General** takes precedence. Prefer user accounts. |
 | `AUTH_PROXY_ENABLED` | Enable reverse-proxy authentication. Default header `x-forwarded-user`. |
 | `AUTH_PROXY_HEADER` | Custom header that contains the authenticated username. |
 | `AUTH_PROXY_DOMAIN` | Origin of your forwardAuth login page (for example, `https://auth.example.com`). Aurral adds it to the `connect-src` content security policy so pages can reach your authentication origin. |
@@ -100,11 +120,26 @@ Genres, search text, and recency are rebuilt by the database as rows arrive, so 
 | -------- | ------- |
 | `AURRAL_IMAGE_PROXY_MAX_BYTES` | Maximum library-art image-proxy disk-cache size in bytes. The default is `268435456` (256MB). Aurral removes the oldest entries first. When Aurral serves an image, it updates the age of that image. |
 
-## Last.fm tuning
+## Lidarr
+
+The URL and API key are normally set in **Settings > Lidarr**. The variables below are fallbacks and tuning knobs.
+
+| Variable | Purpose |
+| -------- | ------- |
+| `LIDARR_URL` / `LIDARR_API_KEY` | Used when the web UI has no Lidarr connection saved. Saved settings take precedence. |
+| `LIDARR_TIMEOUT_MS` | Timeout for ordinary Lidarr API calls. Default `30000`. |
+| `LIDARR_INSECURE` | Set `true` to accept a self-signed TLS certificate on the Lidarr URL. |
+| `LIDARR_CIRCUIT_DISABLED` | Set `true` to disable the circuit breaker that pauses Lidarr calls for one minute after three consecutive failures (ten minutes after a failed bulk read). |
+
+## External providers
 
 | Variable | Purpose |
 | -------- | ------- |
 | `AURRAL_LASTFM_TIMEOUT_MS` | Last.fm API timeout in milliseconds. Default `15000`. Increase this value if focus playlists have no tracks and logs show `ECONNABORTED`. |
+| `LASTFM_API_KEY` / `LASTFM_API_SECRET` | Fallback Last.fm credentials when none are saved in **Settings > Connect > Last.fm**. |
+| `TICKETMASTER_API_KEY` | Fallback Ticketmaster consumer key for nearby shows when none is saved in **Settings > Connect > Ticketmaster**. |
+| `CONTACT_EMAIL` | Contact address sent in the MusicBrainz user agent. Default `user@example.com`. |
+| `BRAINZMASH_BASE_URL` | Alternative metadata server. Default `https://lidarrapi.brainzmash.cc`. The URL saved at `/settings/metadata` takes precedence. |
 
 ## Spotify playlist import
 
