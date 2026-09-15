@@ -98,7 +98,9 @@ Accepted aliases:
 | Artist               | `artistName`, `artist`, `artist_name`, `Artist Name(s)` |
 | Track                | `trackName`, `title`, `name`, `track`, `Track Name`     |
 | Album (optional)     | `albumName`, `album`, `Album Name`                      |
-| Artist ID (optional) | `artistMbid`, `artistId`, `mbid`                        |
+| Artist ID (optional) | `artistMbid`, `artistId`                                |
+| Album ID (optional)  | `albumMbid`, `releaseGroupMbid`, `albumId`              |
+| Track ID (optional)  | `trackMbid`, `recordingMbid`, `recordingId`, `mbid`     |
 
 Minimum shape:
 
@@ -226,7 +228,7 @@ Before Aurral removes a playlist, it moves the other file references. Navidrome 
 
 Lidarr-aware reuse requires Aurral to read the files at the paths Lidarr reports. Mount the same media root at the same container path (for example `/data:/data` with root `/data/music`). See [Filesystem and mounts](/getting-started/storage/).
 
-If Lidarr runs on Windows and Aurral runs in Docker, run **Test library access** in **Settings > Lidarr**.
+If Lidarr runs on Windows and Aurral runs in Docker, open **Settings > Storage health**, select **Run checks**, and read the **Lidarr library** section.
 
 Use the reported path to add a mapping under **Settings > Download clients > Remote path mappings**.
 

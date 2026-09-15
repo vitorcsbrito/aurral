@@ -39,10 +39,10 @@ Static playlist membership is stored as canonical track references. Aurral-owned
 permanent tracks use the canonical `artist/album/track` layout under the
 configured Aurral download folder. Set this path in **Settings > Download clients**.
 
-Flow media is temporary and lives under `_flows` below that root. Navidrome and
-Plex can use the roots they are configured to scan.
+Flow media is temporary and lives under `_flows` below that root. Navidrome, Plex, and
+Jellyfin can use the roots they are configured to scan.
 
-See [Navidrome](/integrations/navidrome/) and [Plex](/integrations/plex/) for playback setup.
+See [Navidrome](/integrations/navidrome/), [Plex](/integrations/plex/), and [Jellyfin](/integrations/jellyfin/) for playback setup.
 
 See [yt-dlp](/integrations/ytdlp/), [slskd](/integrations/slskd/), and [Usenet](/integrations/usenet/) for download setup.
 
@@ -92,7 +92,7 @@ A user who can open the playlist can start these searches. Manual searches work 
 
 To schedule upgrades, enable **Automatic upgrades** in the quality profile. The default is off. Set the interval from 1 to 365 days. The default is 2 days for each track.
 
-Upgrade jobs have a lower priority than missing-track downloads. Aurral uses slskd, Usenet, and deemix for upgrades, in the configured source-priority order. yt-dlp is not used for upgrades. It stops after the first source provides a valid, strictly better file. It waits for the next interval before it tries another automatic improvement for that track.
+Upgrade jobs have a lower priority than missing-track downloads. Aurral uses slskd, Usenet, and deemix for upgrades, in the configured source-priority order. It stops after the first source provides a valid, strictly better file. It waits for the next interval before it tries another automatic improvement for that track.
 
 If an upgrade download matches the requested track but has a significant duration mismatch, Aurral retains it under **Activity > Queue** for preview, approval, or denial. Approving it replaces the existing Aurral file.
 
