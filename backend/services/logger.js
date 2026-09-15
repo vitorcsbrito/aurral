@@ -10,6 +10,7 @@ const DEFAULT_VISIBLE_MESSAGES = [
   /Unhandled Rejection:/,
   /Server error:/,
   /Library scan (started|completed|failed)/,
+  /Plex (sync|playlist)/,
   /Event loop (was blocked|stalled)/,
 ];
 

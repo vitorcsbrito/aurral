@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import { userOps } from "../../db/helpers/index.js";
+import { logger } from "../logger.js";
 import { PlexClient } from "../plex.js";
 import { plexConnectionStore } from "../plex/plexConnectionStore.js";
 import { plexPlaylistPointerStore } from "../plex/plexPlaylistPointerStore.js";
@@ -409,7 +410,13 @@ export class PlexPlaybackDestination {
       const cacheKey = `${snapshot.entityId}:${targetKey}`;
       if (!this._libraryTracks.length) {
         // Empty after weekly reset trash or fresh library; retry post-scan.
-        if (snapshot.tracks.length) this._pendingSnapshots.set(cacheKey, snapshot);
+        if (snapshot.tracks.length) {
+          this._pendingSnapshots.set(cacheKey, snapshot);
+          logger.info(
+            "plex",
+            `Plex playlist "${snapshot.displayName}" deferred: Aurral library has no indexed tracks yet (${snapshot.tracks.length} local)`,
+          );
+        }
         return playbackOperationSuccess();
       }
       const clientCache = new Map();
@@ -429,6 +436,10 @@ export class PlexPlaybackDestination {
         if (snapshot.tracks.length) {
           // Deleting here would drop a playlist Plex merely hasn't scanned yet.
           this._pendingSnapshots.set(cacheKey, snapshot);
+          logger.info(
+            "plex",
+            `Plex playlist "${title}" deferred: none of ${snapshot.tracks.length} local track(s) found in Plex yet`,
+          );
           return playbackOperationSuccess();
         }
         await this._deleteCurrent(snapshot, clientCache);
@@ -438,6 +449,10 @@ export class PlexPlaybackDestination {
       else this._pendingSnapshots.delete(cacheKey);
       const hash = this._hash(snapshot, ratingKeys, title);
       if (this._syncHashes.get(cacheKey) === hash) return playbackOperationSuccess();
+      logger.info(
+        "plex",
+        `Plex playlist "${title}": syncing ${ratingKeys.length} track(s), ${unresolved} not indexed yet`,
+      );
       const location = await this._location(snapshot.ownerUserId);
       const pointer = await plexPlaylistPointerStore.getPointer(snapshot.entityId, targetKey);
       if (pointer && pointer.location !== location) await this._cleanupRelocatedPointer(pointer);
@@ -466,6 +481,7 @@ export class PlexPlaybackDestination {
       this._syncHashes.set(cacheKey, hash);
       return playbackOperationSuccess();
     } catch (error) {
+      logger.warn("plex", `Plex playlist publish failed: ${error?.message || error}`);
       return playbackOperationFailure({
         code: "PLAYLIST_PUBLISH_FAILED",
         message: error?.message || "Could not publish the Plex playlist",
@@ -523,16 +539,25 @@ export class PlexPlaybackDestination {
 
   async syncNow(snapshots, loadSnapshots) {
     if (!this.isConfigured()) return { configured: false };
+    const startedAt = Date.now();
+    // ensureLibrary() reads both sections; re-reading doubled the slowest step.
     const ensured = await this.ensureLibrary();
     if (!ensured.ok) throw new Error(ensured.error.message);
     await this.client.scanLibrary(this._sectionId);
     this._syncHashes.clear();
-    await this._loadTracks();
+    logger.info(
+      "plex",
+      `Plex sync started: ${this._libraryTracks.length} track(s) indexed in the Aurral library, ${(this._mainLibraryTracks || []).length} in the main library, ${snapshots.length} playlist(s)`,
+    );
     for (const snapshot of snapshots) {
       const result = await this.publishPlaylist(snapshot);
       if (!result.ok) throw new Error(result.error.message);
     }
     const playlists = await this.client.getPlaylists();
+    logger.info(
+      "plex",
+      `Plex sync completed in ${Math.round((Date.now() - startedAt) / 1000)}s; ${this._pendingSnapshots.size} playlist(s) waiting on the scan`,
+    );
     const clientCache = new Map();
     const userCache = new Map();
     const managedNames = new Set();

@@ -23,7 +23,8 @@ export const testNavidromeConnection = (url, username, password) =>
     password,
   });
 
-export const syncPlexNow = () => postData("/settings/plex/sync");
+// Reading a large main Plex library can take minutes.
+export const syncPlexNow = () => postData("/settings/plex/sync", undefined, { timeout: 300000 });
 
 export const getPlexLibraries = () => getData("/settings/plex/libraries");
 
