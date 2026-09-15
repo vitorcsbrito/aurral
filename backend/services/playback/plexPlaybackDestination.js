@@ -82,6 +82,19 @@ export class PlexPlaybackDestination {
     this._pendingSnapshots.clear();
   }
 
+  setWeeklyFlowRoot(weeklyFlowRoot) {
+    const root = resolvePlaylistRoot(weeklyFlowRoot);
+    if (root === this.weeklyFlowRoot) return;
+    this.weeklyFlowRoot = root;
+    this.playlistLibraryRoot = root;
+    // The Plex library location derives from the root; force re-reconcile.
+    this._sectionId = null;
+    this._libraryTracks = null;
+    this._mainLibraryTracks = null;
+    this._syncHashes.clear();
+    this._pendingSnapshots.clear();
+  }
+
   isConfigured() {
     return Boolean(this.client?.isConfigured());
   }

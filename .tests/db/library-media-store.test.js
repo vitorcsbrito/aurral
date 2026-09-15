@@ -272,6 +272,57 @@ test("stores fractional stat and duration values in bigint columns", async () =>
   await finishLibraryScan(scanId, { status: "complete" });
 });
 
+test("truncates non-integer Lidarr track and disc numbers for integer columns", async () => {
+  await clearLibrary();
+  const artist = await upsertLibraryArtist({
+    identityKey: buildFallbackIdentityKey("artist", "Decimal Artist"),
+    name: "Decimal Artist",
+    syncSearch: false,
+  });
+  const album = await upsertLibraryAlbum({
+    identityKey: buildFallbackIdentityKey("album", "Decimal Artist", "Decimal Album"),
+    artistId: artist.id,
+    title: "Decimal Album",
+    syncSearch: false,
+  });
+  const track = await upsertLibraryTrack({
+    identityKey: buildFallbackIdentityKey("track", "Decimal Album", "Decimal Track"),
+    title: "Decimal Track",
+    syncSearch: false,
+  });
+  await linkLibraryAlbumTrack({
+    albumId: album.id,
+    trackId: track.id,
+    discNumber: "1.0",
+    trackNumber: "44.1",
+    syncSearch: false,
+  });
+  const link = await db.get(
+    "SELECT disc_number, track_number FROM library_album_tracks WHERE track_id = ?",
+    [track.id],
+  );
+  assert.equal(link.disc_number, 1);
+  assert.equal(link.track_number, 44);
+
+  const vinyl = await upsertLibraryTrack({
+    identityKey: buildFallbackIdentityKey("track", "Decimal Album", "Vinyl Track"),
+    title: "Vinyl Track",
+    syncSearch: false,
+  });
+  await linkLibraryAlbumTrack({
+    albumId: album.id,
+    trackId: vinyl.id,
+    trackNumber: "A1",
+    syncSearch: false,
+  });
+  const vinylLink = await db.get(
+    "SELECT disc_number, track_number FROM library_album_tracks WHERE track_id = ?",
+    [vinyl.id],
+  );
+  assert.equal(vinylLink.disc_number, 1);
+  assert.equal(vinylLink.track_number, 0);
+});
+
 // The Lidarr indexer batches its writes this way, so the store's own
 // transactions have to nest as savepoints.
 test("a scan writes through a batch transaction and records completion", async () => {

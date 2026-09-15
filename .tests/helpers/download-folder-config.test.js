@@ -154,6 +154,32 @@ test("listBrowseDirectory only exposes directories within browse roots", async (
   else process.env.FILE_BROWSE_ROOTS = previousRoots;
 });
 
+test("getFilesystemBrowseRoots includes the stored download folder and mounted volumes", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aurral-browse-stored-"));
+  const previousRoots = process.env.FILE_BROWSE_ROOTS;
+  delete process.env.FILE_BROWSE_ROOTS;
+  const { getFilesystemBrowseRoots, getMountedVolumeRoots, syncDownloadFolderPath } =
+    await import("../../backend/services/downloadFolderConfig.js");
+  syncDownloadFolderPath(tempDir);
+  try {
+    const roots = getFilesystemBrowseRoots();
+    assert.ok(roots.includes(fs.realpathSync(tempDir)), `roots=${roots.join(", ")}`);
+    for (const mounted of getMountedVolumeRoots()) {
+      assert.ok(roots.includes(mounted), `mounted root ${mounted} missing`);
+      assert.ok(!mounted.startsWith("/proc") && !mounted.startsWith("/sys"));
+    }
+    for (const conventional of ["/media", "/mnt", "/data"]) {
+      if (fs.existsSync(conventional) && fs.statSync(conventional).isDirectory()) {
+        assert.ok(roots.includes(fs.realpathSync(conventional)), `${conventional} missing`);
+      }
+    }
+  } finally {
+    syncDownloadFolderPath(null);
+    if (previousRoots === undefined) delete process.env.FILE_BROWSE_ROOTS;
+    else process.env.FILE_BROWSE_ROOTS = previousRoots;
+  }
+});
+
 test("getFilesystemBrowseRoots returns dedicated roots before filesystem root", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aurral-browse-roots-"));
   const previousRoots = process.env.FILE_BROWSE_ROOTS;

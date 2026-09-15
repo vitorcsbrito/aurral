@@ -66,6 +66,42 @@ function isExistingDirectory(targetPath) {
   }
 }
 
+const SYSTEM_MOUNT_PREFIXES = ["/proc", "/sys", "/dev", "/run", "/etc", "/var/run", "/tmp"];
+const PSEUDO_FS_TYPES = new Set([
+  "proc", "sysfs", "cgroup", "cgroup2", "devpts", "devtmpfs", "mqueue", "tmpfs",
+  "securityfs", "debugfs", "tracefs", "pstore", "bpf", "configfs", "fusectl",
+  "hugetlbfs", "autofs", "binfmt_misc", "overlay", "shm", "nsfs", "rpc_pipefs",
+]);
+
+// Bind-mounted volumes hold the music; each is a browse root.
+export function getMountedVolumeRoots() {
+  let mountinfo;
+  try {
+    mountinfo = fs.readFileSync("/proc/self/mountinfo", "utf8");
+  } catch {
+    return [];
+  }
+  const roots = [];
+  for (const line of mountinfo.split("\n")) {
+    const separator = line.indexOf(" - ");
+    if (separator === -1) continue;
+    const fields = line.slice(0, separator).split(" ");
+    const fsType = line.slice(separator + 3).split(" ")[0];
+    // mountinfo escapes spaces in paths as \040.
+    const mountPoint = (fields[4] || "").replace(/\\040/g, " ");
+    if (!mountPoint || mountPoint === "/") continue;
+    if (PSEUDO_FS_TYPES.has(fsType)) continue;
+    if (SYSTEM_MOUNT_PREFIXES.some((prefix) => mountPoint === prefix || mountPoint.startsWith(`${prefix}/`))) {
+      continue;
+    }
+    if (!isExistingDirectory(mountPoint)) continue;
+    try {
+      roots.push(fs.realpathSync(mountPoint));
+    } catch {}
+  }
+  return roots;
+}
+
 export function getFilesystemBrowseRoots() {
   const configured = String(process.env.FILE_BROWSE_ROOTS || "")
     .split(",")
@@ -78,8 +114,10 @@ export function getFilesystemBrowseRoots() {
   }
 
   const roots = [];
-  if (isExistingDirectory("/data")) {
-    roots.push(fs.realpathSync("/data"));
+  for (const conventionalRoot of ["/data", "/media", "/mnt", "/music", "/downloads"]) {
+    if (isExistingDirectory(conventionalRoot)) {
+      roots.push(fs.realpathSync(conventionalRoot));
+    }
   }
   const dataDir = resolveAurralDataDir();
   if (isExistingDirectory(dataDir)) {
@@ -96,6 +134,11 @@ export function getFilesystemBrowseRoots() {
   if (isExistingDirectory(process.cwd())) {
     roots.push(fs.realpathSync(process.cwd()));
   }
+  const storedDownloadFolder = getStoredDownloadFolderPath();
+  if (storedDownloadFolder && isExistingDirectory(storedDownloadFolder)) {
+    roots.push(fs.realpathSync(storedDownloadFolder));
+  }
+  roots.push(...getMountedVolumeRoots());
   const uniqueRoots = [...new Set(roots)];
   if (uniqueRoots.length) {
     return uniqueRoots;
