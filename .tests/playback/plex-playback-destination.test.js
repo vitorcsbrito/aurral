@@ -134,6 +134,67 @@ test("recovers a managed-user token and retries with the stored client identifie
   assert.equal((await plexConnectionStore.getConnection(owner.id)).token, "fresh-token");
 });
 
+test("re-derives a rotated self-link server token from the stored account token", async () => {
+  const owner = await userOps.createUser("selfie", "hash", "user");
+  await plexConnectionStore.saveConnection(owner.id, {
+    linkType: "self",
+    token: "rotated-server-token",
+    accountToken: "account-token",
+    clientId: "self-client",
+    plexAccountId: 66,
+  });
+  assert.equal((await plexConnectionStore.getConnection(owner.id)).accountToken, "account-token");
+  const switchCalls = mock.method(PlexClient, "switchHomeUser", async () => "unexpected");
+  mock.method(PlexClient, "getResources", async (token, clientId) => {
+    assert.equal(token, "account-token");
+    assert.equal(clientId, "self-client");
+    return { servers: [{ clientIdentifier: "server-id", accessToken: "fresh-server-token" }] };
+  });
+  const destination = makeDestination();
+  destination.client._machineIdentifier = "server-id";
+  const seen = [];
+
+  const result = await destination._withOwnerClient(owner.id, new Map(), async (client) => {
+    seen.push(client.token);
+    if (client.token === "rotated-server-token") {
+      const error = new Error("Request failed with status code 401");
+      error.response = { status: 401 };
+      throw error;
+    }
+    return "published";
+  });
+
+  assert.equal(result, "published");
+  assert.equal(switchCalls.mock.callCount(), 0);
+  assert.deepEqual(seen, ["rotated-server-token", "fresh-server-token"]);
+  const connection = await plexConnectionStore.getConnection(owner.id);
+  assert.equal(connection.token, "fresh-server-token");
+  assert.equal(connection.accountToken, "account-token");
+  assert.equal(connection.lastError, null);
+});
+
+test("self links without an account token still require a manual reconnect", async () => {
+  const owner = await userOps.createUser("legacy", "hash", "user");
+  await plexConnectionStore.saveConnection(owner.id, {
+    linkType: "self",
+    token: "dead-token",
+    clientId: "legacy-client",
+    plexAccountId: 55,
+  });
+  const resources = mock.method(PlexClient, "getResources", async () => ({ servers: [] }));
+  const destination = makeDestination();
+
+  const result = await destination._withOwnerClient(owner.id, new Map(), async () => {
+    const error = new Error("Request failed with status code 401");
+    error.response = { status: 401 };
+    throw error;
+  });
+
+  assert.equal(typeof result, "symbol");
+  assert.equal(resources.mock.callCount(), 0);
+  assert.match((await plexConnectionStore.getConnection(owner.id)).lastError.message, /401/);
+});
+
 test("resolves managed and reused Lidarr paths to private Plex rating keys", async () => {
   const destination = makeDestination({ downloadsPath: "/data", mainLibrarySectionId: "9" });
   const managedPath = path.join(

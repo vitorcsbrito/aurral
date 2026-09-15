@@ -22,9 +22,11 @@ const normalizeConnection = (raw) => {
   const clientId = String(raw.clientId || "").trim();
   if (!token || !clientId) return null;
   const linkType = raw.linkType === "managed" ? "managed" : "self";
+  const accountToken = raw.accountToken ? decryptToken(raw.accountToken) : null;
   return {
     linkType,
     token,
+    accountToken: accountToken || null,
     clientId,
     plexAccountId: raw.plexAccountId ?? null,
     plexUuid: raw.plexUuid || null,
@@ -72,6 +74,7 @@ export const plexConnectionStore = {
     {
       linkType,
       token,
+      accountToken = null,
       clientId,
       plexAccountId = null,
       plexUuid = null,
@@ -80,6 +83,7 @@ export const plexConnectionStore = {
     } = {},
   ) {
     const safeToken = String(token || "").trim();
+    const safeAccountToken = String(accountToken || "").trim();
     const safeClientId = String(clientId || "").trim();
     if (!safeToken || !safeClientId) {
       throw new Error("Plex token and clientId are required");
@@ -91,6 +95,8 @@ export const plexConnectionStore = {
     connections[userKey(userId)] = {
       linkType,
       token: encryptToken(safeToken),
+      // Plex rotates server-scoped tokens; the account token re-derives them.
+      accountToken: safeAccountToken ? encryptToken(safeAccountToken) : null,
       clientId: safeClientId,
       plexAccountId,
       plexUuid,

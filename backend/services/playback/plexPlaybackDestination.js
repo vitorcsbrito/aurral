@@ -175,19 +175,24 @@ export class PlexPlaybackDestination {
     return client;
   }
 
-  async _recoverManagedUserToken(ownerUserId) {
+  async _recoverOwnerToken(ownerUserId) {
     const connection = await plexConnectionStore.getConnection(ownerUserId);
-    if (!connection || connection.linkType !== "managed" || connection.plexAccountId == null) {
-      return null;
-    }
-    if (!this.isConfigured()) return null;
+    if (!connection || !this.isConfigured()) return null;
     try {
-      const freshToken = await PlexClient.switchHomeUser(
-        connection.plexAccountId,
-        this.client.token,
-        this.client.clientId,
-        connection.clientId,
-      );
+      let freshToken;
+      if (connection.linkType === "managed") {
+        if (connection.plexAccountId == null) return null;
+        freshToken = await PlexClient.switchHomeUser(
+          connection.plexAccountId,
+          this.client.token,
+          this.client.clientId,
+          connection.clientId,
+        );
+      } else {
+        // Self links: Plex rotates server-scoped tokens; re-derive from the account token.
+        if (!connection.accountToken) return null;
+        freshToken = connection.accountToken;
+      }
       if (!freshToken) throw new Error("Plex did not return a refreshed token");
       let serverToken = freshToken;
       try {
@@ -198,6 +203,9 @@ export class PlexPlaybackDestination {
         );
         if (match?.accessToken) serverToken = match.accessToken;
       } catch {}
+      if (serverToken === connection.token) {
+        throw new Error("Plex returned the same rejected token");
+      }
       await plexConnectionStore.updateToken(ownerUserId, {
         token: serverToken,
         clientId: connection.clientId,
@@ -219,7 +227,7 @@ export class PlexPlaybackDestination {
       if (error?.response?.status !== 401 || client === this.client || ownerUserId == null) {
         throw error;
       }
-      const recovered = await this._recoverManagedUserToken(ownerUserId);
+      const recovered = await this._recoverOwnerToken(ownerUserId);
       if (recovered) {
         cache.set(String(ownerUserId), recovered);
         try {
