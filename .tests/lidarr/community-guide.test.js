@@ -72,3 +72,14 @@ test("community guide never asks for an unsatisfiable minimum format score", asy
   assert.ok(results.errors.some((message) => message.includes("No positive-scoring custom formats")));
   assert.equal(results.errors.filter((message) => message.startsWith("Failed to create custom format")).length, 4);
 });
+
+test("community guide keeps unrelated existing custom formats in the profile at score 0", async () => {
+  const client = createFakeClient({ existingFormats: [{ id: 42, name: "Existing Unrelated" }] });
+  await applyLidarrCommunityGuide(client);
+  const profile = client.calls.qualityProfiles.at(-1);
+  assert.deepEqual(
+    profile.formatItems.find((item) => item.format === 42),
+    { format: 42, name: "Existing Unrelated", score: 0 },
+  );
+  assert.equal(profile.formatItems.length, 6);
+});
