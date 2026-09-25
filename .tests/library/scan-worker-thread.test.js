@@ -106,3 +106,15 @@ test("a scan that runs past the timeout is stopped and later scans still run", a
   const result = await runLibraryScanInWorker({ includeLidarr: false, musicRoot });
   assert.ok(result?.local);
 });
+
+test("a timeout beyond the timer range is capped instead of firing at once", async () => {
+  const previous = process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+  process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = String(30 * 24 * 60 * 60 * 1000);
+  try {
+    const result = await runLibraryScanInWorker({ includeLidarr: false, musicRoot });
+    assert.ok(result?.local);
+  } finally {
+    if (previous === undefined) delete process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+    else process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = previous;
+  }
+});

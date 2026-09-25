@@ -7,9 +7,14 @@ const DEFAULT_SCAN_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 let activeScan = null;
 
+// Timers longer than this fire immediately, so larger values are capped.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 function resolveScanTimeoutMs() {
   const value = Number.parseInt(String(process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS || ""), 10);
-  return Number.isFinite(value) && value > 0 ? value : DEFAULT_SCAN_TIMEOUT_MS;
+  return Number.isFinite(value) && value > 0
+    ? Math.min(value, MAX_TIMER_MS)
+    : DEFAULT_SCAN_TIMEOUT_MS;
 }
 
 function spawnScan({ includeLidarr, musicRoot, artistIds, force, includeLocal }) {
