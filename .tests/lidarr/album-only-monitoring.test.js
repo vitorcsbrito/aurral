@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ensureTestDatabase, reloadMirrors } from "../helpers/backendTestHarness.js";
 import { LidarrClient } from "../../backend/services/lidarrClient.js";
+
+await ensureTestDatabase();
+await reloadMirrors();
 
 function createClient(t) {
   const client = new LidarrClient();

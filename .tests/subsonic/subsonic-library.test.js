@@ -128,8 +128,8 @@ test("returns top songs only for the requested artist", async () => {
   );
 });
 
-test("marks album entries as directories in artist music directories", () => {
-  const directory = getMusicDirectory(`artist:${encodeURIComponent("test-artist:artist-a")}`);
+test("marks album entries as directories in artist music directories", async () => {
+  const directory = await getMusicDirectory(`artist:${encodeURIComponent("test-artist:artist-a")}`);
 
   assert.ok(directory);
   assert.equal(directory.child.length, 2);

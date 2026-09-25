@@ -21,7 +21,7 @@ test.after(async () => {
 
 const OWNER_USER_ID = 7;
 
-const flow = flowPlaylistConfig.createFlow({
+const flow = await flowPlaylistConfig.createFlow({
   name: "Today's Top Rock",
   mix: { discover: 34, mix: 33, trending: 33, focus: 0 },
   size: 20,

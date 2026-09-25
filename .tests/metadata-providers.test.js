@@ -91,7 +91,7 @@ test("stale album metadata is served while one refresh runs in the background", 
 
   try {
     Date.now = () => now;
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -154,7 +154,7 @@ test("stale album metadata is served while one refresh runs in the background", 
   } finally {
     Date.now = originalNow;
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });
@@ -170,7 +170,7 @@ test("missing entity metadata is negatively cached for repeated lookups", async 
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -195,7 +195,7 @@ test("missing entity metadata is negatively cached for repeated lookups", async 
     assert.equal(requests, 1);
   } finally {
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });
@@ -216,7 +216,7 @@ test("a metadata 429 opens a local cooldown for subsequent requests", async () =
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -241,7 +241,7 @@ test("a metadata 429 opens a local cooldown for subsequent requests", async () =
     assert.equal(requests, 1);
   } finally {
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });
@@ -261,7 +261,7 @@ test("a metadata 403 opens a local blocked cooldown for subsequent requests", as
   });
 
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -286,7 +286,7 @@ test("a metadata 403 opens a local blocked cooldown for subsequent requests", as
     assert.equal(requests, 1);
   } finally {
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });
@@ -311,7 +311,7 @@ test("search metadata coalesces concurrent misses and shares fresh cache entries
     });
   });
   try {
-    dbOps.updateSettings({
+    await dbOps.updateSettings({
       ...previousSettings,
       integrations: {
         ...(previousSettings.integrations || {}),
@@ -335,7 +335,7 @@ test("search metadata coalesces concurrent misses and shares fresh cache entries
     assert.equal(requests, 1);
   } finally {
     clearMetadataProviderCaches();
-    dbOps.updateSettings(previousSettings);
+    await dbOps.updateSettings(previousSettings);
     await server.close();
   }
 });

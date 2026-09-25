@@ -8,10 +8,9 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, { dbOps }, notifications, { registerDownloadClients }] =
+const [isolatedState, { dbOps }, notifications, { registerDownloadClients }] =
   await setupIsolatedBackend(
     "webhook-test",
-    "backend/config/db-sqlite.js",
     "backend/db/helpers/index.js",
     "backend/services/notificationService.js",
     "backend/routes/settings/handlers/downloadClients.js",
@@ -84,8 +83,8 @@ async function withReceiver(statusCode, callback) {
   }
 }
 
-test.beforeEach(() => {
-  resetDatabase(db);
+test.beforeEach(async () => {
+  await resetDatabase();
 });
 
 test.after(async () => {
@@ -99,7 +98,7 @@ test("webhook test route sends GET directly with disabled event toggles and does
     body: "saved body",
     headers: [{ key: "X-Saved", value: "true" }],
   };
-  dbOps.updateSettings({
+  await dbOps.updateSettings({
     integrations: {
       webhooks: [savedWebhook],
       webhookEvents: { notifyRequestMade: false },

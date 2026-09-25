@@ -19,7 +19,7 @@ async function runDiscoveryRefresh(payload) {
     return;
   }
 
-  if (payload?.scheduleOnly === true && !discoveryNeedsRefresh()) {
+  if (payload?.scheduleOnly === true && !(await discoveryNeedsRefresh())) {
     return;
   }
 

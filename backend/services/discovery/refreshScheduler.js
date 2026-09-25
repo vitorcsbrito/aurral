@@ -146,15 +146,15 @@ export async function isDiscoveryRefreshConfigured() {
   return (await getCanonicalArtistProjection({ page: 1, pageSize: 1 })).length > 0;
 }
 
-function hasDiscoverySeedArtists() {
+async function hasDiscoverySeedArtists() {
   try {
-    return getCanonicalArtistProjection({ page: 1, pageSize: 1 }).length > 0;
+    return (await getCanonicalArtistProjection({ page: 1, pageSize: 1 })).length > 0;
   } catch {
     return true;
   }
 }
 
-export function discoveryNeedsRefresh(cache = getDiscoveryCache()) {
+export async function discoveryNeedsRefresh(cache = getDiscoveryCache()) {
   const lastUpdated = cache?.lastUpdated;
   const hasRecommendations =
     Array.isArray(cache?.recommendations) && cache.recommendations.length > 0;
@@ -174,7 +174,7 @@ export function discoveryNeedsRefresh(cache = getDiscoveryCache()) {
   // empty library a completed refresh legitimately leaves them empty and
   // retrying cannot fill them — treating that as stale would re-run the
   // refresh on every scheduled check (#763).
-  return !hasGenres && hasDiscoverySeedArtists();
+  return !hasGenres && (await hasDiscoverySeedArtists());
 }
 
 function emitDiscoveryQueued(reason) {
@@ -256,7 +256,7 @@ export async function enqueueDiscoveryRefreshIfNeeded(options = {}) {
   if (!(await isDiscoveryRefreshConfigured())) {
     return { enqueued: false, reason: "not_configured" };
   }
-  if (!options.force && !discoveryNeedsRefresh()) {
+  if (!options.force && !(await discoveryNeedsRefresh())) {
     return { enqueued: false, reason: "fresh" };
   }
   return enqueueDiscoveryRefresh(options);
