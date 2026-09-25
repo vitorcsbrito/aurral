@@ -317,7 +317,7 @@ async function failJob(job, message) {
   downloadTracker.setFailed(job.id, message);
   try {
     const { recordTrackJobFailed } = await import("./aurralHistoryService.js");
-    recordTrackJobFailed(job, message);
+    await recordTrackJobFailed(job, message);
   } catch {}
   try {
     const { weeklyFlowWorker } = await import("./weeklyFlow/weeklyFlowWorker.js");

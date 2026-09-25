@@ -207,7 +207,7 @@ export async function finalizeQualityUpgradeSuccess(upgradeJob, finalPath, quali
     }
   }
   const { recordTrackJobActivity } = await import("./aurralHistoryService.js");
-  recordTrackJobActivity({
+  await recordTrackJobActivity({
     jobId: upgradeJob.id,
     trackName: originalDetails.trackName,
     artistName: original.artistName,
@@ -219,6 +219,8 @@ export async function finalizeQualityUpgradeSuccess(upgradeJob, finalPath, quali
     statusLabel: "Upgraded",
     downloadSource: upgradeJob.downloadSource,
     downloadClient: upgradeJob.downloadClient,
+  }).catch((error) => {
+    console.warn("[QualityProfile] Could not record upgrade activity:", error?.message || error);
   });
   return null;
 }
@@ -229,7 +231,7 @@ export async function finalizeQualityUpgradeFailure(upgradeJob, message) {
   if (upgradeJob?.id) downloadTracker.removeJob(upgradeJob.id);
   if (!original) return;
   const { recordTrackJobActivity } = await import("./aurralHistoryService.js");
-  recordTrackJobActivity({
+  await recordTrackJobActivity({
     jobId: upgradeJob.id,
     trackName: original.trackName,
     artistName: original.artistName,
@@ -241,5 +243,7 @@ export async function finalizeQualityUpgradeFailure(upgradeJob, message) {
     statusLabel: "No upgrade",
     downloadSource: upgradeJob.downloadSource,
     downloadClient: upgradeJob.downloadClient,
+  }).catch((error) => {
+    console.warn("[QualityProfile] Could not record upgrade activity:", error?.message || error);
   });
 }

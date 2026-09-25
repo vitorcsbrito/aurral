@@ -161,8 +161,20 @@ export class WeeklyFlowWorker {
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   }
 
-  async _setRetryJobRegistry(registry) {
-    await dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
+  // Changes run one after another on the latest stored registry: the
+  // settings mirror only updates once a write completes, so unchained
+  // read-modify-writes would drop each other's entries.
+  _updateRetryJobRegistry(mutate) {
+    const previous = this._retryRegistryWrites || Promise.resolve();
+    const run = previous.then(async () => {
+      const registry = { ...this._getRetryJobRegistry() };
+      if (mutate(registry) === false) return;
+      await dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
+    });
+    this._retryRegistryWrites = run.catch((error) => {
+      console.warn(`[WeeklyFlowWorker] Could not update the retry registry: ${error?.message || error}`);
+    });
+    return this._retryRegistryWrites;
   }
 
   getScheduledRetryJobId(playlistType) {
@@ -175,10 +187,10 @@ export class WeeklyFlowWorker {
   clearIncompleteRetry(playlistType) {
     const key = String(playlistType || "").trim();
     if (!key) return;
-    const registry = this._getRetryJobRegistry();
-    if (!(key in registry)) return;
-    delete registry[key];
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (!(key in registry)) return false;
+      delete registry[key];
+    });
   }
 
   _normalizeRetryPausedPlaylistIds(value) {
@@ -451,7 +463,7 @@ export class WeeklyFlowWorker {
     const plan = await playlistSource.buildFlowRunPlan(
       sizeOverride ? { ...flow, size: sizeOverride } : flow,
       {
-        listenHistoryProfile: this._getFlowListenHistoryProfile(flow),
+        listenHistoryProfile: await this._getFlowListenHistoryProfile(flow),
       },
     );
     this.clearPlaylistRunState(key);
@@ -532,20 +544,20 @@ export class WeeklyFlowWorker {
   markIncompleteRetryDequeued(playlistType, jobId = null) {
     const key = String(playlistType || "").trim();
     if (!key) return;
-    const registry = this._getRetryJobRegistry();
-    if (!(key in registry)) return;
-    if (jobId != null && Number(registry[key]) !== Number(jobId)) return;
-    delete registry[key];
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (!(key in registry)) return false;
+      if (jobId != null && Number(registry[key]) !== Number(jobId)) return false;
+      delete registry[key];
+    });
   }
 
   restoreScheduledRetryJobId(playlistType, jobId) {
     const key = String(playlistType || "").trim();
     if (!key || jobId == null) return;
-    const registry = this._getRetryJobRegistry();
-    if (key in registry) return;
-    registry[key] = jobId;
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (key in registry) return false;
+      registry[key] = jobId;
+    });
   }
 
   async retryIncompletePlaylist(playlistType) {
