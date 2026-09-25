@@ -285,7 +285,7 @@ test("scanMusicRoot indexes tagged media and ignores Flow output", async () => {
     assert.equal(snapshot.albums.some((album) => album.title === "Playback Roadmap"), true);
     assert.equal(snapshot.tracks.some((track) => track.title === "First Step"), true);
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -317,7 +317,7 @@ test("scanMusicRoot derives stable fallback records when tags are missing", asyn
       available: 1,
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -468,7 +468,7 @@ test("scanMusicRoot applies trusted job metadata when file tags omit identities"
       trackMbid: "33333333-3333-4333-8333-333333333333",
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -506,7 +506,7 @@ test("scanMusicRoot reads Aurral identity markers from portable comments", async
       trackMbid: "33333333-3333-3333-3333-333333333333",
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1327,7 +1327,7 @@ test("a Lidarr rescan preserves files for an album with a missing artist respons
     assert.equal(result.filesFailed, 1);
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1383,7 +1383,7 @@ test("a Lidarr outage leaves the last indexed library available", async () => {
 
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1418,7 +1418,7 @@ test("an empty Lidarr response leaves the last indexed library available", async
     assert.equal(result.filesIndexed, 0);
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1446,7 +1446,7 @@ test("a Lidarr rescan marks the final removed media file unavailable", async () 
 
     assert.equal(file?.available, 0);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
