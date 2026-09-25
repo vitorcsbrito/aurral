@@ -385,29 +385,30 @@ test("retained retries preserve exclusions and share a snapshot only within matc
   assert.deepEqual(dbOps.getJSONSetting("playbackRetainedFiles")[localFileKey(external)].excludeEntityIds, ["a", "old-a"]);
 });
 
-for (const changeBeforeReset of [false, true]) {
-  test(`retained files use their recorded root when settings change ${changeBeforeReset ? "before" : "after"} cleanup`, async (t) => {
-    const file = await makeFile("_flows/old-root/saved.flac");
-    const newRoot = path.join(state.baseDir, "new-downloads");
-    await fs.mkdir(newRoot, { recursive: true });
-    const unrelated = path.join(newRoot, "unrelated.flac");
-    await fs.writeFile(unrelated, "unrelated");
-    let unavailable = true;
-    t.mock.method(playlistManager.destinationRegistry, "run", async () =>
-      unavailable ? [{ ok: false }] : [{ ok: true, paths: [] }]);
-    if (changeBeforeReset) await dbOps.updateSettings({ downloadFolderPath: newRoot });
-    await playlistManager.weeklyReset(["old-root"]);
-    if (!changeBeforeReset) await dbOps.updateSettings({ downloadFolderPath: newRoot });
-    await retryPlaybackRetainedFiles();
-    await fs.access(file);
-    assert.equal(dbOps.getJSONSetting("playbackRetainedFiles")[localFileKey(file)].playlistRoot, path.resolve(root));
-    unavailable = false;
-    await retryPlaybackRetainedFiles();
-    await assert.rejects(fs.access(file), { code: "ENOENT" });
-    assert.equal(isPlaybackRetainedFile(file), false);
-    assert.equal(await fs.readFile(unrelated, "utf8"), "unrelated");
-  });
-}
+// This fork's playlist manager follows the stored download folder as soon as it
+// changes, and the download-folder migration moves the old root's files, so a
+// reset after a folder change works on the new root. Only a folder change after
+// cleanup leaves a retained file under the old root.
+test("retained files use their recorded root when settings change after cleanup", async (t) => {
+  const file = await makeFile("_flows/old-root/saved.flac");
+  const newRoot = path.join(state.baseDir, "new-downloads");
+  await fs.mkdir(newRoot, { recursive: true });
+  const unrelated = path.join(newRoot, "unrelated.flac");
+  await fs.writeFile(unrelated, "unrelated");
+  let unavailable = true;
+  t.mock.method(playlistManager.destinationRegistry, "run", async () =>
+    unavailable ? [{ ok: false }] : [{ ok: true, paths: [] }]);
+  await playlistManager.weeklyReset(["old-root"]);
+  await dbOps.updateSettings({ downloadFolderPath: newRoot });
+  await retryPlaybackRetainedFiles();
+  await fs.access(file);
+  assert.equal(dbOps.getJSONSetting("playbackRetainedFiles")[localFileKey(file)].playlistRoot, path.resolve(root));
+  unavailable = false;
+  await retryPlaybackRetainedFiles();
+  await assert.rejects(fs.access(file), { code: "ENOENT" });
+  assert.equal(isPlaybackRetainedFile(file), false);
+  assert.equal(await fs.readFile(unrelated, "utf8"), "unrelated");
+});
 
 test("retry accepts legacy records only inside the current root and rejects mismatched recorded roots", async (t) => {
   const legacy = await makeFile("_flows/legacy/saved.flac");
