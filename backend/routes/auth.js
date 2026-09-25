@@ -42,15 +42,13 @@ router.post("/login", async (req, res) => {
     if (user.status !== "active") {
       return res.status(403).json({ error: "This account has been suspended or disabled" });
     }
-    const updates = { subsonicPassword: password };
-    if (needsRehash(user.passwordHash)) {
-      updates.passwordHash = hashPassword(password);
-    }
-    // A successful password login proves the account has a usable password.
-    if (!user.hasLocalPassword) {
-      updates.hasLocalPassword = true;
-    }
-    await userOps.updateUser(user.id, updates);
+    // A successful password login also proves the account has a usable
+    // password; recordPasswordLogin notes that with the Subsonic credential.
+    await userOps.recordPasswordLogin(user.id, {
+      verifiedHash: user.passwordHash,
+      password,
+      newHash: needsRehash(user.passwordHash) ? hashPassword(password) : null,
+    });
     const session = await createSession(user.id, req.ip || null, req.headers["user-agent"] || null);
     res.json({
       token: session.token,

@@ -532,14 +532,11 @@ export async function resolveUser(username, password) {
   const u = await userOps.getUserByUsername(un);
   if (!u || u.status !== "active" || !password) return null;
   if (!verifyPassword(password, u.passwordHash)) return null;
-  if (needsRehash(u.passwordHash)) {
-    await userOps.updateUser(u.id, {
-      passwordHash: hashPassword(password),
-      subsonicPassword: password,
-    });
-  } else {
-    await userOps.syncSubsonicPassword(u.id, password);
-  }
+  await userOps.recordPasswordLogin(u.id, {
+    verifiedHash: u.passwordHash,
+    password,
+    newHash: needsRehash(u.passwordHash) ? hashPassword(password) : null,
+  });
   const perms = buildPermissions(u.role, u.permissions);
   return {
     id: u.id,
