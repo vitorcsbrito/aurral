@@ -88,3 +88,21 @@ test("a worker failure surfaces as a rejected scan", async () => {
   );
   assert.equal(isLibraryScanRunning(), false);
 });
+
+test("a scan that runs past the timeout is stopped and later scans still run", async () => {
+  const previous = process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+  process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = "1";
+  try {
+    await assert.rejects(
+      runLibraryScanInWorker({ includeLidarr: false, musicRoot }),
+      (error) => error?.code === "LIBRARY_SCAN_TIMEOUT",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+    else process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = previous;
+  }
+  assert.equal(isLibraryScanRunning(), false);
+
+  const result = await runLibraryScanInWorker({ includeLidarr: false, musicRoot });
+  assert.ok(result?.local);
+});

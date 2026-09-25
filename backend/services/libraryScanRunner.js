@@ -1,11 +1,19 @@
 import { Worker } from "node:worker_threads";
 import { invalidateCanonicalLibraryCache } from "./libraryQueryService.js";
+import { logger } from "./logger.js";
 
 const THREAD_URL = new URL("./libraryScanThread.js", import.meta.url);
+const DEFAULT_SCAN_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 let activeScan = null;
 
+function resolveScanTimeoutMs() {
+  const value = Number.parseInt(String(process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS || ""), 10);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_SCAN_TIMEOUT_MS;
+}
+
 function spawnScan({ includeLidarr, musicRoot, artistIds, force, includeLocal }) {
+  const timeoutMs = resolveScanTimeoutMs();
   return new Promise((resolve, reject) => {
     const worker = new Worker(THREAD_URL, {
       workerData: {
@@ -17,11 +25,23 @@ function spawnScan({ includeLidarr, musicRoot, artistIds, force, includeLocal })
       },
     });
     let settled = false;
+    let timer = null;
     const settle = (handler) => (value) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       handler(value);
     };
+    // A hung scan would otherwise hold activeScan forever and queue every
+    // later scan behind it; stop the thread so the job fails and retries.
+    timer = setTimeout(settle(() => {
+      logger.warn("library", "Library scan timed out; stopping the scan thread", { timeoutMs });
+      worker.terminate().catch(() => {});
+      const error = new Error(`library scan timed out after ${timeoutMs} ms`);
+      error.code = "LIBRARY_SCAN_TIMEOUT";
+      reject(error);
+    }), timeoutMs);
+    timer.unref?.();
     worker.once("message", settle((message) => {
       if (message?.type === "done") {
         resolve(message.result);

@@ -61,6 +61,7 @@ Defaults suit most installs. Change these only when diagnosing load or latency.
 | `AURRAL_MEDIA_HEALTH_SAMPLE_LIMIT` | Number of media files sampled by the native-playback storage check. Default `500`. |
 | `AURRAL_WORKER_SUPERVISOR_POLL_MS` | How often the worker supervisor checks queues. Default `60000`. |
 | `AURRAL_WORKER_IDLE_STOP_MS` | Idle time before a background worker stops. Default `60000`. |
+| `AURRAL_LIBRARY_SCAN_TIMEOUT_MS` | Longest a single library scan may run before its worker thread is stopped and the scan job is retried. Default `21600000` (6 hours). |
 | `AURRAL_HONKER_WATCHER_POLL_MS` | Poll interval for the job queue watcher, 1 to 1000. Default `25`. |
 | `AURRAL_DISCOVERY_USER_REFRESH_DELAY_SECONDS` | Delay between per-user discovery refreshes, 5 to 3600. Default `10`. |
 | `AURRAL_DISCOVERY_PLAYLIST_BUILD_CONCURRENCY` | Discover playlists built in parallel, 1 to 6. Default `3`. |
