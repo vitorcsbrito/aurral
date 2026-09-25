@@ -10,7 +10,7 @@ import {
 } from "../../services/listeningHistory.js";
 
 const USER_LIST_COLUMNS =
-  "id, username, role, permissions, lastfm_username, listen_history_provider, listen_history_username, listen_history_url, lidarr_root_folder_path, lidarr_quality_profile_id";
+  "id, username, role, permissions, lastfm_username, listen_history_provider, listen_history_username, listen_history_url, lidarr_root_folder_path, lidarr_quality_profile_id, status, is_protected, role_source, has_local_password, needs_identity_migration, allow_identity_adoption";
 
 const DEFAULT_PERMISSIONS = {
   accessFlow: false,
@@ -21,6 +21,16 @@ const DEFAULT_PERMISSIONS = {
   deleteAlbum: false,
   deleteTrack: false,
 };
+
+// Account lifecycle and identity-linking fields shared by every user shape.
+const toLifecycleFields = (row) => ({
+  status: row.status || "active",
+  isProtected: !!row.is_protected,
+  roleSource: row.role_source || "local",
+  hasLocalPassword: !!row.has_local_password,
+  needsIdentityMigration: !!row.needs_identity_migration,
+  allowIdentityAdoption: !!row.allow_identity_adoption,
+});
 
 const toUser = (row) => {
   if (!row) return null;
@@ -33,6 +43,7 @@ const toUser = (row) => {
     lidarrRootFolderPath: row.lidarr_root_folder_path || null,
     lidarrQualityProfileId:
       row.lidarr_quality_profile_id != null ? Number(row.lidarr_quality_profile_id) : null,
+    ...toLifecycleFields(row),
     ...getListenHistoryProfile(row),
   };
 };
@@ -63,15 +74,19 @@ export const userOps = {
     return toUser(row);
   },
   async getUserAuthById(id) {
-    const row = await db.get("SELECT id, username, role, permissions FROM users WHERE id = ?", [
-      parseInt(id, 10),
-    ]);
+    const row = await db.get(
+      "SELECT id, username, role, permissions, status, is_protected, role_source FROM users WHERE id = ?",
+      [parseInt(id, 10)],
+    );
     if (!row) return null;
     return {
       id: row.id,
       username: row.username,
       role: row.role || "user",
       permissions: dbHelpers.parseJSON(row.permissions) || { ...DEFAULT_PERMISSIONS },
+      status: row.status || "active",
+      isProtected: !!row.is_protected,
+      roleSource: row.role_source || "local",
     };
   },
   async getSubsonicPasswordById(id) {
@@ -107,16 +122,27 @@ export const userOps = {
       lidarrRootFolderPath: row.lidarr_root_folder_path || null,
       lidarrQualityProfileId:
         row.lidarr_quality_profile_id != null ? Number(row.lidarr_quality_profile_id) : null,
+      ...toLifecycleFields(row),
     }));
   },
-  async createUser(username, passwordHash, role = "user", permissions = null, subsonicPassword = null) {
+  // hasLocalPassword is false for accounts provisioned by an external identity
+  // (their password hash is random); isProtected marks the recovery admin.
+  async createUser(
+    username,
+    passwordHash,
+    role = "user",
+    permissions = null,
+    hasLocalPassword = true,
+    isProtected = false,
+    subsonicPassword = null,
+  ) {
     const un = String(username).trim();
     if (!un) return null;
     const perms = permissions ? { ...DEFAULT_PERMISSIONS, ...permissions } : { ...DEFAULT_PERMISSIONS };
     try {
       const row = await db.get(
-        `INSERT INTO users (username, password_hash, subsonic_password, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO users (username, password_hash, subsonic_password, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id, has_local_password, is_protected)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
           un.toLowerCase(),
           passwordHash,
@@ -125,6 +151,8 @@ export const userOps = {
           dbHelpers.stringifyJSON(perms),
           null,
           null,
+          hasLocalPassword ? 1 : 0,
+          isProtected ? 1 : 0,
         ],
       );
       return {
@@ -138,6 +166,12 @@ export const userOps = {
         lastfmUsername: null,
         lidarrRootFolderPath: null,
         lidarrQualityProfileId: null,
+        status: "active",
+        isProtected: !!isProtected,
+        roleSource: "local",
+        hasLocalPassword: !!hasLocalPassword,
+        needsIdentityMigration: false,
+        allowIdentityAdoption: false,
       };
     } catch {
       return null;
@@ -204,11 +238,24 @@ export const userOps = {
         : parsedLidarrQualityProfileId === null
           ? null
           : existing.lidarrQualityProfileId;
+    const status = data.status !== undefined ? data.status : existing.status;
+    const roleSource = data.roleSource !== undefined ? data.roleSource : existing.roleSource;
+    const hasLocalPassword =
+      data.hasLocalPassword !== undefined ? !!data.hasLocalPassword : existing.hasLocalPassword;
+    const needsIdentityMigration =
+      data.needsIdentityMigration !== undefined
+        ? !!data.needsIdentityMigration
+        : existing.needsIdentityMigration;
+    const allowIdentityAdoption =
+      data.allowIdentityAdoption !== undefined
+        ? !!data.allowIdentityAdoption
+        : existing.allowIdentityAdoption;
     try {
       await db.run(
         `UPDATE users SET username = ?, password_hash = ?, subsonic_password = ?, role = ?, permissions = ?,
            lastfm_username = ?, listen_history_provider = ?, listen_history_username = ?, listen_history_url = ?,
-           lidarr_root_folder_path = ?, lidarr_quality_profile_id = ?
+           lidarr_root_folder_path = ?, lidarr_quality_profile_id = ?, status = ?, role_source = ?,
+           has_local_password = ?, needs_identity_migration = ?, allow_identity_adoption = ?
          WHERE id = ?`,
         [
           username.toLowerCase(),
@@ -222,6 +269,11 @@ export const userOps = {
           resolvedUrl,
           lidarrRootFolderPath,
           lidarrQualityProfileId,
+          status,
+          roleSource,
+          hasLocalPassword ? 1 : 0,
+          needsIdentityMigration ? 1 : 0,
+          allowIdentityAdoption ? 1 : 0,
           parseInt(id, 10),
         ],
       );
@@ -236,9 +288,26 @@ export const userOps = {
         lastfmUsername,
         lidarrRootFolderPath,
         lidarrQualityProfileId,
+        status,
+        isProtected: existing.isProtected,
+        roleSource,
+        hasLocalPassword,
+        needsIdentityMigration,
+        allowIdentityAdoption,
       };
     } catch {
       return null;
+    }
+  },
+  async setProtected(id, isProtected) {
+    try {
+      await db.run("UPDATE users SET is_protected = ? WHERE id = ?", [
+        isProtected ? 1 : 0,
+        parseInt(id, 10),
+      ]);
+      return true;
+    } catch {
+      return false;
     }
   },
   async deleteUser(id) {

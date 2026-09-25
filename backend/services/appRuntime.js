@@ -28,6 +28,7 @@ import { HONKER_QUEUE_NAMES } from "./honkerDb.js";
 import { db, pingDatabase } from "../config/database.js";
 import { migrateDatabase } from "../db/pg/schema.js";
 import { loadSettingsCache } from "../db/helpers/settings.js";
+import { userIdentityOps } from "../db/helpers/userIdentities.js";
 import { initDiscoveryPersistence } from "./discovery/persistence.js";
 import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
 import { playlistManager } from "./weeklyFlow/weeklyFlowPlaylistManager.js";
@@ -42,6 +43,7 @@ export function initializeDataLayer({ logger = console } = {}) {
     const info = await pingDatabase();
     logger.info?.("system", `[AppRuntime] Connected to ${info?.version || "Postgres"}`);
     await migrateDatabase(db, { logger });
+    await userIdentityOps.reconcileMigrationFlags();
     await loadSettingsCache();
     await initDiscoveryPersistence();
     await downloadTracker.init();

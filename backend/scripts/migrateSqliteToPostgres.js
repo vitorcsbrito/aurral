@@ -8,7 +8,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import { db, closeDatabase, pingDatabase } from "../config/database.js";
-import { migrateDatabase } from "../db/pg/schema.js";
+import { migrateDatabase, USER_IDENTITIES_BACKFILL } from "../db/pg/schema.js";
 import { resolveAurralDataDir } from "../config/data-dir.js";
 
 const require = createRequire(import.meta.url);
@@ -19,6 +19,7 @@ const TABLE_ORDER = [
   "discovery_cache",
   "images_cache",
   "users",
+  "user_identities",
   "sessions",
   "lastfm_link_states",
   "subsonic_stars",
@@ -202,7 +203,23 @@ async function main() {
       await db.exec(`TRUNCATE ${existing.join(", ")} CASCADE`);
       console.log(`Truncated ${existing.length} table(s)`);
     }
+    // A source that predates identity linking gets the upgrade the
+    // 0006_user_identities migration gave existing Postgres rows: its sessions
+    // are not copied (the upgrade expires them), and, only into an empty target
+    // so a re-run cannot touch accounts created since, the recovery admin is
+    // protected and the accounts are flagged for SSO adoption.
+    const sourcePredatesIdentities =
+      sqliteTableExists(sqlite, "users") &&
+      !sqliteColumns(sqlite, "users").includes("needs_identity_migration");
+    const needsIdentityBackfill =
+      !args.dryRun &&
+      sourcePredatesIdentities &&
+      Number((await db.get("SELECT COUNT(*) AS count FROM users")).count) === 0;
     for (const table of TABLE_ORDER) {
+      if (table === "sessions" && sourcePredatesIdentities) {
+        console.log(`${table}: skipped (source predates identity linking; users sign in again)`);
+        continue;
+      }
       const result = await copyTable(sqlite, table, { dryRun: args.dryRun });
       if (result.skipped) {
         console.log(`${table}: skipped (${result.skipped})`);
@@ -211,6 +228,12 @@ async function main() {
       } else {
         console.log(`${table}: ${result.copied}/${result.total} row(s) inserted`);
       }
+    }
+    if (needsIdentityBackfill) {
+      await db.transaction(() => db.exec(USER_IDENTITIES_BACKFILL));
+      console.log(
+        "users: protected the recovery admin and flagged pre-identity accounts for SSO adoption",
+      );
     }
   } finally {
     sqlite.close();

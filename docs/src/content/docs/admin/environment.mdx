@@ -47,7 +47,7 @@ docker compose up -d aurral
 
 The script reads `aurral.db` from the data directory (override with `--sqlite <path>`), applies the Postgres schema, and inserts every row it finds in batches, skipping rows that already exist and resetting each id sequence past the highest copied row. Add `--dry-run` to see row counts without writing, or `--truncate` to empty the Postgres tables first and start over. Running it twice is safe.
 
-Every table present in both databases is copied, including genres and search documents. The generated `search_text` column is rebuilt by Postgres as rows arrive. The background job queue keeps its own `honker.db` file; leave it in place. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
+Every table present in both databases is copied, including genres and search documents. The generated `search_text` column is rebuilt by Postgres as rows arrive. A database from before linked sign-in identities is upgraded on the way in: its sessions are not copied, so everyone signs in again, the recovery admin is protected, and existing accounts can be approved for SSO adoption (see [Claiming existing accounts after upgrading](/admin/users/#claiming-existing-accounts-after-upgrading)). The background job queue keeps its own `honker.db` file; leave it in place. `aurral.db` is left untouched; delete it once you have confirmed the migrated install.
 
 ## Tuning
 
@@ -91,7 +91,8 @@ Defaults suit most installs. Change these only when diagnosing load or latency.
 | `OIDC_ENABLED` | Enable native OpenID Connect login. |
 | `OIDC_ISSUER` | Identity provider issuer URL used for OIDC discovery. |
 | `OIDC_CLIENT_ID` | OIDC client ID. |
-| `OIDC_CLIENT_SECRET` | OIDC client secret. |
+| `OIDC_CLIENT_SECRET` | OIDC client secret. Not required when `OIDC_TOKEN_ENDPOINT_AUTH_METHOD` is `none`. |
+| `OIDC_TOKEN_ENDPOINT_AUTH_METHOD` | How Aurral authenticates to the token endpoint: `client_secret_basic` (default), `client_secret_post`, or `none`. Must match the method registered with your IdP. |
 | `OIDC_REDIRECT_URI` | Exact callback URL registered with your IdP. Must be `https://<your-aurral-host>/sso/callback`. |
 | `OIDC_SCOPES` | Space-separated scopes. Default `openid profile email`. |
 | `OIDC_USERNAME_CLAIM` | Claim used as the Aurral username. Default `preferred_username`. Falls back to `email` when that claim is missing. |

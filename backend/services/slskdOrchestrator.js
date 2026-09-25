@@ -48,6 +48,7 @@ import {
   blockPipelineJobForReview,
   finalizePipelineJobSuccess,
 } from "./pipelineHelpers.js";
+import { deferForInactiveOwner } from "./weeklyFlow/weeklyFlowOwnerStatus.js";
 
 import { getQualityProfile } from "./qualityProfileService.js";
 import {
@@ -1167,6 +1168,8 @@ async function handleFinalize(payload) {
       : null;    if (nextPayload) return nextPayload;
     return failOrTryNextSource(payload, job, validation.reason || "Download validation failed");
   }
+  const inactiveOwner = await deferForInactiveOwner(payload, job);
+  if (inactiveOwner) return inactiveOwner;
   await writeAudioMetadata(sourcePath, resolvedTrack);
   import("./aurralHistoryService.js")
     .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))
@@ -1197,6 +1200,9 @@ export async function processPipelinePayload(payload) {
   if (!payload || !payload.phase || !payload.jobId) {
     throw new Error("Invalid pipeline payload");
   }
+  const currentJob = downloadTracker.getJob(payload.jobId);
+  const inactiveOwner = await deferForInactiveOwner(payload, currentJob);
+  if (inactiveOwner) return inactiveOwner;
   if (!isAnyDownloadSourceConfigured()) {
     const job = downloadTracker.getJob(payload.jobId);
     if (job) {

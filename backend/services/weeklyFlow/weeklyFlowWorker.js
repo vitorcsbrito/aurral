@@ -18,6 +18,7 @@ import {
 } from "../playlistPaths.js";
 import { startSlskdOrchestratorWorker } from "../slskdOrchestratorWorker.js";
 import { withHonkerLock } from "../honkerDb.js";
+import { isPlaylistOwnerActiveSync, refreshOwnerStatus } from "./weeklyFlowOwnerStatus.js";
 import {
   getDownloadSourceNotConfiguredMessage,
   isAnyDownloadSourceConfigured,
@@ -40,6 +41,7 @@ export class WeeklyFlowWorker {
     this.reuseRepairCursor = 0;
     this.processLoop = null;
     this.processTimer = null;
+    this.ownerStatusRefreshFailing = false;
     this.currentJob = null;
     this.lastDequeuedPlaylistType = null;
     this.reuseRepairInFlight = null;
@@ -104,6 +106,9 @@ export class WeeklyFlowWorker {
     }
     if (this._isPlaylistBlocked(job?.playlistType)) {
       throw this._createControlFlowError(PLAYLIST_MUTATION_CODE, "Playlist mutation in progress");
+    }
+    if (!isPlaylistOwnerActiveSync(job?.playlistId || job?.playlistType)) {
+      throw this._createControlFlowError(PLAYLIST_MUTATION_CODE, "Playlist owner is inactive");
     }
   }
 
@@ -258,7 +263,9 @@ export class WeeklyFlowWorker {
 
   _getNextReadyPendingJob(lastPlaylistType = null) {
     return downloadTracker.getNextPendingMatching(
-      (job) => !this.activeJobs.has(job.id),
+      (job) =>
+        !this.activeJobs.has(job.id) &&
+        isPlaylistOwnerActiveSync(job?.playlistId || job?.playlistType),
       lastPlaylistType,
     );
   }
@@ -653,7 +660,7 @@ export class WeeklyFlowWorker {
     startSlskdOrchestratorWorker();
     console.log("[WeeklyFlowWorker] Starting worker...");
 
-    this.processLoop = () => {
+    const dispatchReadyJobs = () => {
       if (!this.running) return;
       const { concurrency } = this.getWorkerSettings();
       while (this.activeCount < concurrency) {
@@ -717,6 +724,36 @@ export class WeeklyFlowWorker {
       }
     };
 
+    // Each tick first refreshes the owner-status mirror that the dequeue
+    // predicate and _assertJobCanContinue read synchronously: one query per
+    // tick instead of one per pending job. A failed refresh keeps the last
+    // known owner status.
+    this.processLoop = () => {
+      if (!this.running) return;
+      const tickGeneration = this.runGeneration;
+      refreshOwnerStatus()
+        .then(
+          () => {
+            this.ownerStatusRefreshFailing = false;
+          },
+          (error) => {
+            if (!this.ownerStatusRefreshFailing) {
+              console.warn(
+                `[WeeklyFlowWorker] Owner status refresh failed: ${error?.message || error}`,
+              );
+            }
+            this.ownerStatusRefreshFailing = true;
+          },
+        )
+        .then(() => {
+          if (tickGeneration !== this.runGeneration) return;
+          dispatchReadyJobs();
+        })
+        .catch((error) => {
+          console.error(`[WeeklyFlowWorker] Dispatch failed: ${error?.message || error}`);
+        });
+    };
+
     this.processLoop();
     this.scheduleReuseLinkRepair(true);
   }
@@ -773,6 +810,7 @@ export class WeeklyFlowWorker {
     try {
       let phaseStart = process.hrtime.bigint();
       const resolvedTrack = await resolveWeeklyFlowTrackContext(job);
+      this._assertJobCanContinue(job, runGeneration);
       downloadTracker.updateMetadata(job.id, resolvedTrack);
       Object.assign(job, resolvedTrack);
       const { existingFileMode } = this.getWorkerSettings();
@@ -816,6 +854,7 @@ export class WeeklyFlowWorker {
       if (!isAnyDownloadSourceConfigured()) {
         throw new Error(getDownloadSourceNotConfiguredMessage());
       }
+      this._assertJobCanContinue(job, runGeneration);
       if (!downloadTracker.enqueueDownloadPipeline(job.id)) {
         throw new Error("Failed to enqueue the download pipeline");
       }

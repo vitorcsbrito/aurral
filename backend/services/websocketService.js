@@ -17,12 +17,16 @@ const isAuthRequired = async () => {
   return (await userOps.countUsers()) > 0;
 };
 
+// How long a revocation is remembered for connections still authenticating.
+const REVOCATION_WINDOW_MS = 60 * 1000;
+
 class WebSocketService {
   constructor() {
     this.wss = null;
     this.clients = new Set();
     this.subscriptions = new Map();
     this.startTime = Date.now();
+    this.revokedUsers = new Map();
   }
 
   initialize(server) {
@@ -48,6 +52,7 @@ class WebSocketService {
   }
 
   async handleConnection(ws, req) {
+    const authStartedAt = Date.now();
     let sessionUser = null;
     let authSource = null;
     if (await isAuthRequired()) {
@@ -73,6 +78,13 @@ class WebSocketService {
       }
       if (!sessionUser) {
         ws.close(4401, "Unauthorized");
+        return;
+      }
+      // The account may have been deactivated while this connection was
+      // being authenticated, after disconnectUser() last ran.
+      const revokedAt = this.revokedUsers.get(Number(sessionUser.id));
+      if (revokedAt != null && revokedAt >= authStartedAt) {
+        ws.close(4403, "Account inactive");
         return;
       }
     }
@@ -221,6 +233,29 @@ class WebSocketService {
         client.ws.close(4401, "Unauthorized");
       } catch {}
     }
+  }
+
+  // Closes every websocket of a user whose account is no longer active.
+  disconnectUser(userId) {
+    const targetUserId = Number(userId);
+    if (!Number.isFinite(targetUserId)) return 0;
+    const now = Date.now();
+    for (const [revokedUserId, revokedAt] of this.revokedUsers) {
+      if (now - revokedAt > REVOCATION_WINDOW_MS) this.revokedUsers.delete(revokedUserId);
+    }
+    this.revokedUsers.set(targetUserId, now);
+    let disconnected = 0;
+    for (const client of [...this.clients]) {
+      if (Number(client.user?.id) !== targetUserId) continue;
+      this.clients.delete(client);
+      client.subscriptions.clear();
+      client.user = null;
+      try {
+        client.ws.close(4403, "Account inactive");
+      } catch {}
+      disconnected++;
+    }
+    return disconnected;
   }
 
   emitDiscoveryUpdate(data) {

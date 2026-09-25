@@ -194,3 +194,50 @@ test("proxy auth re-syncs role on every request instead of only at creation", as
   assert.equal(demoted.role, "user");
   assert.equal((await userOps.getUserByUsername("dave"))?.role, "user");
 });
+
+test("proxy auth resolves no user for a suspended or disabled identity", async () => {
+  await completeOnboarding();
+  const created = await resolveProxyUser(proxyRequest({ "x-forwarded-user": "gina" }));
+  assert.ok(created);
+
+  await userOps.updateUser(created.id, { status: "suspended" });
+  assert.equal(await resolveProxyUser(proxyRequest({ "x-forwarded-user": "gina" })), null);
+  assert.equal(await issueProxySession(proxyRequest({ "x-forwarded-user": "gina" })), null);
+  assert.equal(await resolveRequestUser(proxyRequest({ "x-forwarded-user": "gina" })), null);
+
+  await userOps.updateUser(created.id, { status: "disabled" });
+  assert.equal(await resolveProxyUser(proxyRequest({ "x-forwarded-user": "gina" })), null);
+});
+
+test("an existing session is invalidated once its user is suspended", async () => {
+  await completeOnboarding();
+  const issued = await issueProxySession(proxyRequest({ "x-forwarded-user": "hank" }));
+  assert.ok(issued?.token);
+  assert.equal((await getSessionByToken(issued.token))?.user?.username, "hank");
+
+  const user = await userOps.getUserByUsername("hank");
+  await userOps.updateUser(user.id, { status: "suspended" });
+
+  assert.equal(await getSessionByToken(issued.token), null);
+  await userOps.updateUser(user.id, { status: "active" });
+  assert.equal(await getSessionByToken(issued.token), null, "the rejected session is deleted");
+});
+
+test("proxy auth never overwrites a protected account's role", async () => {
+  const created = await resolveProxyUser(proxyRequest({ "x-forwarded-user": "admin" }));
+  assert.equal(created.role, "user");
+  await userOps.setProtected(created.id, true);
+
+  process.env.AUTH_PROXY_ADMIN_USERS = "admin";
+  const resolved = await resolveProxyUser(proxyRequest({ "x-forwarded-user": "admin" }));
+  assert.equal(resolved.role, "user", "protected account role must not change via proxy auth");
+  assert.equal((await userOps.getUserByUsername("admin"))?.role, "user");
+});
+
+test("proxy-provisioned users have no usable local password", async () => {
+  const created = await resolveProxyUser(proxyRequest({ "x-forwarded-user": "ivy" }));
+  const stored = await userOps.getUserById(created.id);
+  assert.equal(stored.hasLocalPassword, false);
+  assert.equal(stored.roleSource, "local");
+  assert.equal(stored.status, "active");
+});

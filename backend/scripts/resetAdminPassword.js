@@ -129,13 +129,17 @@ async function main() {
 
   let resultUser = null;
   if (existing) {
+    // A recovery reset also reactivates a suspended or disabled account.
     resultUser = await userOps.updateUser(existing.id, {
       passwordHash: hash,
       role: "admin",
+      status: "active",
+      roleSource: "local",
+      hasLocalPassword: true,
       subsonicPassword: password,
     });
   } else {
-    resultUser = await userOps.createUser(username, hash, "admin", null, password);
+    resultUser = await userOps.createUser(username, hash, "admin", null, true, true, password);
   }
 
   if (!resultUser) {

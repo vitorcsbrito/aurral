@@ -560,9 +560,16 @@ export class PlexPlaybackDestination {
     }
   }
 
-  async deleteOwnerPlaylists(ownerUserId) {
+  // `connection` overrides the stored one, e.g. the previous Plex account's
+  // token after a relink replaced it.
+  async deleteOwnerPlaylists(ownerUserId, connection = null) {
     const targetKey = this._targetKey(ownerUserId);
     const clientCache = new Map();
+    if (connection && this.client) {
+      const client = new PlexClient(this.client.url, connection.token, connection.clientId);
+      client._machineIdentifier = this.client._machineIdentifier || null;
+      clientCache.set(String(ownerUserId), client);
+    }
     for (const pointer of await plexPlaylistPointerStore.getPointersForTarget(targetKey)) {
       await this._deletePointer(pointer.entityId, ownerUserId, pointer, clientCache);
     }

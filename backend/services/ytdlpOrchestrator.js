@@ -20,6 +20,7 @@ import {
   sanitizePathPart,
   writeAudioMetadata,
 } from "./playlistDownloadUtils.js";
+import { deferForInactiveOwner } from "./weeklyFlow/weeklyFlowOwnerStatus.js";
 import {
   getPayloadCandidate,
   hasNextCandidate,
@@ -229,6 +230,8 @@ async function handleYtdlpFinalize(payload, helpers) {
     return helpers.failOrTryNextSource(payload, job, reason);
   }
 
+  const inactiveOwner = await deferForInactiveOwner(payload, job);
+  if (inactiveOwner) return inactiveOwner;
   await writeAudioMetadata(filePath, resolvedTrack);
   import("./aurralHistoryService.js")
     .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))

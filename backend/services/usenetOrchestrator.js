@@ -23,6 +23,7 @@ import {
   sanitizePathPart,
   writeAudioMetadata,
 } from "./playlistDownloadUtils.js";
+import { deferForInactiveOwner } from "./weeklyFlow/weeklyFlowOwnerStatus.js";
 import {
   getPayloadCandidate,
   hasNextCandidate,
@@ -411,6 +412,8 @@ async function handleUsenetFinalize(payload, helpers) {
   const finalDir = joinUnderRoot(playlistRoot, destination);
   const finalName = `${sanitizePathPart(job.trackName, "Unknown Track")}${ext || ".mp3"}`;
   const finalPath = path.join(finalDir, finalName);
+  const inactiveOwner = await deferForInactiveOwner(payload, job);
+  if (inactiveOwner) return inactiveOwner;
   await writeAudioMetadata(found.filePath, resolvedTrack);
   const committedFinalPath = await commitImportToPlaylistLibrary(
     found.filePath,
