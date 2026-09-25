@@ -1,4 +1,7 @@
 import crypto from "crypto";
+import { db, closeDatabase } from "../config/database.js";
+import { migrateDatabase } from "../db/pg/schema.js";
+import { loadSettingsCache } from "../db/helpers/settings.js";
 import { dbOps, userOps } from "../db/helpers/index.js";
 import { hashPassword } from "../middleware/passwordHash.js";
 
@@ -110,6 +113,10 @@ async function main() {
     process.exit(0);
   }
 
+  // The settings mirror (and the encryption key it holds) is only loaded by
+  // the server's startup, so a standalone script loads it itself.
+  await migrateDatabase(db, { logger: { info() {} } });
+  await loadSettingsCache();
   const currentSettings = dbOps.getSettings();
   const username =
     String(args.username || resolveConfiguredAdminUsername(currentSettings))
@@ -154,4 +161,10 @@ async function main() {
   console.log(`Password: ${password}`);
 }
 
-main();
+main()
+  .then(() => closeDatabase())
+  .catch(async (error) => {
+    console.error(`Admin password reset failed: ${error?.message || error}`);
+    await closeDatabase().catch(() => {});
+    process.exit(1);
+  });
