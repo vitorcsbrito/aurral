@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'lklynet' && 'aurral-personal' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
       postgres:
@@ -77,6 +77,13 @@ jobs:
           "${apt_prefix[@]}" apt-get install -y ffmpeg fontconfig fonts-dejavu-core fonts-noto-color-emoji
 
       - run: npm ci
+
+      - name: Set up bundled beets matcher runtime
+        run: |
+          matcher_venv="${RUNNER_TEMP:-/tmp}/aurral-beets-venv"
+          python3 -m venv "$matcher_venv"
+          "$matcher_venv/bin/pip" install --no-compile -r backend/matcher/requirements.txt
+          echo "AURRAL_MATCHER_PYTHON=$matcher_venv/bin/python" >> "$GITHUB_ENV"
 
       - run: npm run lint
 

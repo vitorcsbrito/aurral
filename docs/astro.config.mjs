@@ -110,6 +110,11 @@ export default defineConfig({
             { slug: "api/endpoints" },
           ],
         },
+        {
+          label: "Development",
+          collapsed: true,
+          items: [{ slug: "development/track-matching" }],
+        },
         { label: "Sponsorship", slug: "sponsorship" },
       ],
     }),

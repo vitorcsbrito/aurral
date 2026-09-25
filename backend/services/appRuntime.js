@@ -31,6 +31,7 @@ import { loadSettingsCache } from "../db/helpers/settings.js";
 import { initDiscoveryPersistence } from "./discovery/persistence.js";
 import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
 import { playlistManager } from "./weeklyFlow/weeklyFlowPlaylistManager.js";
+import { verifyMatcherRuntime } from "./trackMatching/index.js";
 
 let dataLayerReady = null;
 
@@ -255,4 +256,9 @@ export async function initializeAppRuntime({ logger = console } = {}) {
   await initializeDataLayer({ logger });
   startHonkerScheduler();
   startBackgroundWorkers({ logger });
+  // The bundled beets matcher is production-critical for downloads; a broken
+  // Python/beets installation must be obvious at startup.
+  void verifyMatcherRuntime().catch((error) => {
+    logger.warn?.("system", "[AppRuntime] Track matcher self-test crashed:", { error: error?.message || String(error) });
+  });
 }
