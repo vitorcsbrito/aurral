@@ -6,10 +6,9 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.js";
 
-const [isolatedState, { db }, honkerDb, libraryManagerModule, systemTaskWorker] =
+const [isolatedState, honkerDb, libraryManagerModule, systemTaskWorker] =
   await setupIsolatedBackend(
     "lidarr-retry",
-    "backend/config/db-sqlite.js",
     "backend/services/honkerDb.js",
     "backend/services/libraryManager.js",
     "backend/services/systemTaskWorker.js",
@@ -17,17 +16,32 @@ const [isolatedState, { db }, honkerDb, libraryManagerModule, systemTaskWorker] 
 const { lidarrClient } = await import("../../backend/services/lidarrClient.js");
 const { libraryManager } = libraryManagerModule;
 
+// Honker keeps its queue in its own SQLite file, not in Postgres.
 function getPendingRetryJobs() {
-  return db
-    .prepare(
+  return honkerDb
+    .getHonkerDb()
+    .query(
       `
         SELECT id, payload
         FROM _honker_live
         WHERE queue = 'system-task' AND state = 'pending'
       `,
+      [],
     )
-    .all()
     .filter((row) => JSON.parse(row.payload)?.kind === "lidarr-retry");
+}
+
+function setHonkerJobRunAt(jobId, runAt) {
+  const tx = honkerDb.getHonkerDb().transaction();
+  try {
+    tx.execute("UPDATE _honker_live SET run_at = ? WHERE id = ?", [runAt, jobId]);
+    tx.commit();
+  } catch (error) {
+    try {
+      tx.rollback();
+    } catch {}
+    throw error;
+  }
 }
 
 async function settleRetryEnqueues() {
@@ -63,10 +77,7 @@ test("unavailable Lidarr keeps one retry job and continues its retry chain", asy
 
   await systemTaskWorker.stopSystemTaskWorker();
   const firstRetryJob = firstRetryJobs[0];
-  db.prepare("UPDATE _honker_live SET run_at = ? WHERE id = ?").run(
-    Math.floor(Date.now() / 1000) - 1,
-    firstRetryJob.id,
-  );
+  setHonkerJobRunAt(firstRetryJob.id, Math.floor(Date.now() / 1000) - 1);
   const claimedRetry = queue.claimOne(honkerDb.getWorkerId());
   assert.equal(claimedRetry?.id, firstRetryJob.id);
 
