@@ -41,6 +41,10 @@ import { schedulePlaylistMbidEnrichment } from "../playlistMbidEnrichmentService
 import { filterBlockedArtistsForUser } from "../discovery/feedback.js";
 
 const OPERATION_TOKENS_KEY = "weeklyFlowOperationTokens";
+// One settings row per scope: concurrent operations on different flows no
+// longer read-modify-write a shared object and drop each other's token.
+const operationTokenKey = (scope) =>
+  `${OPERATION_TOKENS_KEY}:${encodeURIComponent(scope)}`;
 
 export function createWeeklyFlowOperationToken() {
   return `${Date.now()}-${randomUUID()}`;
@@ -50,19 +54,17 @@ export async function markLatestWeeklyFlowOperationToken(scope, token) {
   const safeScope = String(scope || "").trim();
   const safeToken = String(token || "").trim();
   if (!safeScope || !safeToken) return;
-  const current = dbOps.getJSONSetting(OPERATION_TOKENS_KEY) || {};
-  await dbOps.setJSONSetting(OPERATION_TOKENS_KEY, {
-    ...current,
-    [safeScope]: safeToken,
-  });
+  await dbOps.setJSONSetting(operationTokenKey(safeScope), safeToken);
 }
 
 function isLatestWeeklyFlowOperationToken(scope, token) {
   const safeScope = String(scope || "").trim();
   const safeToken = String(token || "").trim();
   if (!safeScope || !safeToken) return true;
-  const current = dbOps.getJSONSetting(OPERATION_TOKENS_KEY) || {};
-  return current[safeScope] === safeToken;
+  const current = dbOps.getJSONSetting(operationTokenKey(safeScope));
+  if (current != null) return current === safeToken;
+  const legacy = dbOps.getJSONSetting(OPERATION_TOKENS_KEY) || {};
+  return legacy[safeScope] === safeToken;
 }
 
 function normalizeTrackList(value) {
