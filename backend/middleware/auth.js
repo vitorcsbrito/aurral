@@ -225,11 +225,22 @@ function getRequestIps(req) {
   return Array.from(new Set(ips));
 }
 
+// The connecting peer. req.ip and req.ips come from X-Forwarded-For, which a
+// client that reaches Aurral directly can set to anything.
+function getPeerIps(req) {
+  return Array.from(
+    new Set(
+      [req?.socket?.remoteAddress, req?.connection?.remoteAddress]
+        .map((ip) => normalizeIp(ip))
+        .filter(Boolean),
+    ),
+  );
+}
+
 function isTrustedProxy(req) {
   const allowed = parseCsv(process.env.AUTH_PROXY_TRUSTED_IPS).map((ip) => normalizeIp(ip));
   if (allowed.length === 0) return true;
-  const requestIps = getRequestIps(req);
-  return requestIps.some((ip) => allowed.includes(ip));
+  return getPeerIps(req).some((ip) => allowed.includes(ip));
 }
 
 function buildPermissions(role, permissions) {
@@ -354,19 +365,21 @@ export async function getSoleAdminUser() {
   return user;
 }
 
+// Every address involved must be local: the peer and any forwarded client.
+// Accepting any one of them let a remote client claim a local address in
+// X-Forwarded-For, and let a local reverse proxy vouch for internet traffic.
 export function isRequestFromTrustedLocalSubnet(req) {
   const requestIps = getRequestIps(req);
-  if (requestIps.some((ip) => isLoopbackIp(ip))) {
-    return true;
-  }
+  if (requestIps.length === 0) return false;
   const subnet = inferTrustedLocalSubnet();
-  if (!subnet) return false;
-  return requestIps.some((ip) => {
-    if (!isPrivateIpv4(ip)) return false;
+  const isLocal = (ip) => {
+    if (isLoopbackIp(ip)) return true;
+    if (!subnet || !isPrivateIpv4(ip)) return false;
     const ipInt = ipv4ToInt(ip);
     if (ipInt == null) return false;
     return (ipInt & ipv4ToInt(subnet.netmask)) >>> 0 === subnet.networkInt;
-  });
+  };
+  return requestIps.every(isLocal);
 }
 
 export async function getLocalNetworkBypassStatus(req) {

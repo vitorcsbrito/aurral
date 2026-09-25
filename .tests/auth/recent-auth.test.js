@@ -190,3 +190,19 @@ test("media routes require authentication once accounts exist", async () => {
   assert.equal(await auth.verifyTokenAuth(withSession), true);
   assert.equal(withSession.user?.id, user.id);
 });
+
+test("a forwarded loopback address does not count as a local request", () => {
+  const request = (peer, forwarded) => ({
+    ip: forwarded ?? peer,
+    ips: forwarded ? [forwarded] : [],
+    headers: {},
+    socket: { remoteAddress: peer },
+    connection: { remoteAddress: peer },
+  });
+
+  // A client reaching Aurral directly claims loopback in X-Forwarded-For.
+  assert.equal(auth.isRequestFromTrustedLocalSubnet(request("203.0.113.9", "127.0.0.1")), false);
+  // A local reverse proxy forwarding an internet client.
+  assert.equal(auth.isRequestFromTrustedLocalSubnet(request("127.0.0.1", "203.0.113.9")), false);
+  assert.equal(auth.isRequestFromTrustedLocalSubnet(request("127.0.0.1")), true);
+});

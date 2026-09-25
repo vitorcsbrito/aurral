@@ -119,6 +119,21 @@ test("explicitly disabling proxy auth overrides a configured header", async () =
   assert.equal((await userOps.getAllUsers()).length, 0);
 });
 
+test("a forwarded address cannot impersonate the trusted proxy", async () => {
+  process.env.AUTH_PROXY_TRUSTED_IPS = "10.0.0.1";
+  const spoofed = {
+    ...proxyRequest({ "x-forwarded-user": "mallory" }, "203.0.113.9"),
+    ip: "10.0.0.1",
+    ips: ["10.0.0.1"],
+  };
+  assert.equal(await resolveProxyUser(spoofed), null);
+  assert.equal((await userOps.getAllUsers()).length, 0);
+  assert.equal(
+    (await resolveProxyUser(proxyRequest({ "x-forwarded-user": "alice" }, "10.0.0.1")))?.username,
+    "alice",
+  );
+});
+
 test("the proxy auth switch ignores case and surrounding spaces", () => {
   process.env.AUTH_PROXY_ENABLED = " TRUE ";
   assert.equal(isProxyAuthEnabled(), true);
