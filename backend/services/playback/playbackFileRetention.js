@@ -53,9 +53,20 @@ export function createPlaybackDeletionGuard({
 } = {}) {
   const retentionRoot = path.resolve(playlistRoot);
   let snapshot;
+  // Plex connections count by account only: token rotation and sync errors
+  // rewrite them without changing whose playlists the snapshot read.
   const configKey = () => {
     const settings = dbOps.getSettings();
-    return JSON.stringify([settings.integrations, settings.pathMappings, dbOps.getJSONSetting("plexConnections")]);
+    const plexConnections = Object.entries(dbOps.getJSONSetting("plexConnections") || {})
+      .map(([userId, connection]) => [
+        userId,
+        connection?.linkType ?? null,
+        connection?.clientId ?? null,
+        connection?.plexAccountId ?? null,
+        connection?.plexUuid ?? null,
+      ])
+      .sort(([a], [b]) => a.localeCompare(b));
+    return JSON.stringify([settings.integrations, settings.pathMappings, plexConnections]);
   };
   let checkedConfig;
   const load = async () => {
@@ -87,7 +98,10 @@ export function createPlaybackDeletionGuard({
       const result = await snapshot;
       const reason = result.error || checkedConfig !== configKey() ? "usage-unknown"
         : result.paths.has(localFileKey(file)) ? "playlist-reference" : null;
+      // An approval supersedes an earlier retention; a stale record would
+      // later make the retry treat a new file at this path as retained.
       if (reason) await recordRetention(file, reason, excludeEntityIds, retentionRoot);
+      else await forgetPlaybackRetainedFile(file);
       return reason == null;
     },
   };

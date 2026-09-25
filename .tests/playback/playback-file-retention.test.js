@@ -112,6 +112,34 @@ test("configuration changes invalidate deletion permission within a batch", asyn
   assert.equal(await guard.canDelete(file), false);
 });
 
+test("Plex token refreshes and sync errors keep the batch's snapshot; an account change does not", async () => {
+  const file = await makeFile("_flows/flow/track.flac");
+  const { plexConnectionStore } = await import("../../backend/services/plex/plexConnectionStore.js");
+  await plexConnectionStore.saveConnection(1, {
+    linkType: "self", token: "token-1", clientId: "client-1", plexAccountId: 11,
+  });
+  const guard = createPlaybackDeletionGuard({ registry: new PlaybackDestinationRegistry([]) });
+  assert.equal(await guard.canDelete(file), true);
+  await plexConnectionStore.updateToken(1, { token: "token-2" });
+  await plexConnectionStore.setLastError(1, "server unreachable");
+  assert.equal(await guard.canDelete(file), true);
+  await plexConnectionStore.saveConnection(1, {
+    linkType: "self", token: "token-3", clientId: "client-1", plexAccountId: 12,
+  });
+  assert.equal(await guard.canDelete(file), false);
+});
+
+test("an approved deletion clears the file's earlier retention record", async () => {
+  const file = await makeFile("_flows/flow/track.flac");
+  let paths = [file];
+  const registry = new PlaybackDestinationRegistry([destination("jellyfin", true, async () => ({ ok: true, paths }))]);
+  assert.equal(await createPlaybackDeletionGuard({ registry }).canDelete(file), false);
+  assert.equal(isPlaybackRetainedFile(file), true);
+  paths = [];
+  assert.equal(await createPlaybackDeletionGuard({ registry }).canDelete(file), true);
+  assert.equal(isPlaybackRetainedFile(file), false);
+});
+
 test("flow reset retains external files at the same path and clears outgoing jobs", async (t) => {
   const saved = await makeFile("_flows/flow/saved.flac");
   const unused = await makeFile("_flows/flow/unused.flac");
@@ -386,9 +414,9 @@ test("retained retries preserve exclusions and share a snapshot only within matc
 });
 
 // This fork's playlist manager follows the stored download folder as soon as it
-// changes, and the download-folder migration moves the old root's files, so a
-// reset after a folder change works on the new root. Only a folder change after
-// cleanup leaves a retained file under the old root.
+// changes, so a reset after a folder change works on the new root and leaves
+// files under the old root untouched. Only a folder change after cleanup leaves
+// a retained file under the old root.
 test("retained files use their recorded root when settings change after cleanup", async (t) => {
   const file = await makeFile("_flows/old-root/saved.flac");
   const newRoot = path.join(state.baseDir, "new-downloads");
