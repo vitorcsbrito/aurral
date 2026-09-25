@@ -331,15 +331,21 @@ async function handleDeemixFinalize(payload, helpers) {
   const finalDir = joinUnderRoot(playlistRoot, destination);
   const finalName = `${sanitizePathPart(job.trackName, "Unknown Track")}${ext || ".flac"}`;
   const finalPath = path.join(finalDir, finalName);
+  // A quality upgrade must keep its new download instead of reusing the file
+  // it replaces. A reused file keeps its own quality, which this download's
+  // validation does not describe.
+  const reuseExisting = !payload.upgradeForJobId;
+  const reused =
+    reuseExisting && (await fs.stat(finalPath).then((stat) => stat.isFile(), () => false));
   const committedFinalPath = await commitImportToPlaylistLibrary(filePath, finalPath, {
-    reuseExisting: true,
+    reuseExisting,
   });
   return finalizePipelineJobSuccess({
     downloadTracker,
     job,
     committedFinalPath,
     album: candidate?.resolvedAlbumName || job.albumName,
-    quality: validation.quality,
+    quality: reused ? null : validation.quality,
   });
 }
 
