@@ -202,6 +202,14 @@ const {
     return claimScheduledLibraryScanJob(job.id);
   },
   processJob: async (payload, job) => {
+    // Files kept because a playback playlist used them are retried before each
+    // scan; a retention problem must never fail the scan itself.
+    try {
+      const { retryPlaybackRetainedFiles } = await import("./playback/playbackFileRetention.js");
+      await retryPlaybackRetainedFiles();
+    } catch (error) {
+      logger.warn("library", "Retrying retained playback files failed", { reason: error?.message });
+    }
     const { runLibraryScanInWorker } = await import("./libraryScanRunner.js");
     const registry = getScanRegistry();
     const owned = Number(registry.jobId) === Number(job.id);

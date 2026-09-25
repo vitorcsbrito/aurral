@@ -15,6 +15,11 @@ const normalizePointer = (raw) => {
 };
 
 export const jellyfinPlaylistPointerStore = {
+  async getPointersForEntity(entityId) {
+    const pointers = await store.read();
+    return Object.values(pointers[entityId] || {}).map(normalizePointer).filter(Boolean);
+  },
+
   async getPointer(entityId, targetKey) {
     const pointers = await store.read();
     return normalizePointer(pointers[entityId]?.[targetKey] || null);

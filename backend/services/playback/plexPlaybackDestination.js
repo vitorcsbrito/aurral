@@ -7,6 +7,7 @@ import { logger } from "../logger.js";
 import { PlexClient } from "../plex.js";
 import { plexConnectionStore } from "../plex/plexConnectionStore.js";
 import { plexPlaylistPointerStore } from "../plex/plexPlaylistPointerStore.js";
+import { isPlaybackRetainedFile } from "./playbackFileRetention.js";
 import { getPathMappings, resolveLocalPath } from "../pathMappings.js";
 import {
   AURRAL_FLOWS_DIR,
@@ -97,6 +98,40 @@ export class PlexPlaybackDestination {
 
   isConfigured() {
     return Boolean(this.client?.isConfigured());
+  }
+
+  // Every file referenced by an audio playlist the server owner or a linked
+  // Aurral user can see, except the playlists published for excludeEntityIds.
+  // Any account whose playlists cannot be read makes the whole answer unknown.
+  async getReferencedPaths({ excludeEntityIds = [] } = {}) {
+    const excluded = new Set();
+    for (const entityId of excludeEntityIds) {
+      for (const pointer of await plexPlaylistPointerStore.getPointersForEntity(entityId)) {
+        if (pointer.ratingKey != null) excluded.add(String(pointer.ratingKey));
+      }
+    }
+    const cache = new Map();
+    const owners = [null, ...(await userOps.getAllUsers()).map((user) => user.id)];
+    const readTokens = new Set();
+    const mappings = getPathMappings("plex");
+    const paths = new Set();
+    for (const ownerUserId of owners) {
+      const client = await this._ownerClient(ownerUserId, cache);
+      if (!client || readTokens.has(client.token)) continue;
+      readTokens.add(client.token);
+      const files = await this._withOwnerClient(ownerUserId, cache, (ownerClient) =>
+        ownerClient.getPlaylistTrackPaths(excluded));
+      if (files === SYNC_SKIPPED) {
+        throw new Error(`Plex playlists for user ${ownerUserId} could not be read; the Plex link needs reconnecting`);
+      }
+      for (const file of files) {
+        const relative = this._relativeManagedPath(file);
+        paths.add(relative == null
+          ? path.resolve(resolveLocalPath(file, mappings))
+          : path.resolve(this.weeklyFlowRoot, relative));
+      }
+    }
+    return { ok: true, paths: [...paths] };
   }
 
   _libraryPath() {
@@ -347,6 +382,7 @@ export class PlexPlaybackDestination {
     const entityRoot = path.join(this.weeklyFlowRoot, AURRAL_FLOWS_DIR, snapshot.entityId);
     for (const [localPath, group] of managedByPath) {
       if (!isPathInsideRoot(localPath, entityRoot)) continue;
+      if (isPlaybackRetainedFile(localPath)) continue;
       try {
         await fs.access(localPath);
       } catch {

@@ -4,6 +4,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { userOps } from "../../db/helpers/index.js";
 import { NavidromeClient } from "../navidrome.js";
 import { logger } from "../logger.js";
+import { getPathMappings, resolveLocalPath } from "../pathMappings.js";
 import { navidromePlaylistPointerStore } from "../navidrome/navidromePlaylistPointerStore.js";
 import {
   AURRAL_FLOWS_DIR,
@@ -96,6 +97,17 @@ export class NavidromePlaybackDestination {
 
   isConfigured() {
     return Boolean(this.client?.isConfigured());
+  }
+
+  async getReferencedPaths({ excludeEntityIds = [] } = {}) {
+    const excluded = new Set();
+    for (const entityId of excludeEntityIds) {
+      for (const pointer of await navidromePlaylistPointerStore.getPointersForEntity(entityId)) {
+        if (pointer.playlistId != null) excluded.add(String(pointer.playlistId));
+      }
+    }
+    const paths = await this.client.getPlaylistTrackPaths(excluded);
+    return { ok: true, paths: paths.map((file) => resolveLocalPath(file, getPathMappings("navidrome"))) };
   }
 
   _sanitize(value) {

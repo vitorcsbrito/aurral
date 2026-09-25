@@ -78,11 +78,12 @@ const filterBlockedPlaylistTracks = (ownerUserId, tracks) => {
   return filterBlockedArtistsForUser(String(ownerUserId), tracks);
 };
 
-const removePlaylistLocalTrackFile = async (job, playlistId) => {
+const removePlaylistLocalTrackFile = async (job, playlistId, { protectPlayback = true } = {}) => {
   if (!job || typeof job.finalPath !== "string") return;
   await removePlaylistFileIfUnshared(job.finalPath, playlistId, {
     weeklyFlowRoot: weeklyFlowWorker.weeklyFlowRoot,
     excludeJobIds: job.id ? [job.id] : [],
+    protectPlayback,
   });
 };
 
@@ -332,7 +333,7 @@ async function deleteFlow({ flowId, tokenScope = null, token = null } = {}) {
     weeklyFlowWorker.clearPlaylistRunState(safeFlowId);
     playlistManager.updateConfig(false);
     await playlistManager.deletePlaybackPlaylist(flow);
-    await playlistManager.weeklyReset([safeFlowId]);
+    await playlistManager.weeklyReset([safeFlowId], { protectPlayback: false });
     downloadTracker.clearByPlaylistType(safeFlowId);
     await playlistManager.cleanupEntityPlexPlaylists(safeFlowId);
     didDelete = await flowPlaylistConfig.deleteFlow(safeFlowId);
@@ -348,7 +349,7 @@ async function resetPlaylists({ playlistTypes = [] } = {}) {
     .filter(Boolean);
   await withPlaylistMutation(types, async () => {
     playlistManager.updateConfig(false);
-    await playlistManager.weeklyReset(types);
+    await playlistManager.weeklyReset(types, { protectPlayback: false });
   });
   await restartWorkerIfPending();
   return { success: true, playlistTypes: types };
@@ -507,6 +508,13 @@ export async function updateSharedPlaylist({
       const existingJobs = downloadTracker.getByPlaylistType(safePlaylistId);
       const reusableJobsByIdentity = new Map();
       const reusableJobsByImportIdentity = new Map();
+      const { createPlaybackDeletionGuard } = await import("../playback/playbackFileRetention.js");
+      const protectPlayback = !(deleteUnsharedFiles && !mergeImportSource);
+      const deletionGuard = protectPlayback
+        ? createPlaybackDeletionGuard({
+          excludeEntityIds: [safePlaylistId], playlistRoot: weeklyFlowWorker.weeklyFlowRoot,
+        })
+        : { canDelete: async () => true };
       for (const job of existingJobs) {
         const identity = buildSharedTrackIdentity(job);
         const current = reusableJobsByIdentity.get(identity) || [];
@@ -560,6 +568,8 @@ export async function updateSharedPlaylist({
             excludeJobIds: [job.id, ...matchedJobIds],
             deleteIfUnshared: shouldDeleteUnsharedFiles,
             shouldDelete: shouldDeleteCurrentFiles,
+            deletionGuard,
+            protectPlayback,
           });
         }
         downloadTracker.removeJob(job.id);
@@ -621,7 +631,7 @@ async function deleteSharedPlaylistTrack({ playlistId, jobId } = {}) {
         return;
       }
       if (job.status === "done" && typeof job.finalPath === "string") {
-        await removePlaylistLocalTrackFile(job, safePlaylistId);
+        await removePlaylistLocalTrackFile(job, safePlaylistId, { protectPlayback: false });
       }
       downloadTracker.removeJob(safeJobId);
     },
@@ -713,7 +723,7 @@ async function deleteSharedPlaylist({ playlistId } = {}) {
     weeklyFlowWorker.setRetryCyclePaused(safePlaylistId, false);
     playlistManager.updateConfig(false);
     await playlistManager.deletePlaybackPlaylist(exists);
-    await playlistManager.weeklyReset([safePlaylistId]);
+    await playlistManager.weeklyReset([safePlaylistId], { protectPlayback: false });
     downloadTracker.clearByPlaylistType(safePlaylistId);
     await playlistManager.cleanupEntityPlexPlaylists(safePlaylistId);
     deleted = await flowPlaylistConfig.deleteSharedPlaylist(safePlaylistId);

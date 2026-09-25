@@ -1,7 +1,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { JellyfinClient } from "../jellyfin.js";
 import { jellyfinPlaylistPointerStore } from "../jellyfin/jellyfinPlaylistPointerStore.js";
-import { getPathMappings, resolveRemotePath } from "../pathMappings.js";
+import { getPathMappings, resolveRemotePath, resolveLocalPath } from "../pathMappings.js";
 import { resolvePlaylistRoot } from "../playlistPaths.js";
 import {
   createPlaybackPlaylistIdentity,
@@ -76,6 +76,18 @@ export class JellyfinPlaybackDestination {
 
   isConfigured() {
     return Boolean(this.client?.isConfigured());
+  }
+
+  async getReferencedPaths({ excludeEntityIds = [] } = {}) {
+    const excluded = new Set();
+    for (const entityId of excludeEntityIds) {
+      for (const pointer of await jellyfinPlaylistPointerStore.getPointersForEntity(entityId)) {
+        if (pointer.serverUrl && pointer.serverUrl !== this.client.url) continue;
+        if (pointer.playlistId != null) excluded.add(String(pointer.playlistId));
+      }
+    }
+    const paths = await this.client.getPlaylistTrackPaths(excluded);
+    return { ok: true, paths: paths.map((file) => resolveLocalPath(file, getPathMappings("jellyfin"))) };
   }
 
   _targetKey() {
