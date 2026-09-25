@@ -71,27 +71,28 @@ export const scrobbleConnectionStore = {
     if (!PROVIDERS.has(provider)) throw new Error("Unsupported scrobble provider");
     const safeToken = String(token || "").trim();
     if (!safeToken) throw new Error("Scrobble token is required");
-    const connections = await store.read();
-    const key = userKey(userId);
-    connections[key] = connections[key] || {};
-    connections[key][provider] = {
-      token: encryptToken(safeToken),
-      connectionRevision: crypto.randomUUID(),
-      displayName: String(displayName || "").trim() || null,
-      baseUrl: String(baseUrl || "").trim() || null,
-      connectedAt: Date.now(),
-    };
-    await store.write(connections);
+    const encryptedToken = encryptToken(safeToken);
+    await store.update((connections) => {
+      const key = userKey(userId);
+      connections[key] = connections[key] || {};
+      connections[key][provider] = {
+        token: encryptedToken,
+        connectionRevision: crypto.randomUUID(),
+        displayName: String(displayName || "").trim() || null,
+        baseUrl: String(baseUrl || "").trim() || null,
+        connectedAt: Date.now(),
+      };
+    });
     return this.getConnection(userId, provider);
   },
 
   async deleteConnection(userId, provider) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    if (!connections[key]?.[provider]) return false;
-    delete connections[key][provider];
-    if (Object.keys(connections[key]).length === 0) delete connections[key];
-    await store.write(connections);
-    return true;
+    return store.update((connections) => {
+      const key = userKey(userId);
+      if (!connections[key]?.[provider]) return false;
+      delete connections[key][provider];
+      if (Object.keys(connections[key]).length === 0) delete connections[key];
+      return true;
+    });
   },
 };

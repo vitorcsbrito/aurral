@@ -16,6 +16,19 @@ const decryptToken = (value) => {
   return decryptWithKey(value, key);
 };
 
+const toStoredConnection = ({ accessToken, refreshToken, expiresAt, displayName }) => {
+  const now = Date.now();
+  const parsedExpiresAt = Number(expiresAt);
+  return {
+    accessToken: encryptToken(accessToken),
+    refreshToken: encryptToken(refreshToken),
+    expiresAt:
+      Number.isFinite(parsedExpiresAt) && parsedExpiresAt > 0 ? parsedExpiresAt : now + 3600 * 1000,
+    displayName: String(displayName || "").trim() || null,
+    connectedAt: now,
+  };
+};
+
 const normalizeConnection = (raw) => {
   if (!raw || typeof raw !== "object") return null;
   const accessToken = decryptToken(raw.accessToken);
@@ -58,56 +71,57 @@ export const spotifyConnectionStore = {
     if (!safeAccessToken || !safeRefreshToken) {
       throw new Error("Spotify tokens are required");
     }
-    const connections = await store.read();
-    const now = Date.now();
-    const parsedExpiresAt = Number(expiresAt);
-    connections[userKey(userId)] = {
-      accessToken: encryptToken(safeAccessToken),
-      refreshToken: encryptToken(safeRefreshToken),
-      expiresAt:
-        Number.isFinite(parsedExpiresAt) && parsedExpiresAt > 0
-          ? parsedExpiresAt
-          : now + 3600 * 1000,
-      displayName: String(displayName || "").trim() || null,
-      connectedAt: now,
-    };
-    await store.write(connections);
+    await store.update((connections) => {
+      connections[userKey(userId)] = toStoredConnection({
+        accessToken: safeAccessToken,
+        refreshToken: safeRefreshToken,
+        expiresAt,
+        displayName,
+      });
+    });
     return this.getConnection(userId);
   },
 
+  // Reads and replaces the tokens in one update, so a refresh cannot bring
+  // back a connection that was cleared meanwhile.
   async updateTokens(userId, { accessToken, refreshToken, expiresAt } = {}) {
-    const current = await this.getConnection(userId);
-    if (!current) return null;
-    return this.saveConnection(userId, {
-      accessToken: accessToken || current.accessToken,
-      refreshToken: refreshToken || current.refreshToken,
-      expiresAt: expiresAt ?? current.expiresAt,
-      displayName: current.displayName,
+    const updated = await store.update((connections) => {
+      const key = userKey(userId);
+      const current = normalizeConnection(connections[key] || null);
+      if (!current) return false;
+      connections[key] = toStoredConnection({
+        accessToken: accessToken || current.accessToken,
+        refreshToken: refreshToken || current.refreshToken,
+        expiresAt: expiresAt ?? current.expiresAt,
+        displayName: current.displayName,
+      });
+      return true;
     });
+    return updated ? this.getConnection(userId) : null;
   },
 
   async clearConnection(userId) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    if (!connections[key]) return false;
-    delete connections[key];
-    await store.write(connections);
-    return true;
+    return store.update((connections) => {
+      const key = userKey(userId);
+      if (!connections[key]) return false;
+      delete connections[key];
+      return true;
+    });
   },
 
   async clearConnectionIfMatches(userId, expected = {}) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    const current = normalizeConnection(connections[key] || null);
-    if (
-      !current ||
-      current.accessToken !== expected.accessToken ||
-      current.refreshToken !== expected.refreshToken
-    ) {
-      return false;
-    }
-    delete connections[key];
-    await store.write(connections);
-    return true;
+    return store.update((connections) => {
+      const key = userKey(userId);
+      const current = normalizeConnection(connections[key] || null);
+      if (
+        !current ||
+        current.accessToken !== expected.accessToken ||
+        current.refreshToken !== expected.refreshToken
+      ) {
+        return false;
+      }
+      delete connections[key];
+      return true;
+    });
   },
 };
