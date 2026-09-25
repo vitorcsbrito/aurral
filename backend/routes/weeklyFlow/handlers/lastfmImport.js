@@ -1,3 +1,4 @@
+import { requireUserAccount } from "../../../middleware/requirePermission.js";
 import {
   enqueueImportedPlaylist,
   fetchImportedPlaylistTracks,
@@ -13,7 +14,7 @@ const getPlaylistImport = (body) => ({
 });
 
 export function registerLastfmImport(router) {
-  router.get("/import/lastfm/playlists", async (req, res) => {
+  router.get("/import/lastfm/playlists", requireUserAccount, async (req, res) => {
     try {
       const requestedUsername = Array.isArray(req.query?.username)
         ? req.query.username[0]
@@ -27,7 +28,7 @@ export function registerLastfmImport(router) {
     }
   });
 
-  router.post("/import/lastfm/preview", async (req, res) => {
+  router.post("/import/lastfm/preview", requireUserAccount, async (req, res) => {
     try {
       const playlistImport = getPlaylistImport(req.body);
       const { tracks, stats } = await fetchImportedPlaylistTracks({
@@ -47,7 +48,7 @@ export function registerLastfmImport(router) {
     }
   });
 
-  router.post("/import/lastfm", async (req, res) => {
+  router.post("/import/lastfm", requireUserAccount, async (req, res) => {
     try {
       const playlistImport = getPlaylistImport(req.body);
       const name = String(req.body?.name || "").trim();

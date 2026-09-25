@@ -5,6 +5,7 @@ import {
   spotifyClient,
 } from "../../../services/spotify/spotifyClient.js";
 import { logger } from "../../../services/logger.js";
+import { requireUserAccount } from "../../../middleware/requirePermission.js";
 import {
   enqueueImportedPlaylist,
   fetchImportedPlaylistTracks,
@@ -39,11 +40,11 @@ function sendSpotifyError(res, error, fallback) {
 }
 
 export function registerSpotifyImport(router) {
-  router.get("/import/spotify/status", async (req, res) => {
+  router.get("/import/spotify/status", requireUserAccount, async (req, res) => {
     res.json(await spotifyConnectionStore.getPublicStatus(req.user.id));
   });
 
-  router.post("/import/spotify/oauth/start", (req, res) => {
+  router.post("/import/spotify/oauth/start", requireUserAccount, (req, res) => {
     const callbackUrl = String(req.body?.callbackUrl || "").trim();
     if (!callbackUrl) {
       return res.status(400).json({ error: "callbackUrl is required" });
@@ -51,7 +52,7 @@ export function registerSpotifyImport(router) {
     res.json({ oauthUrl: buildSpotifyOAuthUrl(callbackUrl) });
   });
 
-  router.post("/import/spotify/oauth/complete", async (req, res) => {
+  router.post("/import/spotify/oauth/complete", requireUserAccount, async (req, res) => {
     try {
       const accessToken = String(req.body?.accessToken || "").trim();
       const refreshToken = String(req.body?.refreshToken || "").trim();
@@ -97,13 +98,13 @@ export function registerSpotifyImport(router) {
     }
   });
 
-  router.delete("/import/spotify", async (req, res) => {
+  router.delete("/import/spotify", requireUserAccount, async (req, res) => {
     await spotifyConnectionStore.clearConnection(req.user.id);
     spotifyClient.clearPlaylistTrackCache(req.user.id);
     res.json({ connected: false });
   });
 
-  router.get("/import/spotify/playlists", async (req, res) => {
+  router.get("/import/spotify/playlists", requireUserAccount, async (req, res) => {
     try {
       const payload = await spotifyClient.listPlaylists(req.user.id);
       res.json(payload);
@@ -112,7 +113,7 @@ export function registerSpotifyImport(router) {
     }
   });
 
-  router.post("/import/spotify/preview", async (req, res) => {
+  router.post("/import/spotify/preview", requireUserAccount, async (req, res) => {
     try {
       const playlistId = String(req.body?.playlistId || "").trim();
       if (!playlistId) {
@@ -135,7 +136,7 @@ export function registerSpotifyImport(router) {
     }
   });
 
-  router.post("/import/spotify", async (req, res) => {
+  router.post("/import/spotify", requireUserAccount, async (req, res) => {
     try {
       const playlistId = String(req.body?.playlistId || "").trim();
       const name = String(req.body?.name || "").trim();

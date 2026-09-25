@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { requireUserAccount } from "../../../middleware/requirePermission.js";
 import { downloadTracker } from "../../../services/weeklyFlow/weeklyFlowDownloadTracker.js";
 import { weeklyFlowWorker } from "../../../services/weeklyFlow/weeklyFlowWorker.js";
 import {
@@ -60,7 +61,7 @@ async function createOrImportSharedPlaylist(req, res, { requireTracks, label }) 
 }
 
 export function registerSharedPlaylists(router) {
-  router.post("/shared-playlists", async (req, res) => {
+  router.post("/shared-playlists", requireUserAccount, async (req, res) => {
     try {
       return await createOrImportSharedPlaylist(req, res, {
         requireTracks: false,
@@ -80,7 +81,7 @@ export function registerSharedPlaylists(router) {
     }
   });
 
-  router.post("/shared-playlists/import", async (req, res) => {
+  router.post("/shared-playlists/import", requireUserAccount, async (req, res) => {
     try {
       return await createOrImportSharedPlaylist(req, res, {
         requireTracks: true,

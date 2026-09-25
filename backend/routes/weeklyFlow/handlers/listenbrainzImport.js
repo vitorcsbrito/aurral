@@ -1,3 +1,4 @@
+import { requireUserAccount } from "../../../middleware/requirePermission.js";
 import {
   enqueueImportedPlaylist,
   fetchImportedPlaylistTracks,
@@ -17,7 +18,7 @@ const getPlaylistImport = (body) => {
 };
 
 export function registerListenBrainzImport(router) {
-  router.get("/import/listenbrainz/playlists", async (req, res) => {
+  router.get("/import/listenbrainz/playlists", requireUserAccount, async (req, res) => {
     try {
       res.json(await listenbrainzPlaylistClient.listPlaylists(req.user.id));
     } catch (error) {
@@ -28,7 +29,7 @@ export function registerListenBrainzImport(router) {
     }
   });
 
-  router.post("/import/listenbrainz/preview", async (req, res) => {
+  router.post("/import/listenbrainz/preview", requireUserAccount, async (req, res) => {
     try {
       const playlistImport = getPlaylistImport(req.body);
       if (!playlistImport.externalId) {
@@ -51,7 +52,7 @@ export function registerListenBrainzImport(router) {
     }
   });
 
-  router.post("/import/listenbrainz", async (req, res) => {
+  router.post("/import/listenbrainz", requireUserAccount, async (req, res) => {
     try {
       const playlistImport = getPlaylistImport(req.body);
       const name = String(req.body?.name || "").trim();
