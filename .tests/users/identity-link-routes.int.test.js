@@ -440,3 +440,58 @@ test("the bootstrap payload advertises SSO-only mode and the secondary login pro
   assert.equal(payload.plexLoginEnabled, false);
   assert.equal(payload.ssoOnly, false);
 });
+
+test("only administrators can read or rotate the instance API key", async () => {
+  const member = await userOps.createUser("key-member", bcrypt.hashSync("password123", 4), "user");
+  const admin = await userOps.createUser("key-admin", bcrypt.hashSync("password123", 4), "admin");
+  const memberToken = await sessionFor(member);
+  const adminToken = await sessionFor(admin);
+
+  assert.equal((await apiFetch(memberToken, "/api/auth/api-key")).response.status, 403);
+  assert.equal(
+    (await apiFetch(memberToken, "/api/auth/api-key/rotate", { method: "POST" })).response.status,
+    403,
+  );
+  const allowed = await apiFetch(adminToken, "/api/auth/api-key");
+  assert.equal(allowed.response.status, 200);
+  assert.ok(allowed.payload.apiKey);
+});
+
+test("an admin password reset ends the account's sessions", async () => {
+  const admin = await userOps.createUser("reset-admin", bcrypt.hashSync("password123", 4), "admin");
+  const target = await userOps.createUser("reset-target", bcrypt.hashSync("password123", 4), "user");
+  const adminToken = await sessionFor(admin);
+  const targetToken = await sessionFor(target);
+  assert.equal((await apiFetch(targetToken, "/api/auth/me")).response.status, 200);
+
+  const reset = await apiFetch(adminToken, `/api/users/${target.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ password: "brand-new-password" }),
+  });
+  assert.equal(reset.response.status, 200, JSON.stringify(reset.payload));
+  assert.equal((await apiFetch(targetToken, "/api/auth/me")).response.status, 401);
+  assert.equal((await apiFetch(adminToken, "/api/auth/me")).response.status, 200);
+});
+
+test("the protected recovery account cannot be demoted or deleted", async () => {
+  const admin = await userOps.createUser("guard-admin", bcrypt.hashSync("password123", 4), "admin");
+  const recovery = await userOps.createUser(
+    "guard-recovery",
+    bcrypt.hashSync("password123", 4),
+    "admin",
+    null,
+    true,
+    true,
+  );
+  const adminToken = await sessionFor(admin);
+
+  const demote = await apiFetch(adminToken, `/api/users/${recovery.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role: "user" }),
+  });
+  assert.equal(demote.response.status, 400);
+  const remove = await apiFetch(adminToken, `/api/users/${recovery.id}`, { method: "DELETE" });
+  assert.equal(remove.response.status, 400);
+  const stored = await userOps.getUserById(recovery.id);
+  assert.equal(stored?.role, "admin");
+});

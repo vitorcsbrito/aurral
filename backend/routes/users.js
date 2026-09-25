@@ -363,6 +363,11 @@ router.patch("/:id", requireAuth, async (req, res) => {
     }
     if (permissions !== undefined) updates.permissions = permissions;
     if (role !== undefined) {
+      if (existing.isProtected && role !== "admin") {
+        return res.status(400).json({
+          error: "The protected recovery account must stay an administrator",
+        });
+      }
       updates.role = role;
       updates.roleSource = "local";
     }
@@ -413,6 +418,13 @@ router.patch("/:id", requireAuth, async (req, res) => {
     }
     if (updates.status !== undefined && updates.status !== existing.status) {
       await applyStatusChange(id, updates.status);
+    }
+    // A password reset ends every existing session of that account, so a
+    // reset after a compromise also locks out whoever held the old one.
+    if (updates.passwordHash) {
+      await deleteSessionsByUserId(id);
+      websocketService.disconnectUser(id);
+      revokeStreamTokensForUser(id);
     }
     await reconcileLocalBypassAfterUserMutation();
     res.json(updated);
@@ -651,6 +663,9 @@ router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
     const existing = await userOps.getUserById(id);
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
+    }
+    if (existing.isProtected) {
+      return res.status(400).json({ error: "The protected recovery account cannot be deleted" });
     }
     await deleteSessionsByUserId(id);
     await userOps.deleteUser(id);

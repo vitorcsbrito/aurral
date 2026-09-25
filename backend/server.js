@@ -187,6 +187,9 @@ const authLimiter = rateLimit({
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/oidc/login", authLimiter);
 app.use("/api/auth/oidc/exchange", authLimiter);
+app.use("/api/auth/google/login", authLimiter);
+app.use("/api/auth/google/exchange", authLimiter);
+app.use("/api/auth/plex/login/pin", authLimiter);
 app.use("/api/users/me/password", authLimiter);
 // /api/auth/reauth checks a password, so it gets its own login-sized budget.
 app.use(
