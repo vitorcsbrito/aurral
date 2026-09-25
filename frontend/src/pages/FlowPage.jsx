@@ -1634,7 +1634,7 @@ function FlowPage({ mode = "all" }) {
             <span className="flow-page__menu-sync-label">Record listening history</span>
             <PillToggle
               checked={selectedFlow.recordHistory !== false}
-              onChange={(event) => handleUpdateRecordHistory(selectedFlow, event.target.checked)}
+              onChange={(event) => handleUpdateRecordHistory(selectedEntry, event.target.checked)}
               disabled={updatingRecordHistoryId === selectedFlow.id}
               aria-label={`Record listening history ${selectedFlow.recordHistory !== false ? "on" : "off"}`}
             />
