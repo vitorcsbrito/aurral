@@ -5,6 +5,7 @@ import {
 import { spotifyConnectionStore } from "./spotifyConnectionStore.js";
 import createCache from "../apiClients/simpleCache.js";
 import { runSharedInflight } from "../sharedInflight.js";
+import { logger } from "../logger.js";
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 export const SPOTIFY_AUTH_REQUIRED_CODE = "SPOTIFY_AUTH_REQUIRED";
@@ -30,6 +31,19 @@ const createAuthRequiredError = (message) => {
   const error = new Error(message);
   error.code = SPOTIFY_AUTH_REQUIRED_CODE;
   error.statusCode = 401;
+  return error;
+};
+
+const createIncompletePlaylistError = (playlistId, reportedTotal, fetchedCount) => {
+  const message = reportedTotal == null
+    ? "Spotify did not report a playlist item total"
+    : `Spotify returned ${fetchedCount} of ${reportedTotal} playlist items`;
+  const error = new Error(message);
+  error.code = "SPOTIFY_INCOMPLETE_PLAYLIST";
+  error.statusCode = 502;
+  error.playlistId = playlistId;
+  error.reportedTotal = reportedTotal;
+  error.fetchedCount = fetchedCount;
   return error;
 };
 
@@ -149,7 +163,7 @@ async function spotifyRequest(userId, path, { searchParams, url: absoluteUrl } =
   return response.json();
 }
 
-async function fetchAllPages(userId, path, { searchParams, itemsKey = "items" } = {}) {
+async function fetchAllPages(userId, path, { searchParams, itemsKey = "items", onPage } = {}) {
   const items = [];
   let nextUrl = null;
   while (true) {
@@ -157,6 +171,13 @@ async function fetchAllPages(userId, path, { searchParams, itemsKey = "items" } 
       ? await spotifyRequest(userId, null, { url: nextUrl })
       : await spotifyRequest(userId, path, { searchParams });
     const pageItems = Array.isArray(payload?.[itemsKey]) ? payload[itemsKey] : [];
+    onPage?.({
+      offset: payload?.offset != null && Number.isFinite(Number(payload.offset))
+        ? Number(payload.offset) : null,
+      total: payload?.total != null && Number.isFinite(Number(payload.total))
+        ? Number(payload.total) : null,
+      itemCount: pageItems.length,
+    });
     items.push(...pageItems);
     nextUrl = payload?.next || null;
     if (!nextUrl) break;
@@ -180,7 +201,7 @@ export const spotifyClient = {
         .map((playlist) => ({
           id: String(playlist?.id || "").trim(),
           name: String(playlist?.name || "").trim(),
-          trackCount: Number(playlist?.tracks?.total || 0),
+          trackCount: Number(playlist?.items?.total ?? playlist?.tracks?.total ?? 0),
         }))
         .filter((playlist) => playlist.id && playlist.name)
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -198,20 +219,41 @@ export const spotifyClient = {
       if (inflight) return inflight;
     }
 
+    const pages = [];
     const request = fetchAllPages(
       userId,
-      `/playlists/${encodeURIComponent(playlistId)}/tracks`,
+      `/playlists/${encodeURIComponent(playlistId)}/items`,
       {
         searchParams: {
-          limit: 100,
+          limit: 50,
+          additional_types: "episode",
           fields:
-            "items(track(name,artists(name),album(name))),next",
+            "items(item(type,name,artists(name),album(name))),next,total,offset",
         },
+        onPage: (page) => pages.push(page),
       },
     ).then((items) => {
       if (getPlaylistTrackGeneration(userId) !== generation) {
         throw createAuthRequiredError("Spotify connection expired");
       }
+      const reportedTotal = pages[0]?.total ?? null;
+      const pageTotalsDiffer = pages.some((page) => page.total !== reportedTotal);
+      if (reportedTotal == null || pageTotalsDiffer || reportedTotal !== items.length) {
+        logger.warn("playlist-import", "Spotify playlist response incomplete", {
+          playlistId,
+          spotifyReportedTotal: reportedTotal,
+          fetchedEntryCount: items.length,
+          pageCount: pages.length,
+          pages,
+        });
+        throw createIncompletePlaylistError(playlistId, reportedTotal, items.length);
+      }
+      logger.info("playlist-import", "Spotify playlist fetch completed", {
+        playlistId,
+        spotifyReportedTotal: reportedTotal,
+        fetchedEntryCount: items.length,
+        pageCount: pages.length,
+      });
       playlistTrackCache.set(cacheKey, items);
       return items;
     });
