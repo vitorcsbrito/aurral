@@ -1,4 +1,6 @@
 import { db, dbHelpers } from "../../config/database.js";
+import { decryptWithKey, encryptWithKey } from "../../config/encryption.js";
+import { getSettingsEncryptionKey } from "./settings.js";
 import {
   DEFAULT_LISTEN_HISTORY_PROVIDER,
   getListenHistoryProfile,
@@ -35,6 +37,17 @@ const toUser = (row) => {
   };
 };
 
+function encryptSubsonicPassword(password) {
+  const value = password == null ? "" : String(password);
+  return value ? encryptWithKey(value, getSettingsEncryptionKey()) : null;
+}
+
+function decryptSubsonicPassword(value) {
+  if (!value) return null;
+  const decrypted = decryptWithKey(value, getSettingsEncryptionKey());
+  return decrypted || null;
+}
+
 export const userOps = {
   getDefaultPermissions() {
     return { ...DEFAULT_PERMISSIONS };
@@ -61,6 +74,25 @@ export const userOps = {
       permissions: dbHelpers.parseJSON(row.permissions) || { ...DEFAULT_PERMISSIONS },
     };
   },
+  async getSubsonicPasswordById(id) {
+    const row = await db.get("SELECT subsonic_password FROM users WHERE id = ?", [
+      parseInt(id, 10),
+    ]);
+    return decryptSubsonicPassword(row?.subsonic_password);
+  },
+  async syncSubsonicPassword(id, password) {
+    const userId = parseInt(id, 10);
+    const row = await db.get("SELECT subsonic_password FROM users WHERE id = ?", [userId]);
+    if (!row) return false;
+    const current = decryptSubsonicPassword(row.subsonic_password);
+    const next = password == null ? "" : String(password);
+    if (current === (next || null)) return false;
+    await db.run("UPDATE users SET subsonic_password = ? WHERE id = ?", [
+      encryptSubsonicPassword(next),
+      userId,
+    ]);
+    return true;
+  },
   async countUsers() {
     return (await db.get("SELECT COUNT(*) AS count FROM users")).count;
   },
@@ -77,15 +109,23 @@ export const userOps = {
         row.lidarr_quality_profile_id != null ? Number(row.lidarr_quality_profile_id) : null,
     }));
   },
-  async createUser(username, passwordHash, role = "user", permissions = null) {
+  async createUser(username, passwordHash, role = "user", permissions = null, subsonicPassword = null) {
     const un = String(username).trim();
     if (!un) return null;
     const perms = permissions ? { ...DEFAULT_PERMISSIONS, ...permissions } : { ...DEFAULT_PERMISSIONS };
     try {
       const row = await db.get(
-        `INSERT INTO users (username, password_hash, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id)
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-        [un.toLowerCase(), passwordHash, role, dbHelpers.stringifyJSON(perms), null, null],
+        `INSERT INTO users (username, password_hash, subsonic_password, role, permissions, lidarr_root_folder_path, lidarr_quality_profile_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        [
+          un.toLowerCase(),
+          passwordHash,
+          encryptSubsonicPassword(subsonicPassword),
+          role,
+          dbHelpers.stringifyJSON(perms),
+          null,
+          null,
+        ],
       );
       return {
         id: row.id,
@@ -108,6 +148,17 @@ export const userOps = {
     if (!existing) return null;
     const username = data.username !== undefined ? String(data.username).trim() : existing.username;
     const passwordHash = data.passwordHash !== undefined ? data.passwordHash : existing.passwordHash;
+    // A new password hash without a matching plaintext drops the stored
+    // Subsonic credential so token auth cannot keep using the old password.
+    const passwordHashChanged =
+      data.passwordHash !== undefined && data.passwordHash !== existing.passwordHash;
+    const subsonicPassword =
+      data.subsonicPassword !== undefined
+        ? encryptSubsonicPassword(data.subsonicPassword)
+        : passwordHashChanged
+          ? null
+          : ((await db.get("SELECT subsonic_password FROM users WHERE id = ?", [parseInt(id, 10)]))
+              ?.subsonic_password ?? null);
     const role = data.role !== undefined ? data.role : existing.role;
     const permissions =
       data.permissions !== undefined
@@ -155,13 +206,14 @@ export const userOps = {
           : existing.lidarrQualityProfileId;
     try {
       await db.run(
-        `UPDATE users SET username = ?, password_hash = ?, role = ?, permissions = ?, lastfm_username = ?,
-           listen_history_provider = ?, listen_history_username = ?, listen_history_url = ?,
+        `UPDATE users SET username = ?, password_hash = ?, subsonic_password = ?, role = ?, permissions = ?,
+           lastfm_username = ?, listen_history_provider = ?, listen_history_username = ?, listen_history_url = ?,
            lidarr_root_folder_path = ?, lidarr_quality_profile_id = ?
          WHERE id = ?`,
         [
           username.toLowerCase(),
           passwordHash,
+          subsonicPassword,
           role,
           dbHelpers.stringifyJSON(permissions),
           lastfmUsername,

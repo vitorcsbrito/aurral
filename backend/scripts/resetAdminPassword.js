@@ -132,9 +132,10 @@ async function main() {
     resultUser = await userOps.updateUser(existing.id, {
       passwordHash: hash,
       role: "admin",
+      subsonicPassword: password,
     });
   } else {
-    resultUser = await userOps.createUser(username, hash, "admin", null);
+    resultUser = await userOps.createUser(username, hash, "admin", null, password);
   }
 
   if (!resultUser) {

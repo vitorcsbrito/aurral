@@ -605,6 +605,10 @@ export const MIGRATIONS = [
   { id: "0002_genre_functions", sql: GENRE_FUNCTIONS },
   { id: "0003_recency_functions", sql: RECENCY_FUNCTIONS },
   { id: "0004_triggers", sql: TRIGGERS },
+  {
+    id: "0005_users_subsonic_password",
+    sql: "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsonic_password TEXT;",
+  },
 ];
 
 export async function migrateDatabase(db, { logger = console } = {}) {

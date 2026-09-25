@@ -180,7 +180,7 @@ router.post("/complete", async (req, res) => {
     const authPasswordFinal = integrations?.general?.authPassword || "";
     if (authPasswordFinal && (await userOps.countUsers()) === 0) {
       const hash = hashPassword(authPasswordFinal);
-      await userOps.createUser(authUserFinal, hash, "admin", null);
+      await userOps.createUser(authUserFinal, hash, "admin", null, authPasswordFinal);
     }
 
     await reconcileLocalNetworkBypassSetting();
