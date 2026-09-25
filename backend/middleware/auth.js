@@ -77,7 +77,7 @@ export const rotateApiKey = async () =>
 
 export const isProxyAuthEnabled = () => {
   if (process.env.AUTH_PROXY_ENABLED !== undefined) {
-    return process.env.AUTH_PROXY_ENABLED === "true";
+    return process.env.AUTH_PROXY_ENABLED.trim().toLowerCase() === "true";
   }
   return !!process.env.AUTH_PROXY_HEADER;
 };
@@ -792,9 +792,9 @@ export const verifyTokenAuth = async (req) => {
     return true;
   }
   if (isProxyAuthEnabled()) return false;
-  const passwords = getAuthPassword();
-  if (passwords.length === 0) return true;
-  return false;
+  // Media URLs are exempt from authMiddleware, so they apply the same rule:
+  // open only while the install requires no authentication at all.
+  return !(await isAuthRequiredByConfig());
 };
 
 export function hasPermission(user, permission) {

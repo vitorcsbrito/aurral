@@ -175,3 +175,18 @@ test("stream tokens of a deactivated user are revoked", async () => {
   const otherRequest = { headers: {}, query: { st: other } };
   assert.equal(await auth.verifyTokenAuth(otherRequest), true);
 });
+
+test("media routes require authentication once accounts exist", async () => {
+  const anonymous = () => ({ headers: {}, query: {} });
+  assert.equal(await auth.verifyTokenAuth(anonymous()), true, "open before onboarding");
+
+  await userOps.createUser("owner", bcrypt.hashSync("password123", 4), "admin");
+  await dbOps.updateSettings({ onboardingComplete: true });
+  assert.equal(await auth.verifyTokenAuth(anonymous()), false);
+
+  const user = await userOps.createUser("listener", bcrypt.hashSync("password123", 4));
+  const session = await createSession(user.id);
+  const withSession = { headers: {}, query: { token: session.token } };
+  assert.equal(await auth.verifyTokenAuth(withSession), true);
+  assert.equal(withSession.user?.id, user.id);
+});

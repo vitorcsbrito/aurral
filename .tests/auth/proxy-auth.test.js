@@ -119,6 +119,14 @@ test("explicitly disabling proxy auth overrides a configured header", async () =
   assert.equal((await userOps.getAllUsers()).length, 0);
 });
 
+test("the proxy auth switch ignores case and surrounding spaces", () => {
+  process.env.AUTH_PROXY_ENABLED = " TRUE ";
+  assert.equal(isProxyAuthEnabled(), true);
+  process.env.AUTH_PROXY_ENABLED = "False";
+  process.env.AUTH_PROXY_HEADER = "x-authentik-username";
+  assert.equal(isProxyAuthEnabled(), false);
+});
+
 test("proxy auth grants admin via AUTH_PROXY_ADMIN_GROUPS membership", async () => {
   process.env.AUTH_PROXY_ROLE_HEADER = "remote-groups";
   process.env.AUTH_PROXY_ADMIN_GROUPS = "app-arrstack-admin";
