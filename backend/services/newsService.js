@@ -196,12 +196,12 @@ export const disableNewsFeed = async (sourceUrl, sourceName) => {
   const news = getNewsSettings();
   const url = String(sourceUrl || "").trim();
   const name = String(sourceName || "").trim().toLowerCase();
-  const feeds = news.feeds.map(async (feed) => (
+  const feeds = news.feeds.map((feed) => (
     (url && feed.url === url) || (!url && name && feed.name.toLowerCase() === name)
       ? { ...feed, enabled: false }
       : feed
   ));
-  if (!feeds.some(async (feed, index) => feed.enabled !== news.feeds[index]?.enabled)) {
+  if (!feeds.some((feed, index) => feed.enabled !== news.feeds[index]?.enabled)) {
     return news;
   }
   const nextNews = { ...news, feeds };
