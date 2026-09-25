@@ -172,7 +172,9 @@ export function normalizeCandidate(source, raw = {}, options = {}) {
   return {
     source,
     title,
-    cleanedTitle: claimedTitle(title),
+    // Sources with a structured artist field carry the bare title; only
+    // free-text titles ("Artist - Title") need the artist split off.
+    cleanedTitle: capabilities?.structuredArtist === true ? title : claimedTitle(title),
     filenameTitle,
     artists,
     album: cleanText(raw.album || raw.albumName),

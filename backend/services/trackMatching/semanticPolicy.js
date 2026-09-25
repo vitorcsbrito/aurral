@@ -216,9 +216,19 @@ export function checkVariantCompatibility(request, candidate) {
   // Only the offered title and file name contribute variant evidence. Folder
   // and album names describe the release around the file, not the file
   // itself, and must not create contradictions.
-  const candidateText = [candidate?.title, candidate?.filename]
+  let candidateText = [candidate?.title, candidate?.filename]
     .filter(Boolean)
     .join(" ");
+  // Words of the requested title itself ("Live Forever", "Live and Let Die")
+  // are not version evidence, so they are removed before the text is read.
+  const requestedTitle = getCoreTitle(request?.trackName);
+  if (requestedTitle) {
+    const escaped = requestedTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    candidateText = candidateText.replace(
+      new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu"),
+      " ",
+    );
+  }
   const actual = mergeVariantProfiles(
     extractVariants(candidateText),
     candidate?.variants && typeof candidate.variants === "object"

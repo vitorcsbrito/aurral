@@ -99,6 +99,33 @@ btest("strong original tags and matching duration verify", async () => {
   assert.equal(outcome.beets.recommendation, "strong");
 });
 
+btest("a remaster descriptor in the title tag still verifies", async () => {
+  for (const title of ["Get Lucky - Remastered 2019", "Get Lucky (Remastered 2019)"]) {
+    const outcome = await validateDownloadedTrackFile({
+      request: GET_LUCKY,
+      filePath: "/staging/track.flac",
+      source: "deemix",
+      options: {
+        parseFile: stubParseFile(
+          stubParsed({ title, artist: "Daft Punk", album: "Random Access Memories", track: 8 }),
+        ),
+      },
+    });
+    assert.equal(outcome.decision, POST_DOWNLOAD_DECISIONS.VERIFIED, title);
+  }
+});
+
+btest("an untagged yt-dlp file is identified by its title-based name", async () => {
+  const outcome = await validateDownloadedTrackFile({
+    request: GET_LUCKY,
+    candidate: { artists: ["Daft Punk"] },
+    filePath: "/staging/Daft Punk - Get Lucky (Official Audio).m4a",
+    source: "ytdlp",
+    options: { parseFile: stubParseFile(stubParsed({}, 248, { lossless: false, bitrate: 256000 })) },
+  });
+  assert.equal(outcome.decision, POST_DOWNLOAD_DECISIONS.VERIFIED);
+});
+
 test("karaoke tags are auto-rejected, never routed to review", async () => {
   const outcome = await validateDownloadedTrackFile({
     request: GET_LUCKY,

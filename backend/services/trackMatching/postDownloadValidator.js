@@ -21,7 +21,7 @@
 import { parseFile } from "music-metadata";
 import { buildTrackRequest } from "./trackIdentity.js";
 import { getFileName, getFileBaseName, claimedTitle } from "./candidateNormalizer.js";
-import { getCoreTitle, extractVariants } from "./semanticPolicy.js";
+import { getCoreTitle } from "./semanticPolicy.js";
 import { runMatcherOperation } from "./beetsClient.js";
 import {
   toProtocolRequest,
@@ -184,12 +184,12 @@ export async function validateDownloadedTrackFile({
   // Validate semantic and identifier evidence on the ORIGINAL tags. Junk
   // ("Karaoke Version" burned into the tags) is auto-rejected; it is never
   // review material.
+  // Variant evidence is read from the title and file name by the semantic
+  // policy, which first removes the requested title's own words.
   const identityCandidate = {
     ...actual,
-    variants: {
-      ...extractVariants([actual.title, actual.filename].filter(Boolean).join(" ")),
-      ...(candidate?.variants && typeof candidate.variants === "object" ? candidate.variants : {}),
-    },
+    variants:
+      candidate?.variants && typeof candidate.variants === "object" ? candidate.variants : undefined,
   };
   const hardIdentity = evaluateTrackIdentity({
     request: trackRequest,
@@ -229,7 +229,13 @@ export async function validateDownloadedTrackFile({
       candidates: [
         {
           source,
-          title: identityCandidate.cleanedTitle || identityCandidate.title,
+          // Score core titles, as the request side does. An embedded title
+          // tag is not split on " - ", so "Song - Remastered 2009" keeps "Song".
+          title: getCoreTitle(
+            identityCandidate.filenameTitle == null
+              ? identityCandidate.title
+              : identityCandidate.cleanedTitle || identityCandidate.title,
+          ),
           artist: identityCandidate.artists[0],
           artists: identityCandidate.artists,
           album: identityCandidate.album,

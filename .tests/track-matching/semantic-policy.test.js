@@ -83,6 +83,24 @@ test("request-level variant hints participate in the comparison", () => {
   assert.equal(check.compatible, false);
 });
 
+test("the requested title's own words are not version evidence", () => {
+  const liveForever = { trackName: "Live Forever" };
+  assert.equal(checkVariantCompatibility(liveForever, { title: "Oasis - Live Forever" }).compatible, true);
+  assert.equal(
+    checkVariantCompatibility({ trackName: "Live and Let Die" }, { filename: "Wings - Live and Let Die.mp3" })
+      .compatible,
+    true,
+  );
+  assert.equal(
+    checkVariantCompatibility(liveForever, { title: "Oasis - Live Forever (Live at Knebworth)" }).compatible,
+    false,
+  );
+  assert.equal(
+    checkVariantCompatibility({ trackName: "Wonderwall" }, { title: "Oasis - Wonderwall - Live" }).compatible,
+    false,
+  );
+});
+
 test("detectNoise flags downloader junk", () => {
   assert.deepEqual(detectNoise("Get Lucky 10 hour loop"), ["loop"]);
   assert.deepEqual(detectNoise("Get Lucky (Reaction)"), ["reaction"]);
