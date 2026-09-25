@@ -143,8 +143,10 @@ function isCanonicalPlaylistType(playlistType) {
  * @returns {string} Sanitized directory or file name.
  */
 function sanitizeSafeSegment(value, fallback = "Unknown") {
+  // Only "." and ".." traverse. Other leading dots stay, because downloads
+  // are written with sanitizePathPart ("...And Justice for All").
   const text = sanitizePathPart(value, fallback);
-  if (!text || text === "." || text === ".." || text.startsWith(".")) {
+  if (!text || text === "." || text === "..") {
     return fallback;
   }
   return text;
