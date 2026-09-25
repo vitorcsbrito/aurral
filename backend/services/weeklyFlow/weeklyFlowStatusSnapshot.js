@@ -142,6 +142,7 @@ export async function getWeeklyFlowStatusSnapshot({
       importedAt: playlist.importedAt,
       createdAt: playlist.createdAt,
       trackCount: Math.max(jobTotal, Number(playlist.trackCount || 0)),
+      recordHistory: playlist.recordHistory !== false,
       showTrackAvailability: playlist.showTrackAvailability === true,
       trackIdentities: collectPlaylistTrackIdentities(playlist),
       trackEntries: collectPlaylistTrackEntries(playlist),

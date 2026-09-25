@@ -143,7 +143,7 @@ export function registerSharedPlaylists(router) {
     }
   });
 
-  router.put("/shared-playlists/:playlistId/track-availability", (req, res) => {
+  router.put("/shared-playlists/:playlistId/track-availability", async (req, res) => {
     const { playlistId } = req.params;
     if (!getAccessibleSharedPlaylist(req.user, playlistId)) {
       return res.status(404).json({ error: "Shared playlist not found" });
@@ -151,10 +151,38 @@ export function registerSharedPlaylists(router) {
     if (typeof req.body?.enabled !== "boolean") {
       return res.status(400).json({ error: "enabled must be a boolean" });
     }
-    const playlist = flowPlaylistConfig.updateSharedPlaylist(playlistId, {
-      showTrackAvailability: req.body.enabled,
-    });
-    return res.json({ success: true, showTrackAvailability: playlist.showTrackAvailability });
+    try {
+      const playlist = await flowPlaylistConfig.updateSharedPlaylist(playlistId, {
+        showTrackAvailability: req.body.enabled,
+      });
+      return res.json({ success: true, showTrackAvailability: playlist.showTrackAvailability });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to update track availability",
+        message: error.message,
+      });
+    }
+  });
+
+  router.put("/shared-playlists/:playlistId/record-history", async (req, res) => {
+    const { playlistId } = req.params;
+    if (!getAccessibleSharedPlaylist(req.user, playlistId)) {
+      return res.status(404).json({ error: "Shared playlist not found" });
+    }
+    if (typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+    try {
+      const playlist = await flowPlaylistConfig.updateSharedPlaylist(playlistId, {
+        recordHistory: req.body.enabled,
+      });
+      return res.json({ success: true, recordHistory: playlist.recordHistory });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to update listening history",
+        message: error.message,
+      });
+    }
   });
 
   router.put("/shared-playlists/:playlistId", async (req, res) => {
