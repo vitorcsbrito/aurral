@@ -50,8 +50,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/matcher/requirements.txt /tmp/aurral-matcher-requirements.txt
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
+# The app user cannot write __pycache__ inside this root-owned venv, so
+# compile once here; unchecked-hash .pyc files stay valid after COPY --from.
 RUN python3 -m venv /opt/aurral-matcher && \
     /opt/aurral-matcher/bin/pip install --no-compile -r /tmp/aurral-matcher-requirements.txt && \
+    /opt/aurral-matcher/bin/python -m compileall -q --invalidation-mode unchecked-hash /opt/aurral-matcher/lib && \
     /opt/aurral-matcher/bin/python -c "import beets; assert beets.__version__ == '2.14.1'"
 
 FROM node-base AS runtime

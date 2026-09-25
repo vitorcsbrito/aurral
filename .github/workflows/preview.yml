@@ -120,8 +120,9 @@ jobs:
           echo "$matcher_health" | grep -q '"beetsVersion":"2.14.1"' || { echo "packaged beets is not the pinned version"; exit 1; }
 
           # The running app must have completed the matcher startup self-test.
+          # The self-test runs in the background after startup, so poll briefly.
           docker exec "$CONTAINER" node -e \
-            'fetch("http://127.0.0.1:3001/api/health").then((r) => r.json()).then((body) => { if (body.matcher?.available !== true) { console.error("matcher runtime not available in health payload:", JSON.stringify(body.matcher)); process.exit(1); } })'
+            'const check = async (attempt) => { const body = await (await fetch("http://127.0.0.1:3001/api/health")).json(); if (body.matcher?.available === true) return; if (attempt < 30 && !body.matcher?.checked) { await new Promise((resolve) => setTimeout(resolve, 1000)); return check(attempt + 1); } console.error("matcher runtime not available in health payload:", JSON.stringify(body.matcher)); process.exit(1); }; check(0).catch((error) => { console.error(error); process.exit(1); });'
 
           docker logs "$CONTAINER"
 
