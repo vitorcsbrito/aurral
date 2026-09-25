@@ -713,7 +713,13 @@ export class LidarrClient {
           userError.response = raw.response;
           throw userError;
         } else if (error.request) {
-          console.error("Lidarr API request failed - no response:", msg);
+          logger.error("library", "Lidarr API request failed with no response", {
+            endpoint: endpoint.split("?")[0],
+            method,
+            message: msg,
+            code: error.code || null,
+            timeoutMs: this.config.timeoutMs,
+          });
           throw new Error(
             `Cannot connect to Lidarr at ${this.config.url}. Check if Lidarr is running and the URL is correct.`,
           );
