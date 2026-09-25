@@ -9,9 +9,10 @@ integration boundary, the architecture, and how to extend it.
 
 ## What beets does (and does not) do here
 
-beets ships inside the normal Aurral image. As a user you never install it,
-configure it, run a `beets` container, or use `beet import`. It is an internal
-implementation detail.
+beets ships inside the normal Aurral image. As a Docker user you never install
+it, configure it, run a `beets` container, or use `beet import`. It is an
+internal implementation detail. From a source checkout, see
+`AURRAL_MATCHER_PYTHON` in [Environment variables](/admin/environment/).
 
 beets is used only as a **matching engine**:
 
@@ -163,8 +164,8 @@ identifiers.
 
 That means metadata-indistinguishable false positives can still pass:
 re-recordings, covers whose tags claim the original artist, uploads with
-forged tags, and descriptor-less edits. The full list is in the PR
-description; the system's answer today is retry/verify/review, never silent
+forged tags, and descriptor-less edits. The full list is in
+[upstream PR #861](https://github.com/lklynet/aurral/pull/861); the system's answer today is retry/verify/review, never silent
 acceptance of *contradicted* evidence.
 
 Follow-up plan (deliberately small and opt-in, never fingerprint-by-default):
@@ -172,16 +173,17 @@ Follow-up plan (deliberately small and opt-in, never fingerprint-by-default):
 1. Add an optional `fingerprint_file` operation to `aurral_matcher.py` that
    shells out to `fpcalc` and returns a raw fingerprint. No AcoustID lookup
    inside the matcher.
-2. Add `chromaprint-tools` (LGPL `fpcalc`) to the Dockerfile in its own
+2. Add `libchromaprint-tools` (LGPL `fpcalc`) to the Dockerfile in its own
    layer; keep the image functional when the binary is absent.
 3. Node side: an `escalateWithFingerprint()` helper in `trackMatching/` that
    runs ONLY when a post-download result is `AMBIGUOUS` (or a pre-download
    near-tie needs a tiebreak), queries the AcoustID API with the fingerprint,
    and feeds the returned recording title/artist/MBID back through the same
    semantic policy + distance comparison.
-4. Rate limiting via the existing `requests-ratelimiter` dependency AcoustID
-   requires an API key; ship without one set, treat missing key as
-   "escalation unavailable" and keep today's retry/review behavior.
+4. Rate-limit AcoustID lookups with the existing `requests-ratelimiter`
+   dependency. AcoustID requires an API key; ship without one, treat a
+   missing key as "escalation unavailable", and keep today's retry/review
+   behavior.
 5. Regression fixtures: the metadata-indistinguishable re-recording case
    flips from accept to reject when the fingerprint escalates.
 

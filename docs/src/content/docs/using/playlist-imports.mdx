@@ -28,7 +28,7 @@ The fastest path is in-app import on **Playlists**.
 
 You can set a display name and a synchronization schedule. Synchronization gets the Spotify tracklist again, removes tracks that are no longer there, and queues new tracks, so the Aurral playlist count follows Spotify.
 
-Spotify returns playlist items in pages of up to 50. Aurral follows every page, so very large playlists can take longer to sync. If Spotify reports more items than Aurral received, the sync fails without replacing the saved Aurral tracklist. Spotify only provides playlist item details for playlists you own or collaborate on.
+Spotify returns playlist items in pages of up to 50. Aurral follows every page, so very large playlists can take longer to sync. If the items Aurral receives don't match the total Spotify reports, the sync fails without replacing the saved Aurral tracklist. Spotify only provides playlist item details for playlists you own or collaborate on.
 
 By default, a track removed from Spotify is removed from the Aurral playlist but its downloaded file stays in the library. Turn off **Keep removed tracks in library** when importing, or from the playlist menu, to delete an Aurral-owned file when it is no longer used by another playlist. Lidarr or other external files are kept. This setting applies to future Spotify syncs.
 
@@ -216,13 +216,15 @@ Imported playlists behave differently from flows when downloads fail:
 
 ## Existing file reuse
 
-Aurral can use one file in multiple playlists. This prevents a second download of the same file.
+Aurral can use one file in multiple playlists. This prevents a second download of the same file. Before it downloads a track, Aurral also looks in the track's expected `Artist/Album` folder under the Downloads Folder (under `_flows/<flow-id>` for a flow) and reuses an audio file named after the track.
 
 Reuse does not change the imported track order. Owned tracks stay in their place in the list while missing tracks download.
 
 If you add a flow track to a static playlist, both playlists use the same file.
 
 When the flow refreshes, Aurral keeps files that the static playlist uses. Aurral then builds the new flow.
+
+Aurral also checks the playlists on each configured Plex, Navidrome, and Jellyfin server before it deletes a file automatically, for example when a flow refreshes, a synced import removes a track, or an upgrade replaces a file. A file that one of those playlists still uses, such as a flow track saved to a playlist in Feishin, stays at its original path, and Aurral tries the cleanup again before later library scans. If a server cannot be checked, Aurral keeps the file. Deleting a flow or playlist, removing a track from a playlist, or resetting playlists deletes files as before.
 
 Aurral prefers static playlists and Lidarr files. Multiple playlists can use one path.
 
@@ -234,4 +236,4 @@ If Lidarr runs on Windows and Aurral runs in Docker, open **Settings > Storage h
 
 Use the reported path to add a mapping under **Settings > Download clients > Remote path mappings**.
 
-Navidrome must scan the corresponding Lidarr library before Aurral can add a reused track to a Navidrome API playlist. See [Navidrome](/integrations/navidrome/#different-navidrome-paths).
+Navidrome must scan the corresponding Lidarr library before Aurral can add a reused track to a Navidrome API playlist. See [Navidrome](/integrations/navidrome/#filesystem-paths).

@@ -61,7 +61,7 @@ Defaults suit most installs. Change these only when diagnosing load or latency.
 | `AURRAL_MEDIA_HEALTH_SAMPLE_LIMIT` | Number of media files sampled by the native-playback storage check. Default `500`. |
 | `AURRAL_WORKER_SUPERVISOR_POLL_MS` | How often the worker supervisor checks queues. Default `60000`. |
 | `AURRAL_WORKER_IDLE_STOP_MS` | Idle time before a background worker stops. Default `60000`. |
-| `AURRAL_LIBRARY_SCAN_TIMEOUT_MS` | Longest a single library scan may run before its worker thread is stopped and the scan job is retried. Default `21600000` (6 hours). |
+| `AURRAL_LIBRARY_SCAN_TIMEOUT_MS` | Longest a single library scan may run before Aurral stops the scan's worker thread and retries the job after one minute, up to three attempts. Default `21600000` (6 hours); values above about 24.8 days are capped, and invalid or non-positive values use the default. |
 | `AURRAL_HONKER_WATCHER_POLL_MS` | Poll interval for the job queue watcher, 1 to 1000. Default `25`. |
 | `AURRAL_DISCOVERY_USER_REFRESH_DELAY_SECONDS` | Delay between per-user discovery refreshes, 5 to 3600. Default `10`. |
 | `AURRAL_DISCOVERY_PLAYLIST_BUILD_CONCURRENCY` | Discover playlists built in parallel, 1 to 6. Default `3`. |
@@ -76,11 +76,12 @@ Defaults suit most installs. Change these only when diagnosing load or latency.
 
 | Variable | Purpose |
 | -------- | ------- |
+| `NODE_USE_ENV_PROXY` | Set to `1` to send Aurral's HTTP requests through `HTTP_PROXY`/`HTTPS_PROXY`, skipping hosts in `NO_PROXY`. Requests that skip TLS verification (for example `LIDARR_INSECURE=true`) and RSS feed fetches still connect directly. |
 | `TRUST_PROXY` | Express `trust proxy` value. Default `1` (trust one proxy hop). Set `false` when no proxy sits in front of Aurral, a number for more hops, or `true` to trust every hop. |
 | `AURRAL_PUBLIC_URL` | Public origin used to build the Last.fm account-link callback (for example, `https://aurral.example.com`). OIDC uses `OIDC_REDIRECT_URI`; Spotify uses `SPOTIFY_OAUTH_REDIRECT_URI`. |
-| `AUTH_USER` / `AUTH_PASSWORD` | Legacy single-account login. `AUTH_USER` defaults to `admin`; `AUTH_PASSWORD` accepts a comma-separated list of accepted passwords and also enables Subsonic token auth for that user. A password saved in **Settings > General** takes precedence. Prefer user accounts. |
-| `AUTH_PROXY_ENABLED` | Enable reverse-proxy authentication. Default header `x-forwarded-user`. |
-| `AUTH_PROXY_HEADER` | Custom header that contains the authenticated username. |
+| `AUTH_USER` / `AUTH_PASSWORD` | Legacy single-account login. `AUTH_USER` defaults to `admin`; `AUTH_PASSWORD` accepts a comma-separated list of accepted passwords. Subsonic token auth uses the credential Aurral stores for the account when it signs in; see [Navidrome and Subsonic](/integrations/navidrome/#connect-a-subsonic-client). A password saved in **Settings > General** takes precedence. Prefer user accounts. |
+| `AUTH_PROXY_ENABLED` | Set `true` (any case) to enable reverse-proxy authentication (default header `x-forwarded-user`). Any other value, such as `false`, keeps it off even when `AUTH_PROXY_HEADER` is set. When unset, setting `AUTH_PROXY_HEADER` enables it. |
+| `AUTH_PROXY_HEADER` | Custom header that contains the authenticated username. Enables proxy authentication on its own only when `AUTH_PROXY_ENABLED` is unset. |
 | `AUTH_PROXY_DOMAIN` | Origin of your forwardAuth login page (for example, `https://auth.example.com`). Aurral adds it to the `connect-src` content security policy so pages can reach your authentication origin. |
 | `AUTH_PROXY_TRUSTED_IPS` | Comma-separated proxy IP allowlist for authentication headers. You must set it when you enable proxy authentication. Without it, a direct client can use the identity header to impersonate users. |
 | `AUTH_PROXY_LOGOUT_URL` | Your proxy or IdP logout endpoint. For Authentik single-application forward auth, use `https://aurral.example.com/outpost.goauthentik.io/sign_out`. This value ends the proxy session when you log out of Aurral. Aurral hides its **Log out** control while proxy authentication is on and this value is unset. |
@@ -124,13 +125,19 @@ Defaults suit most installs. Change these only when diagnosing load or latency.
 
 ## Resource tuning
 
-The Docker image uses conservative defaults for native artwork processing. These variables let you trade memory for artwork-generation throughput.
+Aurral uses conservative defaults for native artwork processing. These variables let you trade memory for artwork-generation throughput.
 
 | Variable | Purpose |
 | -------- | ------- |
 | `AURRAL_DISCOVERY_ARTWORK_CONCURRENCY` | Number of discovery playlist covers rendered in parallel. Default `1`; accepted range `1`–`3`. |
 | `AURRAL_SHARP_CONCURRENCY` | Number of libvips worker threads used by Sharp. Default `2`; accepted range `1`–`4`. |
 | `MALLOC_CONF` | jemalloc page-decay settings. The Docker image defaults to `background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000` so freed native image buffers return to the operating system sooner, including while the application is idle. |
+
+## Track matching
+
+| Variable | Description |
+| --- | --- |
+| `AURRAL_MATCHER_PYTHON` | Python interpreter for the beets matcher. Default `/opt/aurral-matcher/bin/python` when it exists (Docker image), otherwise `python3` on `PATH`. Outside Docker, install `backend/matcher/requirements.txt` (beets 2.14.1) into a virtual environment and set this to the absolute path of its `bin/python`; without a working matcher, downloads fail rather than using weaker matching. |
 
 ## Lidarr
 

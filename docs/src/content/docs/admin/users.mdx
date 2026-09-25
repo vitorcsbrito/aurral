@@ -56,6 +56,8 @@ Native OIDC and reverse-proxy auth can both stay configured. Use one as the prim
 
 ### Claiming existing accounts after upgrading
 
+Upgrading to identity-based sign-in signs everyone out once, so every user logs in again after the upgrade.
+
 Aurral now identifies an OIDC user by the issuer and subject in their token rather than by username, so accounts created before this change have no linked identity yet. Until one is linked, an SSO sign-in does not recognise the old account and creates a separate new one instead.
 
 Because a matching username is not proof of ownership, an admin has to approve each account:
@@ -74,7 +76,7 @@ The protected recovery admin can never be claimed this way.
 
 ## Reverse-proxy auth
 
-Set `AUTH_PROXY_ENABLED=true` to use reverse-proxy authentication. Use `AUTH_PROXY_HEADER` if the proxy uses a custom header.
+Set `AUTH_PROXY_ENABLED=true` to use reverse-proxy authentication. Use `AUTH_PROXY_HEADER` if the proxy uses a custom header. To turn proxy authentication off while `AUTH_PROXY_HEADER` stays set, set `AUTH_PROXY_ENABLED=false`.
 
 The default username header is `x-forwarded-user`.
 

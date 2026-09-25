@@ -95,6 +95,8 @@ While files exist on disk that Plex has not indexed yet, Aurral keeps the existi
 
 Aurral skips a rebuild if the track set has not changed. If you disable a flow, the next sync removes its Plex playlist.
 
+Before automatic cleanup deletes a file, Aurral checks the audio playlists of the connected Plex account and of every linked Plex account, and keeps any file those playlists still use. Private playlists of Plex users who have not linked an account in Aurral are not checked. If a linked account cannot be read, Aurral keeps the files until that link is reconnected. A kept file is not added back to the refreshed flow's Plex playlist.
+
 Aurral tracks each playlist it manages by Plex's own internal ID, not by name. It only updates a playlist it created and still has that ID for; a manually created Plex playlist with the same name as a flow is left alone. This tracking survives Plex-side changes like a manually granted playlist share.
 
 A flow or shared playlist adopted from a Discover preset carries that preset's description into Plex, written to the playlist's summary field. A flow created manually has no description, and nothing is written for it.
