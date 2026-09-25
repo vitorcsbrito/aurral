@@ -159,21 +159,21 @@ test("artist lookup follows fresh Lidarr artist and album membership while the c
 test("artist lookup does not restore an Aurral-only artist after a Lidarr error", async (t) => {
   const mbid = "88888888-8888-4888-8888-888888888888";
   const key = `artist-lookup-aurral-only-${process.pid}-${Date.now()}`;
-  const artist = upsertLibraryArtist({
+  const artist = await upsertLibraryArtist({
     identityKey: `${key}:artist`,
     mbid,
     name: "Aurral-only Artist",
   });
-  const album = upsertLibraryAlbum({
+  const album = await upsertLibraryAlbum({
     identityKey: `${key}:album`,
     artistId: artist.id,
     title: "Aurral-only Album",
   });
-  const track = upsertLibraryTrack({
+  const track = await upsertLibraryTrack({
     identityKey: `${key}:track`,
     title: "Aurral-only Track",
   });
-  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+  await linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
   invalidateCanonicalLibraryCache();
 
   const routes = new Map();
@@ -206,10 +206,10 @@ test("artist lookup does not restore an Aurral-only artist after a Lidarr error"
     await routes.get("/lookup/:mbid")({ params: { mbid } }, response);
     assert.equal(body?.exists, false);
   } finally {
-    db.prepare("DELETE FROM library_album_tracks WHERE album_id = ?").run(album.id);
-    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
-    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
-    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    await db.run("DELETE FROM library_album_tracks WHERE album_id = ?", [album.id]);
+    await db.run("DELETE FROM library_tracks WHERE id = ?", [track.id]);
+    await db.run("DELETE FROM library_albums WHERE id = ?", [album.id]);
+    await db.run("DELETE FROM library_artists WHERE id = ?", [artist.id]);
     invalidateCanonicalLibraryCache();
   }
 });
