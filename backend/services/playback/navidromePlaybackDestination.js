@@ -22,6 +22,7 @@ import {
 const ARTWORK_FILE_EXTENSIONS = [".webp", ".jpg", ".png"];
 const ARTWORK_SUPPRESS_SUFFIX = ".no-artwork";
 const PLAYLIST_FILE_EXTENSIONS = [".m3u", ".nsp"];
+const MIN_AURRAL_PATH_SEGMENTS = 3;
 const SONG_LOOKUP_BATCH_SIZE = 5;
 
 export const navidromeSettings = Object.freeze({
@@ -137,7 +138,9 @@ export class NavidromePlaybackDestination {
     const resolved = path.resolve(file);
     if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return false;
     const segments = String(file).split(/[\\/]+/).filter(Boolean);
-    for (let index = 1; index < segments.length; index += 1) {
+    // Aurral stores tracks at least as Artist/Album/file (deeper under
+    // _flows), so shorter tails like a bare "track.flac" are coincidences.
+    for (let index = 1; index <= segments.length - MIN_AURRAL_PATH_SEGMENTS; index += 1) {
       if (await this._pathExists(path.join(root, ...segments.slice(index)))) return true;
     }
     return false;

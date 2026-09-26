@@ -232,10 +232,15 @@ test("navidrome reports unknown usage for an unmapped path to an Aurral file", a
 });
 
 test("navidrome ignores deleted files and paths outside Aurral's folders", async () => {
+  await makeFile("loose.flac");
   const { NavidromePlaybackDestination } = await import("../../backend/services/playback/navidromePlaybackDestination.js");
   const destination = new NavidromePlaybackDestination(root, { client: {
     async getPlaylistTrackPaths() {
-      return [path.join(root, "_flows/gone/deleted.flac"), "/music/Other Artist/Album/track.flac"];
+      return [
+        path.join(root, "_flows/gone/deleted.flac"),
+        "/music/Other Artist/Album/track.flac",
+        "/music/Other Artist/loose.flac",
+      ];
     },
   } });
   assert.equal((await destination.getReferencedPaths()).ok, true);
