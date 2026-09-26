@@ -783,20 +783,22 @@ test("an unchanged Lidarr rescan does not rewrite library rows", async () => {
   }
 });
 
-test("Lidarr persistence yields between album transactions", async () => {
+test("Lidarr persistence yields between album transactions", async (t) => {
   const artistMbid = "40404040-4040-4040-8040-404040404040";
   const firstAlbumMbid = "50505050-5050-4050-8050-505050505050";
   const secondAlbumMbid = "60606060-6060-4060-8060-606060606060";
-  let scanning = true;
-  const yieldedBetweenAlbums = new Promise((resolve) => {
-    const inspect = async () => {
+  // Checked right after each transaction returns, so the result does not
+  // depend on catching the gap between two commits from a polling loop.
+  let yieldedBetweenAlbums = false;
+  const runTransaction = db.transaction;
+  t.mock.method(db, "transaction", async (fn) => {
+    const result = await runTransaction(fn);
+    if (!db.inTransaction()) {
       const firstExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [firstAlbumMbid]));
       const secondExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [secondAlbumMbid]));
-      if (firstExists && !secondExists) return resolve(true);
-      if (!scanning) return resolve(false);
-      setImmediate(inspect);
-    };
-    setImmediate(inspect);
+      if (firstExists && !secondExists) yieldedBetweenAlbums = true;
+    }
+    return result;
   });
 
   try {
@@ -814,11 +816,8 @@ test("Lidarr persistence yields between album transactions", async () => {
         getRootFolders: async () => [],
       },
     });
-    scanning = false;
-
-    assert.equal(await yieldedBetweenAlbums, true);
+    assert.equal(yieldedBetweenAlbums, true);
   } finally {
-    scanning = false;
     await db.run("DELETE FROM library_artists WHERE mbid = ?", [artistMbid]);
   }
 });
