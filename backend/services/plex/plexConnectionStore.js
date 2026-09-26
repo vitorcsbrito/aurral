@@ -91,56 +91,56 @@ export const plexConnectionStore = {
     if (linkType !== "managed" && linkType !== "self") {
       throw new Error('linkType must be "managed" or "self"');
     }
-    const connections = await store.read();
-    connections[userKey(userId)] = {
-      linkType,
-      token: encryptToken(safeToken),
-      // Plex rotates server-scoped tokens; the account token re-derives them.
-      accountToken: safeAccountToken ? encryptToken(safeAccountToken) : null,
-      clientId: safeClientId,
-      plexAccountId,
-      plexUuid,
-      plexUsername,
-      linkedByAdminId:
-        linkedByAdminId != null && Number.isFinite(Number(linkedByAdminId))
-          ? Number(linkedByAdminId)
-          : null,
-      connectedAt: Date.now(),
-      lastError: null,
-    };
-    await store.write(connections);
+    await store.update((connections) => {
+      connections[userKey(userId)] = {
+        linkType,
+        token: encryptToken(safeToken),
+        // Plex rotates server-scoped tokens; the account token re-derives them.
+        accountToken: safeAccountToken ? encryptToken(safeAccountToken) : null,
+        clientId: safeClientId,
+        plexAccountId,
+        plexUuid,
+        plexUsername,
+        linkedByAdminId:
+          linkedByAdminId != null && Number.isFinite(Number(linkedByAdminId))
+            ? Number(linkedByAdminId)
+            : null,
+        connectedAt: Date.now(),
+        lastError: null,
+      };
+    });
     return this.getConnection(userId);
   },
 
   async updateToken(userId, { token, clientId } = {}) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    const existing = connections[key];
-    if (!existing) return null;
-    existing.token = encryptToken(token || decryptToken(existing.token));
-    if (clientId) existing.clientId = clientId;
-    existing.lastError = null;
-    await store.write(connections);
-    return this.getConnection(userId);
+    const updated = await store.update((connections) => {
+      const existing = connections[userKey(userId)];
+      if (!existing) return false;
+      existing.token = encryptToken(token || decryptToken(existing.token));
+      if (clientId) existing.clientId = clientId;
+      existing.lastError = null;
+      return true;
+    });
+    return updated ? this.getConnection(userId) : null;
   },
 
   async setLastError(userId, message) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    const existing = connections[key];
-    if (!existing) return null;
-    existing.lastError = { message: String(message || "Unknown error"), at: Date.now() };
-    await store.write(connections);
-    return this.getConnection(userId);
+    const updated = await store.update((connections) => {
+      const existing = connections[userKey(userId)];
+      if (!existing) return false;
+      existing.lastError = { message: String(message || "Unknown error"), at: Date.now() };
+      return true;
+    });
+    return updated ? this.getConnection(userId) : null;
   },
 
   async clearConnection(userId) {
-    const connections = await store.read();
-    const key = userKey(userId);
-    if (!connections[key]) return false;
-    delete connections[key];
-    await store.write(connections);
-    return true;
+    return store.update((connections) => {
+      const key = userKey(userId);
+      if (!connections[key]) return false;
+      delete connections[key];
+      return true;
+    });
   },
 
   async getAllLinkedPlexAccountIds() {

@@ -1,11 +1,21 @@
 import express from "express";
 import { userOps, dbOps } from "../db/helpers/index.js";
 import { hashPassword, verifyPassword } from "../middleware/passwordHash.js";
-import { requireAuth, requireAdmin } from "../middleware/requirePermission.js";
-import { reconcileLocalNetworkBypassSetting } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireAdmin,
+  requireRecentAuth,
+  isRecentlyAuthenticated,
+} from "../middleware/requirePermission.js";
+import {
+  reconcileLocalNetworkBypassSetting,
+  revokeStreamTokensForUser,
+} from "../middleware/auth.js";
 import { requirePasswordStrength } from "../middleware/auth.js";
 import { deleteSessionsByUserId } from "../config/session-helpers.js";
 import { websocketService } from "../services/websocketService.js";
+import { logger } from "../services/logger.js";
+import { refreshOwnerStatus } from "../services/weeklyFlow/weeklyFlowOwnerStatus.js";
 import {
   getListenHistoryCacheNamespace,
   getListenHistoryProfile,
@@ -19,7 +29,10 @@ import {
 import { validateExternalUrl } from "../middleware/urlValidator.js";
 import { normalizeKoitoBaseUrl } from "../services/koitoClient.js";
 import { registerPlexLink, resolveGlobalPlexAccount } from "./users/plexLinkHandlers.js";
+import { registerIdentityLink } from "./users/identityLinkHandlers.js";
 import { plexConnectionStore } from "../services/plex/plexConnectionStore.js";
+
+const VALID_STATUSES = ["active", "suspended", "disabled"];
 
 const buildListenHistoryUpdates = (body, existing) => {
   const hasLegacyLastfmUpdate = Object.hasOwn(body, "lastfmUsername");
@@ -94,6 +107,33 @@ const reconcileLocalBypassAfterUserMutation = async () => {
     websocketService.reconcileAuthState();
   }
   return result;
+};
+
+// An inactive account loses its sessions, websockets and stream tokens at
+// once. The download worker's owner-status mirror is refreshed so it stops,
+// or resumes, the owner's queued playlist downloads.
+const applyStatusChange = async (userId, status) => {
+  if (status !== "active") {
+    await deleteSessionsByUserId(userId);
+    websocketService.disconnectUser(userId);
+    revokeStreamTokensForUser(userId);
+  }
+  try {
+    await refreshOwnerStatus();
+    if (status === "active") {
+      const [{ weeklyFlowWorker }, { restartWorkerIfPending }] = await Promise.all([
+        import("../services/weeklyFlow/weeklyFlowWorker.js"),
+        import("../services/weeklyFlow/weeklyFlowMutationGuards.js"),
+      ]);
+      await restartWorkerIfPending();
+      if (weeklyFlowWorker.running) weeklyFlowWorker.wake();
+    }
+  } catch (error) {
+    logger.warn("users", "Could not refresh playlist owner status", {
+      userId,
+      error: error?.message || String(error),
+    });
+  }
 };
 
 const normalizeRootFolderPath = (value) => {
@@ -207,7 +247,7 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
     }
     const hash = hashPassword(password);
     const perms = permissions ? { ...userOps.getDefaultPermissions(), ...permissions } : null;
-    const created = await userOps.createUser(un, hash, role, perms);
+    const created = await userOps.createUser(un, hash, role, perms, true, false, password);
     if (!created) {
       return res.status(500).json({ error: "Failed to create user" });
     }
@@ -237,7 +277,10 @@ router.patch("/:id", requireAuth, async (req, res) => {
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
     }
-    const { password, permissions, role } = req.body;
+    const { password, permissions, role, status, allowIdentityAdoption } = req.body;
+    if (status !== undefined && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
     const existingProfile = getListenHistoryProfile(existing);
     let listenHistoryUpdates = null;
     try {
@@ -253,7 +296,12 @@ router.patch("/:id", requireAuth, async (req, res) => {
     });
     await clearOrphanedDiscoveryCache(id, existingProfile, requestedProfile);
     if (isSelf && !isAdmin) {
-      if (permissions !== undefined || role !== undefined) {
+      if (
+        permissions !== undefined ||
+        role !== undefined ||
+        status !== undefined ||
+        allowIdentityAdoption !== undefined
+      ) {
         return res.status(403).json({ error: "Forbidden" });
       }
       const updates = {};
@@ -273,6 +321,8 @@ router.patch("/:id", requireAuth, async (req, res) => {
           return res.status(400).json({ error: passwordValidation.error });
         }
         updates.passwordHash = hashPassword(password);
+        updates.hasLocalPassword = true;
+        updates.subsonicPassword = password;
       }
       if (Object.keys(updates).length === 0) {
         return res.json({
@@ -290,19 +340,63 @@ router.patch("/:id", requireAuth, async (req, res) => {
       const updated = await userOps.updateUser(id, updates);
       if (updates.passwordHash) {
         await deleteSessionsByUserId(id);
+        websocketService.disconnectUser(id);
+        revokeStreamTokensForUser(id);
       }
       return res.json(updated);
     }
     const updates = {};
     if (password) {
+      // Setting a password without the current one, including an admin's own,
+      // needs a recent sign-in so a stale session cannot take an account over.
+      if (!(await isRecentlyAuthenticated(req))) {
+        return res.status(401).json({
+          error: "reauth_required",
+          message: "Please confirm your credentials to continue",
+        });
+      }
       const passwordValidation = requirePasswordStrength(password);
       if (!passwordValidation.valid) {
         return res.status(400).json({ error: passwordValidation.error });
       }
       updates.passwordHash = hashPassword(password);
+      updates.hasLocalPassword = true;
+      updates.subsonicPassword = password;
     }
     if (permissions !== undefined) updates.permissions = permissions;
-    if (role !== undefined) updates.role = role;
+    if (role !== undefined) {
+      if (existing.isProtected && role !== "admin") {
+        return res.status(400).json({
+          error: "The protected recovery account must stay an administrator",
+        });
+      }
+      updates.role = role;
+      updates.roleSource = "local";
+    }
+    if (status !== undefined) {
+      if (existing.isProtected && status !== "active") {
+        return res.status(400).json({
+          error: "You cannot suspend or disable a protected recovery account",
+        });
+      }
+      if (isSelf && status !== "active") {
+        return res.status(400).json({ error: "You cannot suspend or disable your own account" });
+      }
+      updates.status = status;
+    }
+    if (allowIdentityAdoption !== undefined) {
+      if (allowIdentityAdoption && !existing.needsIdentityMigration) {
+        return res.status(400).json({
+          error: "Only accounts that predate identity linking can be approved for adoption",
+        });
+      }
+      if (allowIdentityAdoption && existing.isProtected) {
+        return res.status(400).json({
+          error: "The protected recovery account cannot be approved for adoption",
+        });
+      }
+      updates.allowIdentityAdoption = !!allowIdentityAdoption;
+    }
     if (listenHistoryUpdates) {
       Object.assign(updates, listenHistoryUpdates);
     }
@@ -321,6 +415,19 @@ router.patch("/:id", requireAuth, async (req, res) => {
       });
     }
     const updated = await userOps.updateUser(id, updates);
+    if (!updated) {
+      return res.status(500).json({ error: "Failed to update user" });
+    }
+    if (updates.status !== undefined && updates.status !== existing.status) {
+      await applyStatusChange(id, updates.status);
+    }
+    // A password reset ends every existing session of that account, so a
+    // reset after a compromise also locks out whoever held the old one.
+    if (updates.passwordHash) {
+      await deleteSessionsByUserId(id);
+      websocketService.disconnectUser(id);
+      revokeStreamTokensForUser(id);
+    }
     await reconcileLocalBypassAfterUserMutation();
     res.json(updated);
   } catch (e) {
@@ -517,7 +624,7 @@ router.patch("/me/lidarr-preferences", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/me/password", requireAuth, async (req, res) => {
+router.post("/me/password", requireAuth, requireRecentAuth(), async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!newPassword) {
@@ -528,12 +635,23 @@ router.post("/me/password", requireAuth, async (req, res) => {
       return res.status(400).json({ error: passwordValidation.error });
     }
     const u = await userOps.getUserById(req.user.id);
-    if (!u || !verifyPassword(currentPassword || "", u.passwordHash)) {
+    if (!u) {
+      return res.status(400).json({ error: "Current password is incorrect" });
+    }
+    // An account provisioned by an external identity has no password to
+    // confirm; the recent sign-in required above stands in for it.
+    if (u.hasLocalPassword && !verifyPassword(currentPassword || "", u.passwordHash)) {
       return res.status(400).json({ error: "Current password is incorrect" });
     }
     const hash = hashPassword(newPassword);
-    await userOps.updateUser(req.user.id, { passwordHash: hash });
+    await userOps.updateUser(req.user.id, {
+      passwordHash: hash,
+      hasLocalPassword: true,
+      subsonicPassword: newPassword,
+    });
     await deleteSessionsByUserId(req.user.id);
+    websocketService.disconnectUser(req.user.id);
+    revokeStreamTokensForUser(req.user.id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: "Failed to change password", message: e.message });
@@ -550,8 +668,13 @@ router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
     }
+    if (existing.isProtected) {
+      return res.status(400).json({ error: "The protected recovery account cannot be deleted" });
+    }
     await deleteSessionsByUserId(id);
     await userOps.deleteUser(id);
+    websocketService.disconnectUser(id);
+    revokeStreamTokensForUser(id);
     await reconcileLocalBypassAfterUserMutation();
     res.json({ success: true });
   } catch (e) {
@@ -560,5 +683,6 @@ router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
 });
 
 registerPlexLink(router);
+registerIdentityLink(router);
 
 export default router;

@@ -10,6 +10,13 @@ const safeCompare = (a, b) => {
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 };
 
+function createSubsonicToken(password, salt) {
+  // Subsonic requires MD5(password + salt) for token authentication; this digest is never stored.
+  //
+  // codeql[js/insufficient-password-hash]
+  return crypto.createHash("md5").update(`${password}${salt}`).digest("hex");
+}
+
 const DEFAULT_PROXY_HEADER = "x-forwarded-user";
 const STREAM_TOKEN_TTL_MS = 2 * 60 * 1000;
 const streamTokenStore = new Map();
@@ -69,7 +76,9 @@ export const rotateApiKey = async () =>
   persistApiKey(dbOps.getSettings(), crypto.randomBytes(32).toString("hex"));
 
 export const isProxyAuthEnabled = () => {
-  if (process.env.AUTH_PROXY_ENABLED === "true") return true;
+  if (process.env.AUTH_PROXY_ENABLED !== undefined) {
+    return process.env.AUTH_PROXY_ENABLED.trim().toLowerCase() === "true";
+  }
   return !!process.env.AUTH_PROXY_HEADER;
 };
 
@@ -216,11 +225,22 @@ function getRequestIps(req) {
   return Array.from(new Set(ips));
 }
 
+// The connecting peer. req.ip and req.ips come from X-Forwarded-For, which a
+// client that reaches Aurral directly can set to anything.
+function getPeerIps(req) {
+  return Array.from(
+    new Set(
+      [req?.socket?.remoteAddress, req?.connection?.remoteAddress]
+        .map((ip) => normalizeIp(ip))
+        .filter(Boolean),
+    ),
+  );
+}
+
 function isTrustedProxy(req) {
   const allowed = parseCsv(process.env.AUTH_PROXY_TRUSTED_IPS).map((ip) => normalizeIp(ip));
   if (allowed.length === 0) return true;
-  const requestIps = getRequestIps(req);
-  return requestIps.some((ip) => allowed.includes(ip));
+  return getPeerIps(req).some((ip) => allowed.includes(ip));
 }
 
 function buildPermissions(role, permissions) {
@@ -243,13 +263,16 @@ function buildPermissions(role, permissions) {
   };
 }
 
-function toResolvedUser(user) {
+export function toResolvedUser(user) {
   if (!user) return null;
   return {
     id: user.id,
     username: user.username,
     role: user.role,
     permissions: buildPermissions(user.role, user.permissions),
+    status: user.status || "active",
+    isProtected: !!user.isProtected,
+    roleSource: user.roleSource || "local",
   };
 }
 
@@ -342,19 +365,33 @@ export async function getSoleAdminUser() {
   return user;
 }
 
+// Every address involved must be local: the peer and any forwarded client.
+// Accepting any one of them let a remote client claim a local address in
+// X-Forwarded-For, and let a local reverse proxy vouch for internet traffic.
+// Raw X-Forwarded-For / Forwarded entries, whether or not Express trusts
+// them (with TRUST_PROXY=false it ignores them and reports the proxy).
+function getForwardedHeaderIps(req) {
+  if (!req?.headers) return [];
+  const forwardedFor = String(getHeaderValue(req, "x-forwarded-for") || "")
+    .split(",")
+    .map((entry) => entry.trim());
+  const forwarded = [...String(getHeaderValue(req, "forwarded") || "").matchAll(/for=("?)\[?([^\]";,]+)\]?\1/gi)]
+    .map((match) => match[2]);
+  return [...forwardedFor, ...forwarded].filter(Boolean).map((ip) => normalizeIp(ip) || ip);
+}
+
 export function isRequestFromTrustedLocalSubnet(req) {
-  const requestIps = getRequestIps(req);
-  if (requestIps.some((ip) => isLoopbackIp(ip))) {
-    return true;
-  }
+  const requestIps = [...new Set([...getRequestIps(req), ...getForwardedHeaderIps(req)])];
+  if (requestIps.length === 0) return false;
   const subnet = inferTrustedLocalSubnet();
-  if (!subnet) return false;
-  return requestIps.some((ip) => {
-    if (!isPrivateIpv4(ip)) return false;
+  const isLocal = (ip) => {
+    if (isLoopbackIp(ip)) return true;
+    if (!subnet || !isPrivateIpv4(ip)) return false;
     const ipInt = ipv4ToInt(ip);
     if (ipInt == null) return false;
     return (ipInt & ipv4ToInt(subnet.netmask)) >>> 0 === subnet.networkInt;
-  });
+  };
+  return requestIps.every(isLocal);
 }
 
 export async function getLocalNetworkBypassStatus(req) {
@@ -425,20 +462,30 @@ export async function reconcileLocalNetworkBypassSetting() {
   };
 }
 
+// Creates an account for an external identity. Its password hash is random,
+// so it has no usable local password.
+export async function createSystemProvisionedUser(username, role) {
+  const passwordHash = hashPassword(crypto.randomBytes(32).toString("hex"));
+  return userOps.createUser(username, passwordHash, role, null, false);
+}
+
 export async function ensureExternalUser(username, role) {
   const existing = await userOps.getUserByUsername(username);
   if (existing) {
+    if (existing.isProtected) {
+      return toResolvedUser(existing);
+    }
     if (existing.role !== role) {
-      const updated = await userOps.updateUser(existing.id, { role });
+      const updated = await userOps.updateUser(existing.id, { role, roleSource: "local" });
       return toResolvedUser(updated || existing);
     }
     return toResolvedUser(existing);
   }
-  const passwordHash = hashPassword(crypto.randomBytes(32).toString("hex"));
-  const created = await userOps.createUser(username, passwordHash, role, null);
-  return created
-    ? toResolvedUser((await userOps.getUserByUsername(created.username)) || created)
-    : toResolvedUser(await userOps.getUserByUsername(username));
+  const created = await createSystemProvisionedUser(username, role);
+  // A concurrent request may have created the same proxy user first.
+  return toResolvedUser(
+    (await userOps.getUserByUsername(created?.username || username)) || created,
+  );
 }
 
 function isProxyAdmin(req, username) {
@@ -476,7 +523,8 @@ export async function resolveProxyUser(req) {
   if (!username) return null;
 
   const role = resolveProxyRole(req, username);
-  return ensureExternalUser(username, role);
+  const user = await ensureExternalUser(username, role);
+  return user?.status === "active" ? user : null;
 }
 
 export async function issueProxySession(req) {
@@ -495,7 +543,7 @@ async function migrateLegacyAdmin() {
   const authPassword = settings.integrations?.general?.authPassword;
   if (!onboardingComplete || !authPassword) return;
   const hash = hashPassword(authPassword);
-  await userOps.createUser(authUser, hash, "admin", null);
+  await userOps.createUser(authUser, hash, "admin", null, true, true, authPassword);
 }
 
 export async function resolveUser(username, password) {
@@ -507,11 +555,13 @@ export async function resolveUser(username, password) {
     .trim()
     .toLowerCase();
   const u = await userOps.getUserByUsername(un);
-  if (!u || !password) return null;
+  if (!u || u.status !== "active" || !password) return null;
   if (!verifyPassword(password, u.passwordHash)) return null;
-  if (needsRehash(u.passwordHash)) {
-    await userOps.updateUser(u.id, { passwordHash: hashPassword(password) });
-  }
+  await userOps.recordPasswordLogin(u.id, {
+    verifiedHash: u.passwordHash,
+    password,
+    newHash: needsRehash(u.passwordHash) ? hashPassword(password) : null,
+  });
   const perms = buildPermissions(u.role, u.permissions);
   return {
     id: u.id,
@@ -523,20 +573,33 @@ export async function resolveUser(username, password) {
 
 export async function resolveSubsonicTokenUser(username, token, salt) {
   if (!/^[a-f\d]{32}$/i.test(String(token || "")) || !String(salt || "")) return null;
-  if (
-    !safeCompare(
-      String(username || "").trim().toLowerCase(),
-      String(getAuthUser()).trim().toLowerCase(),
-    )
-  ) return null;
+  if ((await userOps.countUsers()) === 0) await migrateLegacyAdmin();
+  const normalizedUsername = String(username || "").trim().toLowerCase();
+  const user = await userOps.getUserByUsername(normalizedUsername);
+  if (!user) return null;
 
-  const matchedPassword = getAuthPassword().find((password) =>
-    safeCompare(
-      crypto.createHash("md5").update(`${password}${salt}`).digest("hex"),
-      token,
-    ),
-  );
-  return matchedPassword ? resolveUser(username, matchedPassword) : null;
+  // A stored credential is proven by the token itself, so skip the slow
+  // password hash and the login bookkeeping: clients send a token with every
+  // stream and cover request.
+  const storedPassword = await userOps.getSubsonicPasswordById(user.id);
+  if (storedPassword) {
+    if (user.status !== "active") return null;
+    return safeCompare(createSubsonicToken(storedPassword, salt), token)
+      ? toResolvedUser(user)
+      : null;
+  }
+  let password = null;
+  if (safeCompare(normalizedUsername, String(getAuthUser()).trim().toLowerCase())) {
+    password = getAuthPassword().find((candidate) =>
+      safeCompare(createSubsonicToken(candidate, salt), token),
+    );
+  }
+  if (!password) return null;
+
+  const expectedToken = createSubsonicToken(password, salt);
+  return safeCompare(expectedToken, token)
+    ? resolveUser(normalizedUsername, password)
+    : null;
 }
 
 function legacyAuth(username, password) {
@@ -566,7 +629,8 @@ function legacyAuth(username, password) {
 export async function resolveLocalNetworkBypassUser(req) {
   const status = await getLocalNetworkBypassStatus(req);
   if (!status.active) return null;
-  return toResolvedUser(await getSoleAdminUser());
+  const user = await getSoleAdminUser();
+  return user?.status === "active" ? toResolvedUser(user) : null;
 }
 
 export async function resolveRequestUser(req) {
@@ -585,7 +649,9 @@ export async function resolveRequestUser(req) {
       const username = colon >= 0 ? decoded.slice(0, colon) : decoded;
       const password = colon >= 0 ? decoded.slice(colon + 1) : "";
       let user = await resolveUser(username, password);
-      if (!user) user = legacyAuth(username, password);
+      // The settings credentials only stand in for an admin before any
+      // account exists; afterwards they must not bypass account status.
+      if (!user && (await userOps.countUsers()) === 0) user = legacyAuth(username, password);
       if (user) return user;
     } catch (e) {
       return null;
@@ -617,6 +683,18 @@ export function issueStreamToken(user, ttlMs = STREAM_TOKEN_TTL_MS) {
     expiresAt: Date.now() + Math.max(1000, Number(ttlMs) || STREAM_TOKEN_TTL_MS),
   });
   return token;
+}
+
+// Drops unexpired stream tokens of a user whose account became inactive.
+export function revokeStreamTokensForUser(userId) {
+  const targetUserId = Number(userId);
+  let revoked = 0;
+  for (const [token, payload] of streamTokenStore.entries()) {
+    if (Number(payload?.user?.id) !== targetUserId) continue;
+    streamTokenStore.delete(token);
+    revoked += 1;
+  }
+  return revoked;
 }
 
 function consumeStreamToken(rawToken) {
@@ -664,8 +742,12 @@ export const authMiddleware = async (req, res, next) => {
     if (
       req.path === "/api/auth/login" ||
       req.path === "/api/auth/oidc/login" ||
-      req.path === "/api/auth/oidc/exchange"
-      || (req.method === "GET" && req.path === "/api/scrobbling/lastfm/link/callback")
+      req.path === "/api/auth/oidc/exchange" ||
+      req.path === "/api/auth/google/login" ||
+      req.path === "/api/auth/google/exchange" ||
+      req.path === "/api/auth/plex/login/pin" ||
+      req.path === "/api/auth/plex/login/complete" ||
+      (req.method === "GET" && req.path === "/api/scrobbling/lastfm/link/callback")
     ) {
       return next();
     }
@@ -726,7 +808,7 @@ export const verifyTokenAuth = async (req) => {
     }
     if (creds.type === "basic") {
       let u = await resolveUser(creds.username, creds.password);
-      if (!u) u = legacyAuth(creds.username, creds.password);
+      if (!u && (await userOps.countUsers()) === 0) u = legacyAuth(creds.username, creds.password);
       if (u) {
         req.user = u;
         return true;
@@ -739,9 +821,9 @@ export const verifyTokenAuth = async (req) => {
     return true;
   }
   if (isProxyAuthEnabled()) return false;
-  const passwords = getAuthPassword();
-  if (passwords.length === 0) return true;
-  return false;
+  // Media URLs are exempt from authMiddleware, so they apply the same rule:
+  // open only while the install requires no authentication at all.
+  return !(await isAuthRequiredByConfig());
 };
 
 export function hasPermission(user, permission) {

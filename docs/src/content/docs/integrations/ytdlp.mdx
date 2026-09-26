@@ -9,9 +9,9 @@ yt-dlp extracts audio with ffmpeg. Aurral stages the audio outside your media pa
 
 The default staging path is `/config/_staging`. To use another disk, mount it in the Aurral container and set **Settings > Download clients > yt-dlp > Staging path**. Keep this path outside every media-server library.
 
-You do not need a separate daemon. The Docker image includes `yt-dlp` and `ffmpeg`.
+You do not need a separate daemon. The Docker image includes `yt-dlp`, `ffmpeg`, and Node. Aurral enables Node as yt-dlp's JavaScript runtime for current YouTube extraction.
 
-For a bare-metal installation, install both programs on the host. Make sure that `yt-dlp` is on `PATH`.
+For a bare-metal installation, install `yt-dlp` and `ffmpeg` on the host. A supported JavaScript runtime such as Node or Deno is recommended for current YouTube extraction. Make sure that `yt-dlp` and the runtime are on `PATH`.
 
 ## Setup
 
@@ -37,7 +37,9 @@ Aurral also applies the global quality profile. It rejects the final file if its
 
 After validation, Aurral writes the playlist's title, artist, album, album artist, year, and track number into the audio file. This metadata lets tag-based libraries such as Navidrome organize yt-dlp downloads correctly.
 
-When a downloaded file matches the requested track but its duration differs significantly, Aurral retains it under **Activity > Queue** for preview, approval, or denial.
+Aurral stores its internal identity marker in the grouping tag instead of the comment tag, so Navidrome does not show it as the track description. Existing files with the older comment marker remain readable.
+
+When a downloaded file probably matches the requested track but the evidence conflicts, for example its duration or track number differs or its tags match only moderately, Aurral retains it under **Activity > Queue** for preview, approval, or denial.
 
 Audio from YouTube is usually lossy. Prefer slskd, deemix, or Usenet when you want higher quality.
 

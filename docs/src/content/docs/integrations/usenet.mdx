@@ -12,6 +12,10 @@ Enable and connect both components:
 - The download client in **Settings > Download clients**
 - Prowlarr in **Settings > Indexers**
 
+## Search behavior
+
+When artist details are available, Aurral tries artist-and-album searches first. If they return too few suitable releases, it searches for the album title alone, then tries the album and track titles together. Without artist details, Aurral starts with the album title alone. Results still go through release matching, and Aurral validates downloaded files before importing them.
+
 ## Setup overview
 
 1. Run Prowlarr with at least one Usenet audio indexer configured.
@@ -73,7 +77,7 @@ If NZBGet runs on Windows and reports host paths, mount the parent folder into A
 
 Then, add a path mapping under **Settings > Download clients > Remote path mappings**.
 
-Aurral can find a track with an incorrect duration. Aurral retains this track under **Activity > Queue**.
+When a downloaded file probably matches the requested track but the evidence conflicts, for example its duration or track number differs or its tags match only moderately, Aurral retains it under **Activity > Queue** for preview, approval, or denial.
 
 You can preview, approve, or deny the track.
 

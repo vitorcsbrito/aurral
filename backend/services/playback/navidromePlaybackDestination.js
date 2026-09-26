@@ -4,6 +4,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { userOps } from "../../db/helpers/index.js";
 import { NavidromeClient } from "../navidrome.js";
 import { logger } from "../logger.js";
+import { getPathMappings, resolveLocalPath } from "../pathMappings.js";
 import { navidromePlaylistPointerStore } from "../navidrome/navidromePlaylistPointerStore.js";
 import {
   AURRAL_FLOWS_DIR,
@@ -21,6 +22,7 @@ import {
 const ARTWORK_FILE_EXTENSIONS = [".webp", ".jpg", ".png"];
 const ARTWORK_SUPPRESS_SUFFIX = ".no-artwork";
 const PLAYLIST_FILE_EXTENSIONS = [".m3u", ".nsp"];
+const MIN_AURRAL_PATH_SEGMENTS = 3;
 const SONG_LOOKUP_BATCH_SIZE = 5;
 
 export const navidromeSettings = Object.freeze({
@@ -96,6 +98,52 @@ export class NavidromePlaybackDestination {
 
   isConfigured() {
     return Boolean(this.client?.isConfigured());
+  }
+
+  async getReferencedPaths({ excludeEntityIds = [] } = {}) {
+    const excluded = new Set();
+    for (const entityId of excludeEntityIds) {
+      for (const pointer of await navidromePlaylistPointerStore.getPointersForEntity(entityId)) {
+        if (pointer.playlistId != null) excluded.add(String(pointer.playlistId));
+      }
+    }
+    const paths = (await this.client.getPlaylistTrackPaths(excluded))
+      .map((file) => resolveLocalPath(file, getPathMappings("navidrome")));
+    // A path Aurral cannot see is usually a deleted file or one outside its
+    // folders, which cleanup never touches. It matters when it names one of
+    // Aurral's own files under a prefix without a path mapping: then the list
+    // would miss it, so usage is reported as unknown and cleanup keeps files.
+    for (const file of paths) {
+      if (await this._pathExists(file)) continue;
+      if (await this._namesUnmappedAurralFile(file)) {
+        return {
+          ok: false,
+          error: {
+            message: `Navidrome playlist path ${file} is not visible here; check the Navidrome path mapping`,
+          },
+        };
+      }
+    }
+    return { ok: true, paths };
+  }
+
+  _pathExists(file) {
+    return fs.access(file).then(() => true, () => false);
+  }
+
+  // True when some tail of an unreadable path ("/server-music/_flows/x/a.flac"
+  // -> "_flows/x/a.flac") exists under Aurral's download root.
+  async _namesUnmappedAurralFile(file) {
+    const root = path.resolve(this.weeklyFlowRoot);
+    const resolved = path.resolve(file);
+    if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return false;
+    const segments = String(file).split(/[\\/]+/).filter(Boolean);
+    // Aurral stores tracks at least as Artist/Album/file (deeper under
+    // _flows), so shorter tails like a bare "track.flac" are coincidences.
+    for (let index = 1; index <= segments.length - MIN_AURRAL_PATH_SEGMENTS; index += 1) {
+      if (await this._pathExists(path.join(root, ...segments.slice(index)))) return true;
+    }
+    return false;
   }
 
   _sanitize(value) {
@@ -459,7 +507,7 @@ export class NavidromePlaybackDestination {
       this._scheduleCatchup();
       return playbackOperationSuccess();
     }
-    if (pointer && hasUnresolvedSongs) {
+    if (pointer && hasUnresolvedSongs && !songIds.length) {
       this._pendingSnapshots.set(`${snapshot.entityId}:${targetKey}`, snapshot);
       this._scheduleCatchup();
       return playbackOperationSuccess();
@@ -604,6 +652,7 @@ export class NavidromePlaybackDestination {
     if (!this.isConfigured()) return playbackOperationSuccess();
     try {
       await this.client.scanLibrary();
+      this._refreshSongIndex();
       this._scheduleCatchup();
       return playbackOperationSuccess();
     } catch (error) {
@@ -615,6 +664,15 @@ export class NavidromePlaybackDestination {
     }
   }
 
+  // Newly indexed tracks (#774) are picked up after a scan and before each
+  // catch-up pass. Publishing itself reuses the cached index (30 s TTL), so a
+  // pass over every playlist does not download the whole library each time.
+  _refreshSongIndex() {
+    if (typeof this.client?.invalidateIndexedSongsCache === "function") {
+      this.client.invalidateIndexedSongsCache();
+    }
+  }
+
   _scheduleCatchup(delaysMs = [30000, 90000, 180000]) {
     if (this._catchupRunning || !this._pendingSnapshots.size) return;
     this._catchupRunning = true;
@@ -623,6 +681,7 @@ export class NavidromePlaybackDestination {
         for (const delayMs of delaysMs) {
           await wait(delayMs, undefined, { ref: false });
           if (!this.isConfigured() || !this._pendingSnapshots.size) break;
+          this._refreshSongIndex();
           for (const snapshot of [...this._pendingSnapshots.values()]) {
             const key = `${snapshot.entityId}:${this._targetKey(snapshot.ownerUserId)}`;
             if (this._pendingSnapshots.get(key) !== snapshot) continue;

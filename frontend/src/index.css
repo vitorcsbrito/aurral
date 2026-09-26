@@ -9655,6 +9655,24 @@ button.native-library-genre-row:focus-visible {
   background: color-mix(in srgb, var(--aurral-text-muted) 35%, transparent);
 }
 
+.login-local-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--aurral-text-muted);
+  font-size: 0.8125rem;
+  text-align: center;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.login-local-toggle:hover {
+  color: var(--aurral-text);
+}
+
 .login-submit {
   min-height: 2.75rem;
   border-color: var(--aurral-border-strong);
@@ -11350,44 +11368,6 @@ button.native-library-genre-row:focus-visible {
   min-width: 0;
 }
 
-.flow-page__history-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--aurral-border);
-}
-
-.flow-page__history-copy {
-  display: grid;
-  min-width: 0;
-  gap: 0.25rem;
-}
-
-.flow-page__history-description {
-  max-width: 38rem;
-  margin: 0;
-  color: var(--aurral-text-muted);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-}
-
-.flow-page__history-control {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.flow-page__history-state {
-  min-width: 1.75rem;
-  color: var(--aurral-text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-align: right;
-}
-
 .flow-page__field {
   display: grid;
   gap: 0.5rem;
@@ -12220,6 +12200,35 @@ button.native-library-genre-row:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flow-page__track-title-availability {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.flow-page__track-title-availability .flow-page__track-status-dot {
+  flex-shrink: 0;
+}
+
+.flow-page__track-availability-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1rem;
+  min-height: 1.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: help;
+}
+
+.flow-page__track-availability-indicator:focus-visible {
+  outline: 2px solid var(--aurral-text);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .flow-page__tracks-table-head th {
@@ -13910,6 +13919,23 @@ button.native-library-genre-row:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.connected-account-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.connected-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--aurral-radius-sm);
+  background: var(--aurral-surface-hover);
+  font-size: 0.875rem;
 }
 
 .settings-page__section-intro {

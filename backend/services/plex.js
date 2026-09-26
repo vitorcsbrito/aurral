@@ -1,6 +1,7 @@
 import axios from "../../lib/axiosFetch.js";
 import crypto from "crypto";
 import { AURRAL_FLOWS_DIR } from "./playlistPaths.js";
+import { readPlaylistPages, requirePlaylistPath } from "./playback/playlistUsage.js";
 
 const PLEX_TV = "https://plex.tv";
 const PLEX_AUTH_APP = "https://app.plex.tv";
@@ -89,13 +90,17 @@ export class PlexClient {
     return data.authToken || null;
   }
 
-  static async validateToken(token, clientId) {
+  // Resolves null for a rejected token. With throwOnTransient, network errors,
+  // 429 and 5xx responses throw instead, so callers can retry.
+  static async validateToken(token, clientId, { throwOnTransient = false } = {}) {
     try {
       const { data } = await axios.get(`${PLEX_TV}/api/v2/user`, {
         headers: PlexClient.plexHeaders(clientId, { token }),
       });
       return data || null;
-    } catch {
+    } catch (error) {
+      const status = Number(error?.response?.status) || null;
+      if (throwOnTransient && (!status || status === 429 || status >= 500)) throw error;
       return null;
     }
   }
@@ -195,7 +200,7 @@ export class PlexClient {
     throw lastError || new Error("Plex switch-user request failed");
   }
 
-  async request(path, { params = {}, method = "GET", data = null } = {}) {
+  async request(path, { params = {}, method = "GET", data = null, timeout = 0 } = {}) {
     if (!this.isConfigured()) throw new Error("Plex not configured");
     try {
       const response = await axios({
@@ -203,6 +208,7 @@ export class PlexClient {
         url: `${this.url}${path}`,
         params,
         data,
+        timeout,
         headers: PlexClient.plexHeaders(this.clientId, { token: this.token }),
       });
       return response.data;
@@ -397,6 +403,32 @@ export class PlexClient {
       params: { playlistType: "audio" },
     });
     return data?.MediaContainer?.Metadata || [];
+  }
+
+  async getPlaylistTrackPaths(excludedIds = new Set()) {
+    const read = (endpoint, params = {}) => readPlaylistPages(async (start) => {
+      const data = await this.request(endpoint, { timeout: 30_000, params: {
+        ...params, "X-Plex-Container-Start": start, "X-Plex-Container-Size": 200,
+      } });
+      const container = data?.MediaContainer;
+      return {
+        items: container?.Metadata ?? (container?.size === 0 ? [] : undefined),
+        total: container?.totalSize,
+      };
+    });
+    const playlists = await read("/playlists", { playlistType: "audio", type: 15 });
+    const paths = new Set();
+    for (const playlist of playlists) {
+      if (!playlist?.ratingKey) throw new Error("Plex playlist is missing its ID");
+      if (excludedIds.has(String(playlist.ratingKey))) continue;
+      const entries = await read(`/playlists/${encodeURIComponent(playlist.ratingKey)}/items`);
+      for (const entry of entries) {
+        const parts = (entry.Media || []).flatMap((media) => media.Part || []);
+        if (!parts.length) throw new Error("Plex playlist track has no media path");
+        for (const part of parts) paths.add(requirePlaylistPath(part.file));
+      }
+    }
+    return [...paths];
   }
 
   async getPlaylistItems(playlistRatingKey) {

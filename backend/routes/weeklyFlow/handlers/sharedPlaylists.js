@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
+import { requireUserAccount } from "../../../middleware/requirePermission.js";
 import { downloadTracker } from "../../../services/weeklyFlow/weeklyFlowDownloadTracker.js";
 import { weeklyFlowWorker } from "../../../services/weeklyFlow/weeklyFlowWorker.js";
 import {
   dedupeSharedTracks,
+  flowPlaylistConfig,
 } from "../../../services/weeklyFlow/weeklyFlowPlaylistConfig.js";
 import { weeklyFlowOperationQueue } from "../../../services/weeklyFlow/weeklyFlowOperationQueue.js";
 import {
@@ -59,7 +61,7 @@ async function createOrImportSharedPlaylist(req, res, { requireTracks, label }) 
 }
 
 export function registerSharedPlaylists(router) {
-  router.post("/shared-playlists", async (req, res) => {
+  router.post("/shared-playlists", requireUserAccount, async (req, res) => {
     try {
       return await createOrImportSharedPlaylist(req, res, {
         requireTracks: false,
@@ -79,7 +81,7 @@ export function registerSharedPlaylists(router) {
     }
   });
 
-  router.post("/shared-playlists/import", async (req, res) => {
+  router.post("/shared-playlists/import", requireUserAccount, async (req, res) => {
     try {
       return await createOrImportSharedPlaylist(req, res, {
         requireTracks: true,
@@ -137,6 +139,48 @@ export function registerSharedPlaylists(router) {
     } catch (error) {
       res.status(500).json({
         error: "Failed to add playlist tracks",
+        message: error.message,
+      });
+    }
+  });
+
+  router.put("/shared-playlists/:playlistId/track-availability", async (req, res) => {
+    const { playlistId } = req.params;
+    if (!getAccessibleSharedPlaylist(req.user, playlistId)) {
+      return res.status(404).json({ error: "Shared playlist not found" });
+    }
+    if (typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+    try {
+      const playlist = await flowPlaylistConfig.updateSharedPlaylist(playlistId, {
+        showTrackAvailability: req.body.enabled,
+      });
+      return res.json({ success: true, showTrackAvailability: playlist.showTrackAvailability });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to update track availability",
+        message: error.message,
+      });
+    }
+  });
+
+  router.put("/shared-playlists/:playlistId/record-history", async (req, res) => {
+    const { playlistId } = req.params;
+    if (!getAccessibleSharedPlaylist(req.user, playlistId)) {
+      return res.status(404).json({ error: "Shared playlist not found" });
+    }
+    if (typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+    try {
+      const playlist = await flowPlaylistConfig.updateSharedPlaylist(playlistId, {
+        recordHistory: req.body.enabled,
+      });
+      return res.json({ success: true, recordHistory: playlist.recordHistory });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to update listening history",
         message: error.message,
       });
     }

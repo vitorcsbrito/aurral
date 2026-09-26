@@ -1,5 +1,8 @@
 import { noCache } from "../../../middleware/cache.js";
-import { requireAuth } from "../../../middleware/requirePermission.js";
+import {
+  requireAuth,
+  requireUserAccount,
+} from "../../../middleware/requirePermission.js";
 import { buildImageProxyUrl } from "../../../services/imageProxyService.js";
 import {
   getCanonicalFavoriteTargetKeys,
@@ -167,7 +170,7 @@ export function registerCanonical(router) {
     res.json({ ...starred, library: toPublicLibrary(library) });
   });
 
-  router.post("/favorites", requireAuth, noCache, async (req, res) => {
+  router.post("/favorites", requireAuth, requireUserAccount, noCache, async (req, res) => {
     const ids = Array.isArray(req.body?.ids)
       ? req.body.ids.map((id) => String(id || "").trim()).filter(Boolean)
       : [];

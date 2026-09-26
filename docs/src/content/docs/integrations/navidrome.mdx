@@ -17,7 +17,11 @@ Favoriting a Flow or shared-playlist entry uses the same canonical acquisition b
 
 ## Connect a Subsonic client
 
-Point the client at the Aurral URL and use the Aurral account from onboarding. Aurral enables browser Subsonic clients on `/rest` without an additional CORS setting. Feishin can connect with its default token authentication when you use that configured account. Feishin can also use password authentication when you set `LEGACY_AUTHENTICATION=true` in Feishin's environment, not Aurral's. When Feishin locks server settings, also set `SERVER_LOCK=true` in Feishin's environment.
+Point the client at the Aurral URL and use any local Aurral account. Aurral enables browser Subsonic clients on `/rest` without an additional CORS setting. Feishin can connect with its default token authentication. Feishin can also use password authentication when you set `LEGACY_AUTHENTICATION=true` in Feishin's environment. When Feishin locks server settings, set `SERVER_LOCK=true` in Feishin's environment.
+
+Subsonic token authentication uses the account's Aurral password. Accounts created before per-user Subsonic credentials were added need to sign in to Aurral once after upgrading, or have an administrator reset their password, before a token-only client can connect. Proxy- or OIDC-created accounts do not have a local Aurral password until an administrator sets one.
+
+Aurral keeps each local password encrypted with the instance's settings key, which is also stored in Postgres, so treat database backups as sensitive.
 
 Use the Aurral URL as the Feishin server URL. Set the server type to `Subsonic`. Feishin then shows canonical tracks, flow playlists, and shared playlists that the account can access. A playlist entry remains playable while its canonical file is readable.
 
@@ -83,24 +87,30 @@ Add `/data/music` as a normal Navidrome music library if it is not already prese
 
 ## Filesystem paths
 
-Aurral uses the Subsonic API for playlists, so it does not have a Navidrome playlist path-mapping setting. The automatically managed **Aurral Playlists** library must use the same absolute path in Aurral and Navidrome. Mount the shared download tree at matching paths in both applications.
+Aurral uses the Subsonic API to publish playlists, so publishing does not use a path mapping. A remote path mapping with **Applies to** set to **Navidrome** only translates the file paths in Navidrome playlists that Aurral checks before automatic cleanup. The automatically managed **Aurral Playlists** library must use the same absolute path in Aurral and Navidrome. Mount the shared download tree at matching paths in both applications.
 
-Reused Lidarr tracks do not need matching path strings because Aurral resolves indexed songs by their exact recording MBID. Generated tracks use the exact indexed Navidrome filepath or recording MBID; Aurral does not substitute a title match. Navidrome still needs its own library for those files. Use a separate [Remote Path Mapping](/getting-started/storage/#paths-reported-by-lidarr-or-download-clients) only when Aurral cannot read a path reported by Lidarr or a download client.
+Reused Lidarr tracks do not need matching path strings because Aurral resolves indexed songs by their exact recording MBID. Generated tracks use the exact indexed Navidrome file path or recording MBID first. If neither matches, Aurral uses an indexed song with the same title and artist (and album, when several match), but only when exactly one song matches. Navidrome still needs its own library for those files. Use a separate [Remote Path Mapping](/getting-started/storage/#paths-reported-by-lidarr-or-download-clients) only when Aurral cannot read a path reported by Lidarr or a download client.
 
 ## API playlists and scans
 
 Aurral stores the Navidrome playlist ID for each flow or shared playlist. Names are only display values, so a rename updates the same Navidrome playlist. The Navidrome playlist is named `<username> - <name>` after its Aurral owner.
 
+Aurral-managed Navidrome playlists are made public when they are created. Later syncs update their name and tracks without changing visibility, so you can make a playlist private in Navidrome and keep it private. Playlist changes remain owned by the configured Navidrome account.
+
 Aurral also uploads its generated playlist artwork to API playlists and updates it when you change or regenerate artwork in Aurral. Aurral revalidates its local artwork response after restart, so the image stays current in the Aurral UI. Navidrome uses that uploaded image instead of its automatic tiled artwork when custom playlist artwork is supported.
 
 If Navidrome is unavailable during a playlist update, Aurral keeps the stored playlist ID and queues the snapshot for its existing catch-up attempts.
 
-If a new track is not indexed, Aurral leaves it out until Navidrome scans it; it never substitutes a same-title track from another artist. Navidrome scans the **Aurral Playlists** library, not only your main Lidarr library. If the library appears but has no tracks:
+If a new track is not indexed and no indexed song matches its recording MBID or its exact title and artist, Aurral leaves it out until Navidrome scans it. It never substitutes a same-title track from another artist. Navidrome scans the **Aurral Playlists** library, not only your main Lidarr library. If the library appears but has no tracks:
 
 - confirm that a permanent track exists under the Downloads Folder or a flow track exists under `_flows`;
 - confirm that the Navidrome library path points to that folder;
-- run a Navidrome scan or save the Aurral Navidrome settings;
+- run a Navidrome scan, or select **Refresh** in Aurral's Library, which asks Navidrome to scan afterwards (saving the Navidrome settings starts a scan only when a setting changed);
 - wait for the scan to finish.
+
+## Files used by Navidrome playlists
+
+Before automatic cleanup deletes a file, Aurral reads every Navidrome playlist and keeps any file that a playlist still uses. The Navidrome account in **Settings > Playback > Navidrome** must be a Navidrome administrator so Aurral can see other users' private playlists. With a non-admin account, or while Navidrome is unreachable, Aurral keeps every file that automatic cleanup would delete. If Navidrome reports playlist paths that differ from Aurral's, add a remote path mapping with **Applies to** set to **Navidrome**.
 
 ## Remove missing tracks
 

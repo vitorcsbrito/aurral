@@ -4,15 +4,16 @@ import { downloadTracker } from "./weeklyFlow/weeklyFlowDownloadTracker.js";
 import { prowlarrClient } from "./prowlarrClient.js";
 import { getDownloadClient } from "./download/downloadClientSettings.js";
 import { logger } from "./logger.js";
-import {
-  buildFlowSearchTiers,
-  validateDownloadedTrack,
-} from "./weeklyFlow/weeklyFlowSoulseekMatcher.js";
+import { buildFlowSearchTiers } from "./weeklyFlow/weeklyFlowSoulseekSearch.js";
 import {
   isAudioFile,
   rankUsenetReleases,
   selectRankedUsenetCandidates,
-} from "./weeklyFlow/weeklyFlowUsenetMatcher.js";
+} from "./weeklyFlow/weeklyFlowUsenetReleaseSearch.js";
+import {
+  selectVerifiedDownloadedFile,
+  MATCHER_UNAVAILABLE_MESSAGE,
+} from "./trackMatching/index.js";
 import { resolvePlaylistRoot } from "./playlistPaths.js";
 import { getPathMappings, resolveLocalPath } from "./pathMappings.js";
 import {
@@ -22,6 +23,7 @@ import {
   sanitizePathPart,
   writeAudioMetadata,
 } from "./playlistDownloadUtils.js";
+import { deferForInactiveOwner } from "./weeklyFlow/weeklyFlowOwnerStatus.js";
 import {
   getPayloadCandidate,
   hasNextCandidate,
@@ -54,7 +56,7 @@ function getSabnzbdClient() {
 
 function hasEnoughCandidates(aggregated, resolvedTrack, qualityOptions) {
   const ranked = rankUsenetReleases(aggregated, resolvedTrack).filter(
-    (entry) => entry.preDownloadValid,
+    (entry) => entry.releaseAdmissible,
   );
   return orderAdvertisedQualityCandidates(ranked, {
     ...qualityOptions,
@@ -118,16 +120,7 @@ function uniqueResolvedPaths(values, source) {
   return out;
 }
 
-async function locateBestDownloadedAudio(historyItem, candidate, resolvedTrack, client) {
-  const directories = await client.getDownloadDirectories();
-  const clientKey = getUsenetClientKey();
-  const roots = uniqueResolvedPaths([
-    historyItem?.FinalDir,
-    historyItem?.DestDir,
-    historyItem?.storage,
-    directories.completedPath,
-    directories.destDir,
-  ], clientKey);
+async function collectAudioFilesFromRoots(roots) {
   const files = [];
   for (const root of roots) {
     const stat = await fs.stat(root).catch(() => null);
@@ -139,35 +132,56 @@ async function locateBestDownloadedAudio(historyItem, candidate, resolvedTrack, 
       files.push(...(await findAudioFilesRecursive(root)));
     }
   }
-  const uniqueFiles = uniqueResolvedPaths(files, clientKey);
-  let best = null;
-  for (const filePath of uniqueFiles) {
-    const validation = await validateDownloadedTrack(
-      filePath,
-      {
-        ...candidate,
-        raw: {
-          ...(candidate?.raw || {}),
-          file: filePath,
-        },
-      },
-      resolvedTrack,
-    );
-    const score =
-      Number(validation?.scores?.title || 0) +
-      Number(validation?.scores?.artist || 0) +
-      Number(validation?.scores?.album || 0);
-    if (validation.valid) {
-      if (!best || score > best.score) {
-        best = { filePath, validation, score };
-      }
-    } else if (!best?.validation?.valid && (!best || score > best.score)) {
-      best = { filePath, validation, score };
-    }
-  }
-  return best?.validation?.valid || best?.validation?.blocked
-    ? best
-    : { filePath: null, validation: best?.validation || null };
+  return files;
+}
+
+// When the history paths hold nothing Aurral can read (for example a path
+// only the client's container sees), look for the job's own folder under the
+// configured completed-download directories. Never the whole directory: every
+// file found is matched, and other downloads live there too.
+async function collectFromConfiguredDirectories(historyItem, clientKey) {
+  const names = [historyItem?.Name, historyItem?.NZBName, historyItem?.name, historyItem?.nzb_name]
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value !== "." && value !== ".." && !/[\\/]/.test(value));
+  if (names.length === 0) return [];
+  const directories = await getUsenetClient()
+    .getDownloadDirectories()
+    .catch(() => ({}));
+  const bases = [directories?.completedPath, directories?.destDir]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const roots = uniqueResolvedPaths(
+    bases.flatMap((base) => names.map((name) => path.join(base, name))),
+    clientKey,
+  );
+  return collectAudioFilesFromRoots(roots);
+}
+
+export async function collectDownloadedAudioFiles(historyItem) {
+  const clientKey = getUsenetClientKey();
+  const roots = uniqueResolvedPaths([
+    historyItem?.FinalDir,
+    historyItem?.DestDir,
+    historyItem?.storage,
+    historyItem?.path,
+    historyItem?.folder,
+    historyItem?.dir,
+  ], clientKey);
+  let files = await collectAudioFilesFromRoots(roots);
+  if (files.length === 0) files = await collectFromConfiguredDirectories(historyItem, clientKey);
+  return uniqueResolvedPaths(files, clientKey);
+}
+
+async function validateDownloadedRelease(audioFilePaths, candidate, resolvedTrack) {
+  // Post-download identity is decided by the shared engine: downloaded files
+  // are assigned to the expected tracklist with beets when one is available
+  // and validated individually against the requested track.
+  return selectVerifiedDownloadedFile({
+    request: resolvedTrack,
+    filePaths: audioFilePaths,
+    candidate,
+    source: "usenet",
+  });
 }
 
 async function handleUsenetSearch(payload, helpers) {
@@ -231,7 +245,7 @@ async function handleUsenetSearch(payload, helpers) {
     ? ranked.filter((entry) => !deniedSourceGuidSet.has(String(entry?.raw?.guid || "").trim()))
     : ranked;
   const qualityRanked = orderAdvertisedQualityCandidates(
-    filteredRanked.filter((entry) => entry.preDownloadValid),
+    filteredRanked.filter((entry) => entry.releaseAdmissible),
     {
     ...qualityOptions,
     readName: (entry) => entry?.raw?.release?.title,
@@ -242,7 +256,7 @@ async function handleUsenetSearch(payload, helpers) {
     score: entry.score,
     scores: entry.scores,
     resolvedAlbumName: entry.resolvedAlbumName,
-    preDownloadValid: entry.preDownloadValid === true,
+    releaseAdmissible: entry.releaseAdmissible === true,
   }));
   if (candidates.length === 0) {
     const message =
@@ -389,7 +403,11 @@ async function handleUsenetFinalize(payload, helpers) {
     ...buildResolvedTrack(job, payload.track),
     upgradeForJobId: payload.upgradeForJobId || null,
   };
-  const found = await locateBestDownloadedAudio(historyItem, candidate, resolvedTrack, client);
+  const found = await validateDownloadedRelease(
+    await collectDownloadedAudioFiles(historyItem),
+    candidate,
+    resolvedTrack,
+  );
   if (
     blockPipelineJobForReview({
       downloadTracker,
@@ -403,7 +421,9 @@ async function handleUsenetFinalize(payload, helpers) {
   if (!found.filePath) {
     const reason =
       found.validation?.reason ||
-      "Usenet download completed, but no matching audio file was found";
+      (found.validation?.error
+        ? MATCHER_UNAVAILABLE_MESSAGE
+        : "Usenet download completed, but no matching audio file was found");
     if (getUsenetClientKey() === "sabnzbd") {
       getSabnzbdClient().deleteHistoryItem(payload.nzbId).catch(() => {});
     }
@@ -420,6 +440,8 @@ async function handleUsenetFinalize(payload, helpers) {
   const finalDir = joinUnderRoot(playlistRoot, destination);
   const finalName = `${sanitizePathPart(job.trackName, "Unknown Track")}${ext || ".mp3"}`;
   const finalPath = path.join(finalDir, finalName);
+  const inactiveOwner = await deferForInactiveOwner(payload, job);
+  if (inactiveOwner) return inactiveOwner;
   await writeAudioMetadata(found.filePath, resolvedTrack);
   const committedFinalPath = await commitImportToPlaylistLibrary(
     found.filePath,

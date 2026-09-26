@@ -69,13 +69,23 @@ function resolveBinaryExists(binary) {
   });
 }
 
+export function buildYtdlpInvocationArgs(
+  args,
+  { nodeAvailable = resolveBinaryExists("node") } = {},
+) {
+  return [
+    ...(nodeAvailable ? ["--no-js-runtimes", "--js-runtimes", "node"] : []),
+    ...args,
+  ];
+}
+
 function isConfiguredFor(config = null) {
   return isEnabledFor(config) && resolveBinaryExists(getBinaryPath());
 }
 
 function runYtdlp(args, { timeoutMs = 120000, cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(getBinaryPath(), args, {
+    const child = spawn(getBinaryPath(), buildYtdlpInvocationArgs(args), {
       cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -196,7 +206,9 @@ async function downloadAudioFor(config = null, videoUrl, { jobId } = {}) {
   const stagingDir = resolveStagingDir(config, jobId);
   await fsPromises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
   await fsPromises.mkdir(stagingDir, { recursive: true });
-  const outTemplate = path.join(stagingDir, "%(id)s.%(ext)s");
+  // Name the file after the video title: the post-download check reads the
+  // track identity from the file name when the audio carries no tags.
+  const outTemplate = path.join(stagingDir, "%(title).180B.%(ext)s");
   try {
     await runYtdlp(
       [

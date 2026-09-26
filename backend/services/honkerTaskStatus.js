@@ -712,6 +712,43 @@ function readLiveJobs() {
   );
 }
 
+function readLiveJobStats() {
+  const currentTime = nowUnix();
+  return honkerQuery(
+    `
+      SELECT queue,
+             COUNT(*) AS live_count,
+             SUM(CASE WHEN state = 'processing' THEN 1 ELSE 0 END) AS running_count,
+             SUM(CASE
+                   WHEN state != 'processing' AND COALESCE(run_at, 0) > ? THEN 1
+                   ELSE 0
+                 END) AS scheduled_count,
+             SUM(CASE
+                   WHEN state != 'processing' AND COALESCE(run_at, 0) <= ? THEN 1
+                   ELSE 0
+                 END) AS queued_count,
+             MIN(CASE
+                   WHEN state != 'processing' AND COALESCE(run_at, 0) > ? THEN run_at
+                   ELSE NULL
+                 END) AS next_run_at
+      FROM _honker_live
+      GROUP BY queue
+    `,
+    [currentTime, currentTime, currentTime],
+  );
+}
+
+function readScheduledLiveJobs() {
+  return honkerQuery(
+    `
+      SELECT queue, payload, run_at
+      FROM _honker_live
+      WHERE state != 'processing' AND COALESCE(run_at, 0) > ?
+    `,
+    [nowUnix()],
+  );
+}
+
 function readDeadJobs() {
   const cutoff = getRunLedgerCutoffUnix();
   return honkerQuery(
@@ -727,7 +764,7 @@ function readDeadJobs() {
   );
 }
 
-async function readQueueStats(liveRows = []) {
+async function readQueueStats(liveRows = [], liveStats = [], scheduledRows = []) {
   const currentTime = nowUnix();
   const deadStats = honkerQuery(
     `
@@ -796,6 +833,22 @@ async function readQueueStats(liveRows = []) {
     } else {
       entry.queuedCount += 1;
     }
+  }
+  for (const row of scheduledRows) {
+    const entry = ensure(row.queue);
+    const runAt = Number(row.run_at || 0);
+    entry.scheduledKeys.add(taskMatchKey(row.queue, parsePayload(row.payload)));
+    if (!entry.nextRunAt || runAt < Number(Date.parse(entry.nextRunAt) / 1000)) {
+      entry.nextRunAt = unixToIso(runAt);
+    }
+  }
+  for (const row of liveStats) {
+    const entry = ensure(row.queue);
+    entry.liveCount = Number(row.live_count || 0);
+    entry.runningCount = Number(row.running_count || 0);
+    entry.queuedCount = Number(row.queued_count || 0);
+    entry.scheduledCount = Number(row.scheduled_count || 0);
+    entry.nextRunAt = row.next_run_at ? unixToIso(row.next_run_at) : null;
   }
   for (const row of deadStats) {
     ensure(row.queue).failedCount = Number(row.failed_count || 0);
@@ -1118,12 +1171,14 @@ export async function getHonkerTaskStatus() {
   await pruneExpiredRuns();
   const scheduledRows = readScheduledRows();
   const liveRows = readLiveJobs();
+  const liveStats = readLiveJobStats();
+  const scheduledLiveRows = readScheduledLiveJobs();
   const deadRows = readDeadJobs();
   const [latestRunsByTask, runRows, runningStartsByJobId, queueStats] = await Promise.all([
     readLatestRunsByTask(),
     readRecentRuns(),
     readRunningStartsByJobId(),
-    readQueueStats(liveRows),
+    readQueueStats(liveRows, liveStats, scheduledLiveRows),
   ]);
   const workerStatuses = await readWorkerStatuses();
   const workers = normalizeWorkerRows(workerStatuses, queueStats);

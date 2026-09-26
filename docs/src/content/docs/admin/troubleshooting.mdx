@@ -30,6 +30,10 @@ description: Common setup and runtime issues.
 - Make sure that the cutoff and tier order match the quality that you want.
 - Check job states on the Playlists or Flows page and **Activity**.
 
+## Downloads fail with "Track matcher (bundled beets runtime) is unavailable"
+
+Check the startup log for `beets matcher runtime self-test failed` and the `matcher` entry in `/api/health`. The Docker image ships the matcher. From a source checkout, create a virtual environment, run `pip install -r backend/matcher/requirements.txt`, and set `AURRAL_MATCHER_PYTHON` to that environment's `bin/python`.
+
 ## Files do not appear in Navidrome
 
 - Make sure that Aurral mounts the same media root as Lidarr ([Filesystem and mounts](/getting-started/storage/)).

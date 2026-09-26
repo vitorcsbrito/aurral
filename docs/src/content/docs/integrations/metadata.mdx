@@ -9,6 +9,8 @@ Aurral uses hosted services for artist pages, album details, and catalog search.
 
 Most installs use Aurral's hosted metadata and search backends with no extra configuration.
 
+Artist genres, Deezer previews, and Deezer/Discogs links come from the metadata server first; Aurral uses Last.fm tags or a Deezer name search only when it has none, and a manual Deezer override still wins. Artist and album metadata is cached for seven days and served for up to 30 days while a refresh runs; after a rate limit Aurral pauses requests to that server for up to a minute, after a `403` for five minutes.
+
 ## Custom providers
 
 Admins can point Aurral at a different metadata server at `/settings/metadata`. The page has one field, **Base URL**. Leave it empty to use the hosted service. The same server serves metadata hydration and the Aurral Search catalog.

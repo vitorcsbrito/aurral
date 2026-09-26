@@ -230,7 +230,7 @@ For a native Windows service, the remote path can be `N:\ServerFolders\Music`. M
 
 ### Navidrome sees a different path
 
-Aurral uses the Subsonic API for playlists. There is no Navidrome playlist path mapping in Aurral.
+Aurral publishes Navidrome playlists through the Subsonic API, so publishing does not use a path mapping. A **Navidrome** remote path mapping only helps Aurral recognize files that Navidrome playlists still use before automatic cleanup.
 
 Mount Aurral's download tree at the same absolute path in both containers so Aurral can manage the **Aurral Playlists** library. Reused music libraries may use different paths because Aurral finds indexed songs by metadata.
 

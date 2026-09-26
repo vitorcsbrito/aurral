@@ -11,6 +11,7 @@ dns.setDefaultResultOrder("ipv4first");
 
 import { authMiddleware, isProxyAuthEnabled } from "./middleware/auth.js";
 import { handleOidcCallback, isOidcEnabled } from "./services/oidcAuth.js";
+import { handleGoogleCallback } from "./services/googleAuth.js";
 import { logger } from "./services/logger.js";
 import { websocketService } from "./services/websocketService.js";
 import {
@@ -186,7 +187,18 @@ const authLimiter = rateLimit({
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/oidc/login", authLimiter);
 app.use("/api/auth/oidc/exchange", authLimiter);
+app.use("/api/auth/google/login", authLimiter);
+app.use("/api/auth/google/exchange", authLimiter);
+app.use("/api/auth/plex/login/pin", authLimiter);
 app.use("/api/users/me/password", authLimiter);
+// /api/auth/reauth checks a password, so it gets its own login-sized budget.
+app.use(
+  "/api/auth/reauth",
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+  }),
+);
 
 app.use("/api/settings", settingsRouter);
 app.use("/api/onboarding", onboardingRouter);
@@ -222,6 +234,18 @@ app.get("/sso/callback", async (req, res) => {
     logger.error("auth", "OIDC callback failed:", { message: error.message });
     const message = encodeURIComponent(error.message || "OIDC login failed");
     res.redirect(302, `/sso/complete#error=${message}`);
+  }
+});
+
+app.get("/sso/google/callback", async (req, res) => {
+  try {
+    const result = await handleGoogleCallback(req);
+    const code = encodeURIComponent(result.code);
+    res.redirect(302, `/sso/complete#code=${code}&provider=google`);
+  } catch (error) {
+    logger.error("auth", "Google callback failed:", { message: error.message });
+    const message = encodeURIComponent(error.message || "Google login failed");
+    res.redirect(302, `/sso/complete#error=${message}&provider=google`);
   }
 });
 

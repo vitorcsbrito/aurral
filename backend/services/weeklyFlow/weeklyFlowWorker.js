@@ -1,5 +1,4 @@
 import path from "path";
-import fs from "fs/promises";
 import { downloadTracker } from "./weeklyFlowDownloadTracker.js";
 import { playlistManager } from "./weeklyFlowPlaylistManager.js";
 import { flowPlaylistConfig } from "./weeklyFlowPlaylistConfig.js";
@@ -19,6 +18,7 @@ import {
 } from "../playlistPaths.js";
 import { startSlskdOrchestratorWorker } from "../slskdOrchestratorWorker.js";
 import { withHonkerLock } from "../honkerDb.js";
+import { isPlaylistOwnerActiveSync, refreshOwnerStatus } from "./weeklyFlowOwnerStatus.js";
 import {
   getDownloadSourceNotConfiguredMessage,
   isAnyDownloadSourceConfigured,
@@ -41,6 +41,7 @@ export class WeeklyFlowWorker {
     this.reuseRepairCursor = 0;
     this.processLoop = null;
     this.processTimer = null;
+    this.ownerStatusRefreshFailing = false;
     this.currentJob = null;
     this.lastDequeuedPlaylistType = null;
     this.reuseRepairInFlight = null;
@@ -106,6 +107,9 @@ export class WeeklyFlowWorker {
     if (this._isPlaylistBlocked(job?.playlistType)) {
       throw this._createControlFlowError(PLAYLIST_MUTATION_CODE, "Playlist mutation in progress");
     }
+    if (!isPlaylistOwnerActiveSync(job?.playlistId || job?.playlistType)) {
+      throw this._createControlFlowError(PLAYLIST_MUTATION_CODE, "Playlist owner is inactive");
+    }
   }
 
   blockPlaylist(playlistType) {
@@ -157,8 +161,20 @@ export class WeeklyFlowWorker {
     return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   }
 
-  async _setRetryJobRegistry(registry) {
-    await dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
+  // Changes run one after another on the latest stored registry: the
+  // settings mirror only updates once a write completes, so unchained
+  // read-modify-writes would drop each other's entries.
+  _updateRetryJobRegistry(mutate) {
+    const previous = this._retryRegistryWrites || Promise.resolve();
+    const run = previous.then(async () => {
+      const registry = { ...this._getRetryJobRegistry() };
+      if (mutate(registry) === false) return;
+      await dbOps.setJSONSetting(RETRY_JOB_REGISTRY_KEY, registry);
+    });
+    this._retryRegistryWrites = run.catch((error) => {
+      console.warn(`[WeeklyFlowWorker] Could not update the retry registry: ${error?.message || error}`);
+    });
+    return this._retryRegistryWrites;
   }
 
   getScheduledRetryJobId(playlistType) {
@@ -171,10 +187,10 @@ export class WeeklyFlowWorker {
   clearIncompleteRetry(playlistType) {
     const key = String(playlistType || "").trim();
     if (!key) return;
-    const registry = this._getRetryJobRegistry();
-    if (!(key in registry)) return;
-    delete registry[key];
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (!(key in registry)) return false;
+      delete registry[key];
+    });
   }
 
   _normalizeRetryPausedPlaylistIds(value) {
@@ -259,7 +275,9 @@ export class WeeklyFlowWorker {
 
   _getNextReadyPendingJob(lastPlaylistType = null) {
     return downloadTracker.getNextPendingMatching(
-      (job) => !this.activeJobs.has(job.id),
+      (job) =>
+        !this.activeJobs.has(job.id) &&
+        isPlaylistOwnerActiveSync(job?.playlistId || job?.playlistType),
       lastPlaylistType,
     );
   }
@@ -445,7 +463,7 @@ export class WeeklyFlowWorker {
     const plan = await playlistSource.buildFlowRunPlan(
       sizeOverride ? { ...flow, size: sizeOverride } : flow,
       {
-        listenHistoryProfile: this._getFlowListenHistoryProfile(flow),
+        listenHistoryProfile: await this._getFlowListenHistoryProfile(flow),
       },
     );
     this.clearPlaylistRunState(key);
@@ -526,20 +544,20 @@ export class WeeklyFlowWorker {
   markIncompleteRetryDequeued(playlistType, jobId = null) {
     const key = String(playlistType || "").trim();
     if (!key) return;
-    const registry = this._getRetryJobRegistry();
-    if (!(key in registry)) return;
-    if (jobId != null && Number(registry[key]) !== Number(jobId)) return;
-    delete registry[key];
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (!(key in registry)) return false;
+      if (jobId != null && Number(registry[key]) !== Number(jobId)) return false;
+      delete registry[key];
+    });
   }
 
   restoreScheduledRetryJobId(playlistType, jobId) {
     const key = String(playlistType || "").trim();
     if (!key || jobId == null) return;
-    const registry = this._getRetryJobRegistry();
-    if (key in registry) return;
-    registry[key] = jobId;
-    this._setRetryJobRegistry(registry);
+    return this._updateRetryJobRegistry((registry) => {
+      if (key in registry) return false;
+      registry[key] = jobId;
+    });
   }
 
   async retryIncompletePlaylist(playlistType) {
@@ -654,7 +672,7 @@ export class WeeklyFlowWorker {
     startSlskdOrchestratorWorker();
     console.log("[WeeklyFlowWorker] Starting worker...");
 
-    this.processLoop = () => {
+    const dispatchReadyJobs = () => {
       if (!this.running) return;
       const { concurrency } = this.getWorkerSettings();
       while (this.activeCount < concurrency) {
@@ -718,6 +736,36 @@ export class WeeklyFlowWorker {
       }
     };
 
+    // Each tick first refreshes the owner-status mirror that the dequeue
+    // predicate and _assertJobCanContinue read synchronously: one query per
+    // tick instead of one per pending job. A failed refresh keeps the last
+    // known owner status.
+    this.processLoop = () => {
+      if (!this.running) return;
+      const tickGeneration = this.runGeneration;
+      refreshOwnerStatus()
+        .then(
+          () => {
+            this.ownerStatusRefreshFailing = false;
+          },
+          (error) => {
+            if (!this.ownerStatusRefreshFailing) {
+              console.warn(
+                `[WeeklyFlowWorker] Owner status refresh failed: ${error?.message || error}`,
+              );
+            }
+            this.ownerStatusRefreshFailing = true;
+          },
+        )
+        .then(() => {
+          if (tickGeneration !== this.runGeneration) return;
+          dispatchReadyJobs();
+        })
+        .catch((error) => {
+          console.error(`[WeeklyFlowWorker] Dispatch failed: ${error?.message || error}`);
+        });
+    };
+
     this.processLoop();
     this.scheduleReuseLinkRepair(true);
   }
@@ -774,6 +822,7 @@ export class WeeklyFlowWorker {
     try {
       let phaseStart = process.hrtime.bigint();
       const resolvedTrack = await resolveWeeklyFlowTrackContext(job);
+      this._assertJobCanContinue(job, runGeneration);
       downloadTracker.updateMetadata(job.id, resolvedTrack);
       Object.assign(job, resolvedTrack);
       const { existingFileMode } = this.getWorkerSettings();
@@ -817,6 +866,7 @@ export class WeeklyFlowWorker {
       if (!isAnyDownloadSourceConfigured()) {
         throw new Error(getDownloadSourceNotConfiguredMessage());
       }
+      this._assertJobCanContinue(job, runGeneration);
       if (!downloadTracker.enqueueDownloadPipeline(job.id)) {
         throw new Error("Failed to enqueue the download pipeline");
       }
@@ -865,10 +915,9 @@ export class WeeklyFlowWorker {
               `[WeeklyFlowWorker] All jobs complete for ${playlistType}, ensuring playlists...`,
             );
             try {
-              await fs.rm(path.join(this.weeklyFlowRoot, "_fallback"), {
-                recursive: true,
-                force: true,
-              });
+              const { removeUnusedPlaybackFiles, createPlaybackDeletionGuard } = await import("../playback/playbackFileRetention.js");
+              await removeUnusedPlaybackFiles(path.join(this.weeklyFlowRoot, "_fallback"),
+                createPlaybackDeletionGuard({ playlistRoot: this.weeklyFlowRoot }));
             } catch {}
             try {
               playlistManager.updateConfig(false);

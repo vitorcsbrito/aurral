@@ -27,6 +27,7 @@ import { collectPlaybackPlaylistTracks } from "../playback/playbackPlaylistTrack
 import { NavidromePlaybackDestination } from "../playback/navidromePlaybackDestination.js";
 import { PlexPlaybackDestination } from "../playback/plexPlaybackDestination.js";
 import { JellyfinPlaybackDestination } from "../playback/jellyfinPlaybackDestination.js";
+import { createPlaybackDeletionGuard, removeUnusedPlaybackFiles } from "../playback/playbackFileRetention.js";
 
 const ARTWORK_FILE_EXTENSIONS = [".webp", ".jpg", ".png"];
 const ARTWORK_SUPPRESS_SUFFIX = ".no-artwork";
@@ -299,8 +300,8 @@ export class WeeklyFlowPlaylistManager {
     return snapshots;
   }
 
-  async cleanupUserPlexPlaylists(userId) {
-    return this.plexDestination.deleteOwnerPlaylists(userId);
+  async cleanupUserPlexPlaylists(userId, connection = null) {
+    return this.plexDestination.deleteOwnerPlaylists(userId, connection);
   }
 
   async cleanupEntityPlexPlaylists(entityId) {
@@ -339,14 +340,17 @@ export class WeeklyFlowPlaylistManager {
     return results.length ? results : null;
   }
 
-  async weeklyReset(playlistTypes = null) {
+  async weeklyReset(playlistTypes = null, { protectPlayback = true } = {}) {
     const targets =
       playlistTypes && playlistTypes.length
         ? playlistTypes
         : flowPlaylistConfig.getFlows().map((flow) => flow.id);
     const fallbackDir = path.join(this.weeklyFlowRoot, "_fallback");
+    const deletionGuard = protectPlayback
+      ? createPlaybackDeletionGuard({ excludeEntityIds: targets, playlistRoot: this.weeklyFlowRoot })
+      : { canDelete: async () => true };
     try {
-      await fs.rm(fallbackDir, { recursive: true, force: true });
+      await removeUnusedPlaybackFiles(fallbackDir, deletionGuard, { protectPlayback });
     } catch {}
 
     for (const playlistType of targets) {
@@ -363,13 +367,14 @@ export class WeeklyFlowPlaylistManager {
         );
         await relocateSharedFilesBeforePlaylistRemoval(playlistType, {
           weeklyFlowRoot: this.weeklyFlowRoot,
+          deletionGuard,
+          protectPlayback,
         });
-        await fs.rm(playlistDir, { recursive: true, force: true });
-        await fs.rm(path.join(this.weeklyFlowRoot, AURRAL_FLOWS_DIR, playlistType), {
-          recursive: true,
-          force: true,
-        });
-        console.log(`[WeeklyFlowPlaylistManager] Deleted files for ${playlistType}`);
+        await removeUnusedPlaybackFiles(playlistDir, deletionGuard, { protectPlayback });
+        await removeUnusedPlaybackFiles(
+          path.join(this.weeklyFlowRoot, AURRAL_FLOWS_DIR, playlistType), deletionGuard, { protectPlayback },
+        );
+        console.log(`[WeeklyFlowPlaylistManager] Cleaned unused files for ${playlistType}`);
       } catch (error) {
         console.warn(
           `[WeeklyFlowPlaylistManager] Failed to delete files for ${playlistType}:`,

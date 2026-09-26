@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 import { assertDownloadClient } from "../../backend/services/download/downloadClient.js";
 import { DownloadClientRegistry } from "../../backend/services/download/downloadClientRegistry.js";
@@ -49,6 +50,8 @@ test("download adapters expose settings metadata without field values", () => {
 
   assert.deepEqual(Object.keys(settings), ["slskd", "ytdlp", "nzbget", "sabnzbd", "deemix"]);
   assert.deepEqual(settings.nzbget.validation.required, ["url"]);
+  assert.deepEqual(settings.slskd.validation.required, ["url"]);
+  assert.notEqual(settings.slskd.fields.find((field) => field.key === "apiKey").required, true);
   assert.equal(settings.sabnzbd.fields.find((field) => field.key === "apiKey").secret, true);
   assert.equal(settings.ytdlp.fields.find((field) => field.key === "stagingPath").type, "path");
   assert.deepEqual(settings.deemix.validation.required, ["url"]);
@@ -118,6 +121,57 @@ test("slskd treats an explicitly disabled adapter as unconfigured", () => {
   assert.equal(client.isConfigured(), true);
 });
 
+test("slskd is configured with only a server URL", () => {
+  const client = new SlskdClient({ enabled: true, url: "http://slskd.local" });
+
+  assert.equal(client.isConfigured(), true);
+  assert.equal(client.getStatus().configured, true);
+});
+
+test("slskd test connection requires a URL but not an API key", async () => {
+  const missingUrl = new SlskdClient({ enabled: true });
+  const missingUrlResult = await missingUrl.testConnection({ force: true });
+  assert.equal(missingUrlResult.configured, false);
+  assert.equal(missingUrlResult.message, "slskd URL is required");
+
+  const urlOnly = new SlskdClient({ enabled: true, url: "http://127.0.0.1:1" });
+  const urlOnlyResult = await urlOnly.testConnection({ force: true });
+  assert.equal(urlOnlyResult.configured, true);
+  assert.equal(urlOnlyResult.ok, false);
+});
+
+test("slskd omits the X-API-KEY header when no API key is set", async () => {
+  const headers = [];
+  const server = createServer((req, res) => {
+    headers.push(req.headers["x-api-key"]);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      server: { state: "Connected", isConnected: true },
+      directories: {},
+    }));
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}`;
+
+    const urlOnly = new SlskdClient({ enabled: true, url });
+    assert.equal((await urlOnly.testConnection({ force: true })).ok, true);
+
+    const withKey = new SlskdClient({ enabled: true, url, apiKey: "secret-key" });
+    assert.equal((await withKey.testConnection({ force: true })).ok, true);
+
+    assert.deepEqual(headers.slice(0, 2), [undefined, undefined]);
+    assert.deepEqual(headers.slice(2, 4), ["secret-key", "secret-key"]);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+});
+
 test("download client test routes validate transient URLs", async () => {
   const routes = [];
   const router = {
@@ -157,5 +211,97 @@ test("download client test routes validate transient URLs", async () => {
   assert.deepEqual(response.payload, {
     error: "Connection failed",
     message: "Server URL: Target host is blocked",
+  });
+});
+
+function getWebhookTestRoute() {
+  const routes = [];
+  const router = {
+    get(path, handler) {
+      routes.push({ method: "GET", path, handler });
+    },
+    post(path, handler) {
+      routes.push({ method: "POST", path, handler });
+    },
+  };
+  registerDownloadClients(router);
+  return routes.find(({ method, path }) => method === "POST" && path === "/webhook/test");
+}
+
+function makeResponse() {
+  return {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+}
+
+async function withWebhookReceiver(status, handler) {
+  const requests = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString("utf8") });
+      res.writeHead(status, { "content-type": "text/plain" });
+      res.end("receiver response");
+    });
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address();
+    await handler({ url: `http://127.0.0.1:${port}/hook`, requests });
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}
+
+test("webhook test route sends a GET and returns success", async () => {
+  const route = getWebhookTestRoute();
+  await withWebhookReceiver(200, async ({ url, requests }) => {
+    const response = makeResponse();
+    await route.handler({ body: { url, body: "", headers: [] } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.payload, { success: true, message: "Test webhook sent" });
+    assert.equal(requests[0].method, "GET");
+    assert.equal(requests[0].url, "/hook");
+  });
+});
+
+test("webhook test route rejects missing, non-HTTP(S), and blocked URLs", async () => {
+  const route = getWebhookTestRoute();
+  for (const body of [{}, { url: "ftp://example.com/hook" }, { url: "http://169.254.169.254" }]) {
+    const response = makeResponse();
+    await route.handler({ body }, response);
+    assert.equal(response.statusCode, 400);
+  }
+});
+
+test("webhook test route reports receiver failures", async () => {
+  const route = getWebhookTestRoute();
+  await withWebhookReceiver(500, async ({ url }) => {
+    const response = makeResponse();
+    await route.handler({ body: { url, body: "", headers: [] } }, response);
+
+    assert.equal(response.statusCode, 502);
+    assert.deepEqual(response.payload, {
+      error: "Webhook test failed",
+      message: "Request failed with status code 500",
+      upstreamStatus: 500,
+    });
   });
 });

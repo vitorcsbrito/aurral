@@ -713,7 +713,13 @@ export class LidarrClient {
           userError.response = raw.response;
           throw userError;
         } else if (error.request) {
-          console.error("Lidarr API request failed - no response:", msg);
+          logger.error("library", "Lidarr API request failed with no response", {
+            endpoint: endpoint.split("?")[0],
+            method,
+            message: msg,
+            code: error.code || null,
+            timeoutMs: this.config.timeoutMs,
+          });
           throw new Error(
             `Cannot connect to Lidarr at ${this.config.url}. Check if Lidarr is running and the URL is correct.`,
           );
@@ -956,10 +962,16 @@ export class LidarrClient {
     const requestedMonitorOption = normalizeMonitorOption(
       options.monitorOption || options.monitor || "none",
     );
-    const monitoring = getArtistMonitoringPayload(requestedMonitorOption);
     const searchOnAdd = settings.integrations?.lidarr?.searchOnAdd ?? false;
     const albumMbid = String(options.albumMbid || "").trim();
     const albumsToMonitor = albumOnly && albumMbid ? [albumMbid] : [];
+    // Lidarr disables the artist for "none", even with explicit albumsToMonitor.
+    // The explicit album list takes precedence over "missing", so other albums stay unmonitored.
+    const monitoring = getArtistMonitoringPayload(
+      albumsToMonitor.length > 0 && requestedMonitorOption === "none"
+        ? "missing"
+        : requestedMonitorOption,
+    );
 
     const qualityProfileId = resolved.qualityProfileId;
     const defaultMetadataProfileId = settings.integrations?.lidarr?.metadataProfileId;

@@ -351,6 +351,11 @@ export const buildSharedTrackIdentity = (track) =>
     String(track?.releaseYear || "").trim(),
   ].join("\u0001");
 
+export const buildImportTrackIdentity = (track) =>
+  [track?.artistName, track?.trackName, track?.albumName]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join("\u0001");
+
 export const buildCoreTrackIdentity = (track) => {
   const artistName = String(track?.artistName || "").trim().toLowerCase();
   const trackName = String(track?.trackName || "").trim().toLowerCase();
@@ -506,6 +511,8 @@ const normalizeSharedPlaylist = (playlist) => {
       String(playlist?.description || "").trim() ||
       resolvePresetDescription(playlist?.discoverPresetId),
     importSource,
+    recordHistory: playlist?.recordHistory !== false,
+    showTrackAvailability: playlist?.showTrackAvailability === true,
     importedAt:
       playlist?.importedAt != null && Number.isFinite(Number(playlist.importedAt))
         ? Number(playlist.importedAt)
@@ -900,6 +907,7 @@ export const flowPlaylistConfig = {
     ownerUserId = null,
     importSource = null,
     description = null,
+    recordHistory = true,
   }) {
     const playlists = getStoredSharedPlaylists();
     const normalizedOwnerUserId = normalizeOwnerUserId(ownerUserId);
@@ -920,6 +928,7 @@ export const flowPlaylistConfig = {
       type,
       importSource,
       description,
+      recordHistory,
       tracks,
       importedAt: Date.now(),
       createdAt: Date.now(),
@@ -962,6 +971,11 @@ export const flowPlaylistConfig = {
       ...current,
       name: nextName,
       sourceName: updates?.sourceName ?? current.sourceName,
+      recordHistory:
+        typeof updates?.recordHistory === "boolean"
+          ? updates.recordHistory
+          : current.recordHistory,
+      showTrackAvailability: updates?.showTrackAvailability ?? current.showTrackAvailability,
       sourceFlowId: updates?.sourceFlowId ?? current.sourceFlowId,
       discoverPresetId: updates?.discoverPresetId ?? current.discoverPresetId,
       importSource:

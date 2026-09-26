@@ -42,6 +42,13 @@ The API key replaces a login session token. You do not need to call the login
 endpoint first. The key currently gives administrator access. It does **not**
 have read-only access.
 
+The API key identifies the Aurral installation, not a user account. Use a
+user's login session for operations that create or update user-owned data, such
+as Last.fm, ListenBrainz, or Koito account linking, local play events, library
+favorites, and creating, importing, or adopting playlists. Creating a flow also
+needs a user session. Aurral returns `403` when an API key calls one of these
+operations, except flow creation, which returns `400`.
+
 Keep the key in a secret store. If your integration needs read access, make
 only `GET` requests. After you rotate the key, the old key does not operate.
 
@@ -108,6 +115,8 @@ the key.
 - If authentication is invalid or not present, Aurral returns `401`.
 - If a valid account does not have the necessary permission, Aurral returns
   `403`.
+- If an instance API key calls an operation that needs a user account, Aurral
+  returns `403`. Creating a flow is the exception: it returns `400`.
 - Aurral limits each client to 5,000 API requests in each 15-minute period.
 - The API key does not have a separate permission or read-only scope.
 

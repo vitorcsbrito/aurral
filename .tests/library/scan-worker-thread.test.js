@@ -88,3 +88,49 @@ test("a worker failure surfaces as a rejected scan", async () => {
   );
   assert.equal(isLibraryScanRunning(), false);
 });
+
+test("a scan that runs past the timeout is stopped and later scans still run", async () => {
+  const previous = process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+  process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = "1";
+  try {
+    await assert.rejects(
+      runLibraryScanInWorker({ includeLidarr: false, musicRoot }),
+      (error) => error?.code === "LIBRARY_SCAN_TIMEOUT",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+    else process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = previous;
+  }
+  assert.equal(isLibraryScanRunning(), false);
+
+  const result = await runLibraryScanInWorker({ includeLidarr: false, musicRoot });
+  assert.ok(result?.local);
+});
+
+test("a timeout beyond the timer range is capped instead of firing at once", async () => {
+  const previous = process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+  process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = String(30 * 24 * 60 * 60 * 1000);
+  try {
+    const result = await runLibraryScanInWorker({ includeLidarr: false, musicRoot });
+    assert.ok(result?.local);
+  } finally {
+    if (previous === undefined) delete process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS;
+    else process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = previous;
+  }
+});
+
+test("a read that overlaps an invalidation does not refill the artist cache", async () => {
+  await resetDatabase();
+  queryService.invalidateCanonicalLibraryCache();
+  const inFlight = queryService.getCanonicalArtistKeys();
+  // A write lands and invalidates while the read above is still running.
+  queryService.invalidateCanonicalLibraryCache();
+  await inFlight;
+  const now = Date.now();
+  await db.run(
+    "INSERT INTO library_artists (identity_key, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+    ["artist:cache-race", "Cache Race Artist", now, now],
+  );
+  const keys = await queryService.getCanonicalArtistKeys();
+  assert.ok(keys.some((artist) => artist.name === "Cache Race Artist"));
+});

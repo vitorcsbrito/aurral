@@ -1,5 +1,9 @@
 import { useEffect, useState, useRef } from "react";
-import { testGotifyConnection } from "../../../utils/api/endpoints/settings.js";
+import {
+  testGotifyConnection,
+  testWebhookConnection,
+} from "../../../utils/api/endpoints/settings.js";
+import { getAppBasePath } from "../../../utils/basePath.js";
 
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { SettingsInput, SettingsTextarea } from "./SettingsField";
@@ -20,6 +24,9 @@ import {
 import PillToggle from "../../../components/PillToggle";
 import { DotLoader } from "../../../components/DotLoader";
 import { getConfiguredStatus } from "../utils/integrationStatus";
+
+const EMPTY_WEBHOOKS = Object.freeze([]);
+
 export function SettingsConnectTab({
   settings,
   updateSettings,
@@ -32,18 +39,31 @@ export function SettingsConnectTab({
 }) {
   const [activeModal, setActiveModal] = useState(null);
   const [testStatus, setTestStatus] = useState(null);
+  const [testingWebhookIndex, setTestingWebhookIndex] = useState(null);
+  const [webhookTestStatus, setWebhookTestStatus] = useState(null);
   const gotify = settings.integrations?.gotify || {};
   const lastfm = settings.integrations?.lastfm || {};
   const ticketmaster = settings.integrations?.ticketmaster || {};
+  const google = settings.integrations?.google || {};
   const inbox = settings.inbox || {};
   const gotifyConfigured = Boolean(gotify.url && gotify.token);
   const lastfmConfigured = Boolean(health?.lastfmConfigured);
   const ticketmasterConfigured = Boolean(health?.ticketmasterConfigured);
+  const googleConfigured = Boolean(
+    google.enabled && google.clientId && google.clientSecret && google.redirectUri,
+  );
 
-  const webhooks = settings.integrations?.webhooks || [];
+  const configuredWebhooks = settings.integrations?.webhooks;
+  const webhooks = configuredWebhooks || EMPTY_WEBHOOKS;
   const webhookEvents = settings.integrations?.webhookEvents || {};
+  const webhookRevisionRef = useRef(0);
+
+  useEffect(() => {
+    webhookRevisionRef.current += 1;
+  }, [configuredWebhooks]);
 
   const updateWebhooks = (newWebhooks) => {
+    webhookRevisionRef.current += 1;
     updateSettings({
       ...settings,
       integrations: {
@@ -92,6 +112,15 @@ export function SettingsConnectTab({
       },
     });
 
+  const updateGoogle = (patch) =>
+    updateSettings({
+      ...settings,
+      integrations: {
+        ...settings.integrations,
+        google: { ...google, ...patch },
+      },
+    });
+
   const updateInbox = (patch) =>
     updateSettings({
       ...settings,
@@ -133,10 +162,12 @@ export function SettingsConnectTab({
   };
 
   const removeWebhook = (index) => {
+    setWebhookTestStatus(null);
     updateWebhooks(webhooks.filter((_, i) => i !== index));
   };
 
   const moveWebhook = (from, to) => {
+    setWebhookTestStatus(null);
     const next = [...webhooks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
@@ -144,7 +175,43 @@ export function SettingsConnectTab({
   };
 
   const updateWebhook = (index, patch) => {
+    setWebhookTestStatus(null);
     updateWebhooks(webhooks.map((wh, i) => (i === index ? { ...wh, ...patch } : wh)));
+  };
+
+  const handleTestWebhook = async (index) => {
+    const webhook = webhooks[index];
+    const url = String(webhook?.url || "").trim();
+    if (!url) return;
+
+    setWebhookTestStatus(null);
+    setTestingWebhookIndex(index);
+    const testRevision = webhookRevisionRef.current;
+    try {
+      await testWebhookConnection({
+        ...webhook,
+        url,
+      });
+      if (webhookRevisionRef.current !== testRevision) return;
+      setWebhookTestStatus({
+        index,
+        tone: "success",
+        message: "Test webhook sent.",
+      });
+      showSuccess("Test webhook sent.");
+    } catch (err) {
+      if (webhookRevisionRef.current !== testRevision) return;
+      const message =
+        err.response?.data?.message || err.response?.data?.error || err.message;
+      setWebhookTestStatus({
+        index,
+        tone: "error",
+        message: "Test failed. Check the URL, body, and headers, then retry.",
+      });
+      showError(`Webhook test failed: ${message}`);
+    } finally {
+      setTestingWebhookIndex(null);
+    }
   };
 
   const addHeader = (whIndex) => {
@@ -217,11 +284,19 @@ export function SettingsConnectTab({
               meta={`${ticketmaster.searchRadiusMiles ?? 250} mi radius`}
               onClick={() => setActiveModal("ticketmaster")}
             />
+            <IntegrationCard
+              title="Google"
+              subtitle="Sign in with Google"
+              status={getConfiguredStatus(googleConfigured)}
+              meta="Additional login method"
+              onClick={() => setActiveModal("google")}
+            />
           </SettingsArrCardGrid>
         </SettingsArrFieldSet>
 
         <SettingsArrFieldSet
           legend="Webhooks"
+          className="settings-connect-webhooks"
           actions={
             <button
               type="button"
@@ -277,15 +352,34 @@ export function SettingsConnectTab({
                   />
                   <span>Webhook #{index + 1}</span>
                 </div>
-                <button
-                  type="button"
-                  className="arr-btn arr-btn--ghost arr-btn--icon"
-                  onClick={() => removeWebhook(index)}
-                  aria-label="Remove webhook"
-                >
-                  <Trash2 className="artist-icon-sm" aria-hidden />
-                </button>
+                <div className="arr-webhook-card__actions">
+                  <button
+                    type="button"
+                    className="arr-btn"
+                    onClick={() => handleTestWebhook(index)}
+                    disabled={testingWebhookIndex !== null || !String(wh.url || "").trim()}
+                  >
+                    {testingWebhookIndex === index ? <DotLoader size="sm" label={null} /> : null}
+                    {testingWebhookIndex === index ? "Testing..." : "Test webhook"}
+                  </button>
+                  <button
+                    type="button"
+                    className="arr-btn arr-btn--ghost arr-btn--icon"
+                    onClick={() => removeWebhook(index)}
+                    aria-label="Remove webhook"
+                  >
+                    <Trash2 className="artist-icon-sm" aria-hidden />
+                  </button>
+                </div>
               </div>
+              {webhookTestStatus?.index === index ? (
+                <p
+                  className={`arr-webhook-card__test-status arr-webhook-card__test-status--${webhookTestStatus.tone}`}
+                  role={webhookTestStatus.tone === "error" ? "alert" : "status"}
+                >
+                  {webhookTestStatus.message}
+                </p>
+              ) : null}
 
               <SettingsArrFormGroup label="URL" labelFor={`webhook-url-${index}`} size="large">
                 <SettingsInput
@@ -645,6 +739,65 @@ export function SettingsConnectTab({
                 }
               />
             </SettingsModalToggleGroup>
+          </SettingsModalSection>
+        </SettingsIntegrationModal>
+      )}
+
+      {activeModal === "google" && (
+        <SettingsIntegrationModal title="Google" onClose={() => setActiveModal(null)}>
+          <SettingsModalIntro>
+            Let users who already linked their Google account (from their profile) sign in with
+            it. Google can never create new Aurral accounts or change anyone&apos;s role — it&apos;s
+            only usable once an authenticated user has explicitly connected it.
+          </SettingsModalIntro>
+          <SettingsModalCallout>
+            Create an OAuth client at{" "}
+            <a
+              href="https://console.cloud.google.com/apis/credentials"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="settings-page__link"
+            >
+              Google Cloud Console
+            </a>{" "}
+            and register the redirect URI below as an authorized redirect URI.
+          </SettingsModalCallout>
+          <SettingsModalSection title="Connection">
+            <SettingsModalToggle
+              label="Enabled"
+              checked={google.enabled === true}
+              onChange={(e) => updateGoogle({ enabled: e.target.checked })}
+            />
+            <SettingsModalField label="Client ID">
+              <SettingsInput
+                type="text"
+                placeholder="123456789-abcdefg.apps.googleusercontent.com"
+                autoComplete="off"
+                value={google.clientId || ""}
+                onChange={(e) => updateGoogle({ clientId: e.target.value })}
+              />
+            </SettingsModalField>
+            <SettingsModalField label="Client secret">
+              <SettingsInput
+                type="password"
+                placeholder="Google client secret"
+                autoComplete="off"
+                value={google.clientSecret || ""}
+                onChange={(e) => updateGoogle({ clientSecret: e.target.value })}
+              />
+            </SettingsModalField>
+            <SettingsModalField
+              label="Redirect URI"
+              hint={`Usually ${window.location.origin}${getAppBasePath() === "/" ? "" : getAppBasePath().replace(/\/$/, "")}/sso/google/callback`}
+            >
+              <SettingsInput
+                type="url"
+                placeholder="https://aurral.example.com/sso/google/callback"
+                autoComplete="off"
+                value={google.redirectUri || ""}
+                onChange={(e) => updateGoogle({ redirectUri: e.target.value })}
+              />
+            </SettingsModalField>
           </SettingsModalSection>
         </SettingsIntegrationModal>
       )}

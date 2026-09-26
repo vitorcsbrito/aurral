@@ -349,7 +349,13 @@ export async function applyLidarrCommunityGuide(lidarrClient) {
   const profileItems = [...otherItems, ...selectedItems];
   const flacQualityId = qualityItemMap.get("FLAC")?.quality?.id;
 
-  const formatItems = results.customFormats.map((cf) => {
+  // Lidarr expects every custom format in the profile, including ones the user
+  // created outside Aurral; those stay at score 0.
+  const allCustomFormats = new Map();
+  for (const cf of [...((await lidarrClient.getCustomFormats()) || []), ...results.customFormats]) {
+    if (cf?.id != null) allCustomFormats.set(cf.id, cf);
+  }
+  const formatItems = [...allCustomFormats.values()].map((cf) => {
     const scores = {
       "Preferred Groups": 10,
       CD: 2,

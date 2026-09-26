@@ -13,20 +13,28 @@ router.get("/preferences", requireAuth, (req, res) => {
   return res.json(getNewsPreferences(req.user.id));
 });
 
-router.patch("/preferences", requireAuth, (req, res) => {
+router.patch("/preferences", requireAuth, async (req, res) => {
   if (!Array.isArray(req.body?.blockedPublishers)) {
     return res.status(400).json({ error: "blockedPublishers must be an array" });
   }
-  return res.json(updateNewsPreferences(req.user.id, req.body));
+  try {
+    return res.json(await updateNewsPreferences(req.user.id, req.body));
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to update news preferences", message: error.message });
+  }
 });
 
-router.post("/feeds/disable", requireAuth, (req, res) => {
+router.post("/feeds/disable", requireAuth, async (req, res) => {
   const sourceUrl = String(req.body?.sourceUrl || "").trim();
   const sourceName = String(req.body?.sourceName || "").trim();
   if (!sourceUrl && !sourceName) {
     return res.status(400).json({ error: "sourceUrl or sourceName is required" });
   }
-  return res.json(disableNewsFeed(sourceUrl, sourceName));
+  try {
+    return res.json(await disableNewsFeed(sourceUrl, sourceName));
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to disable news feed", message: error.message });
+  }
 });
 
 router.get("/", requireAuth, async (req, res) => {

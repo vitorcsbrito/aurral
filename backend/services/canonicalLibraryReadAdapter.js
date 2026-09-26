@@ -42,6 +42,7 @@ const buildArtist = (artist, albumsByArtistId) => {
     id: artist.id,
     canonicalId: artist.id,
     providerId,
+    lidarrManaged: artist.metadata?.librarySource === "lidarr",
     mbid: artist.mbid,
     foreignArtistId: artist.metadata?.foreignArtistId || artist.mbid || artist.identityKey,
     artistName: artist.name,

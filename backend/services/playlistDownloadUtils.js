@@ -127,10 +127,21 @@ async function resolveAvailableTargetPath(targetPath) {
   return path.join(dir, `${base} (${Date.now()})${ext}`);
 }
 
-export async function commitImportToPlaylistLibrary(sourcePath, targetPath) {
+export async function commitImportToPlaylistLibrary(
+  sourcePath,
+  targetPath,
+  { reuseExisting = false } = {},
+) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   if (path.resolve(sourcePath) === path.resolve(targetPath)) {
     return targetPath;
+  }
+  if (reuseExisting) {
+    const existing = await fs.stat(targetPath).catch(() => null);
+    if (existing?.isFile()) {
+      await fs.rm(sourcePath, { force: true });
+      return targetPath;
+    }
   }
   const resolvedTarget = await resolveAvailableTargetPath(targetPath);
   try {
@@ -171,7 +182,7 @@ export async function writeAudioMetadata(filePath, metadata = {}) {
     ["musicbrainz_releasegroupid", metadata.albumMbid],
     ["musicbrainz_recordingid", metadata.trackMbid],
     ["musicbrainz_trackid", metadata.trackMbid],
-    ["comment", buildAurralIdentityComment(metadata)],
+    ["grouping", buildAurralIdentityComment(metadata)],
     ["date", metadata.releaseYear],
     ["track", normalizePositiveInteger(metadata.trackNumber)],
   ].filter(([, value]) => value != null && String(value).trim());
@@ -226,7 +237,11 @@ export async function repairYtdlpMetadata(jobs = []) {
         [common.albumartist, job.artistName],
         [common.album, job.albumName],
       ].filter(([, value]) => String(value || "").trim());
-      const embeddedIdentity = parseAurralIdentityComment(common.comment) || {};
+      const embeddedIdentity = Object.assign(
+        {},
+        parseAurralIdentityComment(common.comment) || {},
+        parseAurralIdentityComment(common.grouping) || {},
+      );
       const expectedIdentity = [
         [
           common.musicbrainz_albumartistid ||

@@ -18,3 +18,7 @@ coverage/
 /.agents/
 .omc
 .idea
+
+# Local planning artifacts
+/SPEC.md
+/tasks/

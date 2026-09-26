@@ -100,6 +100,12 @@ export const updateSharedPlaylist = (playlistId, payload) =>
     payload,
   );
 
+export const setPlaylistTrackAvailability = (playlistId, enabled) =>
+  putData(`/playlists/shared-playlists/${encodeURIComponent(playlistId)}/track-availability`, { enabled });
+
+export const setPlaylistRecordHistory = (playlistId, enabled) =>
+  putData(`/playlists/shared-playlists/${encodeURIComponent(playlistId)}/record-history`, { enabled });
+
 export const addSharedPlaylistTracks = (playlistId, payload) =>
   postData(
     `/playlists/shared-playlists/${playlistId}/tracks`,
@@ -197,7 +203,9 @@ export const importLastfmPlaylist = (payload) =>
   postData("/playlists/import/lastfm", payload);
 
 export const syncSharedPlaylistImport = (playlistId) =>
-  postData(`/playlists/shared-playlists/${encodeURIComponent(playlistId)}/sync`);
+  postData(`/playlists/shared-playlists/${encodeURIComponent(playlistId)}/sync`, undefined, {
+    timeout: 5 * 60 * 1000,
+  });
 
 export const getFlowLidarrImportListUrl = (flowId) =>
   getData(`/playlists/flows/${encodeURIComponent(flowId)}/lidarr-import-list`);

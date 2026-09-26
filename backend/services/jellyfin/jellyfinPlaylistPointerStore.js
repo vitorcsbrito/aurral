@@ -15,29 +15,34 @@ const normalizePointer = (raw) => {
 };
 
 export const jellyfinPlaylistPointerStore = {
+  async getPointersForEntity(entityId) {
+    const pointers = await store.read();
+    return Object.values(pointers[entityId] || {}).map(normalizePointer).filter(Boolean);
+  },
+
   async getPointer(entityId, targetKey) {
     const pointers = await store.read();
     return normalizePointer(pointers[entityId]?.[targetKey] || null);
   },
 
   async setPointer(entityId, targetKey, { playlistId, title, serverUrl }) {
-    const pointers = await store.read();
-    if (!pointers[entityId]) pointers[entityId] = {};
-    pointers[entityId][targetKey] = {
-      playlistId: String(playlistId),
-      title: String(title || ""),
-      serverUrl: String(serverUrl || ""),
-      updatedAt: Date.now(),
-    };
-    await store.write(pointers);
+    await store.update((pointers) => {
+      if (!pointers[entityId]) pointers[entityId] = {};
+      pointers[entityId][targetKey] = {
+        playlistId: String(playlistId),
+        title: String(title || ""),
+        serverUrl: String(serverUrl || ""),
+        updatedAt: Date.now(),
+      };
+    });
   },
 
   async deletePointer(entityId, targetKey) {
-    const pointers = await store.read();
-    if (!pointers[entityId]?.[targetKey]) return false;
-    delete pointers[entityId][targetKey];
-    if (!Object.keys(pointers[entityId]).length) delete pointers[entityId];
-    await store.write(pointers);
-    return true;
+    return store.update((pointers) => {
+      if (!pointers[entityId]?.[targetKey]) return false;
+      delete pointers[entityId][targetKey];
+      if (!Object.keys(pointers[entityId]).length) delete pointers[entityId];
+      return true;
+    });
   },
 };

@@ -22,6 +22,9 @@ import {
   deleteFlowArtwork,
   generateFlowArtwork,
   reSearchFlowTrack,
+  reSearchSharedPlaylistTrack,
+  setPlaylistTrackAvailability,
+  setPlaylistRecordHistory,
   searchTrackUpgrade,
   searchPlaylistUpgrades,
   syncSharedPlaylistImport,
@@ -42,6 +45,7 @@ import {
   isEditorialFlow,
 } from "./flows/flowStats";
 import { getPlaylistRunActivity } from "./flows/flowRunActivity";
+import { countAvailableTracks, getTrackSearchAction } from "./flows/trackAvailability.js";
 import { getReleaseGroupCoversBatch } from "../utils/api/endpoints/artists.js";
 import {
   getCanonicalLibraryPage,
@@ -219,6 +223,8 @@ function FlowPage({ mode = "all" }) {
   const [searchingUpgradePlaylistId, setSearchingUpgradePlaylistId] = useState(null);
   const [syncingImportPlaylistId, setSyncingImportPlaylistId] = useState(null);
   const [updatingSyncIntervalPlaylistId, setUpdatingSyncIntervalPlaylistId] = useState(null);
+  const [updatingAvailabilityPlaylistId, setUpdatingAvailabilityPlaylistId] = useState(null);
+  const [updatingRecordHistoryId, setUpdatingRecordHistoryId] = useState(null);
   const [savingToPlaylistId, setSavingToPlaylistId] = useState(null);
   const [deletingTrackId, setDeletingTrackId] = useState(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
@@ -240,6 +246,10 @@ function FlowPage({ mode = "all" }) {
       getFlowJobs(selectedId, null, { signal }).then(normalizeFlowJobs),
     enabled: Boolean(selectedId),
     staleTime: 15_000,
+    refetchInterval: (query) => {
+      if (!sharedPlaylists.some((playlist) => playlist.id === selectedId && playlist.showTrackAvailability)) return false;
+      return query.state.data?.some((track) => ["pending", "downloading"].includes(track.status)) ? 4000 : 30000;
+    },
   });
   const selectedTracks = useMemo(
     () => selectedTracksQuery.data || [],
@@ -1036,14 +1046,72 @@ function FlowPage({ mode = "all" }) {
     }
   };
 
-  const handleReSearchTrack = async (flowId, track) => {
+  const handleUpdateTrackAvailability = async (playlist, enabled) => {
+    if (updatingAvailabilityPlaylistId) return;
+    setUpdatingAvailabilityPlaylistId(playlist.id);
+    try {
+      const result = await setPlaylistTrackAvailability(playlist.id, enabled);
+      await queryClient.cancelQueries({ queryKey: queryKeys.playlistStatus });
+      queryClient.setQueryData(queryKeys.playlistStatus, (current) => current ? ({
+        ...current,
+        sharedPlaylists: current.sharedPlaylists.map((entry) => entry.id === playlist.id
+          ? { ...entry, showTrackAvailability: result?.showTrackAvailability ?? enabled }
+          : entry),
+      }) : current);
+      if (enabled) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.playlistJobs(playlist.id) });
+      }
+    } catch (err) {
+      showError(getApiErrorMessage(err, "Failed to update track availability"));
+    } finally {
+      setUpdatingAvailabilityPlaylistId(null);
+    }
+  };
+
+  const handleUpdateRecordHistory = async (entry, enabled) => {
+    if (!entry?.id || updatingRecordHistoryId) return;
+    setUpdatingRecordHistoryId(entry.id);
+    try {
+      if (entry.kind === "flow") {
+        const currentFlow = effectiveFlowList.find((flow) => flow.id === entry.id);
+        await updateFlow(entry.id, { recordHistory: enabled });
+        setSimpleDrafts((prev) => ({
+          ...prev,
+          [entry.id]: {
+            ...(prev[entry.id] || (currentFlow ? flowToForm(currentFlow) : {})),
+            recordHistory: enabled,
+          },
+        }));
+      } else {
+        const result = await setPlaylistRecordHistory(entry.id, enabled);
+        queryClient.setQueryData(queryKeys.playlistStatus, (current) => current ? ({
+          ...current,
+          sharedPlaylists: current.sharedPlaylists.map((playlist) =>
+            playlist.id === entry.id
+              ? { ...playlist, recordHistory: result?.recordHistory ?? enabled }
+              : playlist,
+          ),
+        }) : current);
+      }
+      showSuccess(enabled ? "Listening history enabled" : "Listening history disabled");
+      await fetchStatus();
+    } catch (err) {
+      showError(getApiErrorMessage(err, "Failed to update listening history setting"));
+    } finally {
+      setUpdatingRecordHistoryId(null);
+    }
+  };
+
+  const handleReSearchTrack = async (flowId, track, isSharedPlaylist = false) => {
     const jobId = track?.id;
     if (!flowId || !jobId || reSearchingTrackIds[jobId]) return;
+    const searchAction = getTrackSearchAction(track, isSharedPlaylist);
+    if (!searchAction) return;
     setReSearchingTrackIds((prev) => ({
       ...prev,
       [jobId]: true,
     }));
-    if (track.status !== "done" && flowId === selectedId) {
+    if (searchAction === "research" && flowId === selectedId) {
       queryClient.setQueryData(queryKeys.playlistJobs(flowId), (prev) =>
         (prev || []).map((entry) =>
           entry?.id === jobId
@@ -1058,7 +1126,7 @@ function FlowPage({ mode = "all" }) {
       );
     }
     try {
-      if (track.status === "done") {
+      if (searchAction === "upgrade") {
         const result = await searchTrackUpgrade(flowId, jobId);
         showSuccess(
           result?.alreadyQueued
@@ -1066,7 +1134,7 @@ function FlowPage({ mode = "all" }) {
             : `Searching for an upgrade to ${track.trackName}`,
         );
       } else {
-        await reSearchFlowTrack(flowId, jobId);
+        await (isSharedPlaylist ? reSearchSharedPlaylistTrack : reSearchFlowTrack)(flowId, jobId);
         showSuccess(`Re-searching ${track.trackName}`);
       }
       await fetchStatus();
@@ -1444,12 +1512,15 @@ function FlowPage({ mode = "all" }) {
       ? sharedPlaylists.find((playlist) => playlist.id === selectedEntry.id)
       : null;
   const selectedStats = selectedId ? getPlaylistStats(selectedId) : null;
+  const showTrackAvailability = selectedPlaylist?.showTrackAvailability === true;
   const playbackSource = selectedEntry
     ? {
         type: selectedIsFlow ? "flow" : "playlist",
         id: selectedEntry.id,
         label: selectedFlow?.name || selectedPlaylist?.name || selectedEntry.name || "Playlist",
-        recordHistory: selectedIsFlow ? selectedFlow?.recordHistory !== false : true,
+        recordHistory: selectedIsFlow
+          ? selectedFlow?.recordHistory !== false
+          : selectedPlaylist?.recordHistory !== false,
       }
     : null;
   const flowEnabled = selectedFlow?.enabled === true;
@@ -1466,7 +1537,9 @@ function FlowPage({ mode = "all" }) {
   })();
   const selectedEntryTrackLabel = selectedIsFlow
     ? formatTrackCountLabel(selectedEntryTotalTracks, selectedStats)
-    : `${selectedEntryTotalTracks} ${selectedEntryTotalTracks === 1 ? "track" : "tracks"}`;
+    : showTrackAvailability && !selectedTracksLoading && !selectedTracksError
+      ? `${countAvailableTracks(selectedTracks)}/${selectedEntryTotalTracks} available`
+      : `${selectedEntryTotalTracks} ${selectedEntryTotalTracks === 1 ? "track" : "tracks"}`;
   const flowLastRunShort = selectedFlow ? formatFlowLastRunShort(selectedFlow.lastRunAt) : null;
   const flowNextRunShort =
     selectedFlow && flowEnabled && getPlaylistState(selectedFlow.id) !== "running"
@@ -1553,6 +1626,20 @@ function FlowPage({ mode = "all" }) {
     <MoreMenu activeButtonClass="btn-neutral-active">
       {selectedIsFlow && selectedFlow ? (
         <>
+          <div
+            className="flow-page__menu-sync-toggle-row"
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="flow-page__menu-sync-label">Record listening history</span>
+            <PillToggle
+              checked={selectedFlow.recordHistory !== false}
+              onChange={(event) => handleUpdateRecordHistory(selectedEntry, event.target.checked)}
+              disabled={updatingRecordHistoryId === selectedFlow.id}
+              aria-label={`Record listening history ${selectedFlow.recordHistory !== false ? "on" : "off"}`}
+            />
+          </div>
+          <div className="flow-page__menu-divider" />
           <button
             type="button"
             className="artist-menu-item"
@@ -1705,9 +1792,35 @@ function FlowPage({ mode = "all" }) {
                   aria-label={`Keep removed ${getImportedProviderLabel(selectedPlaylist.importSource?.provider)} tracks in library`}
                 />
               </div>
-              <div className="flow-page__menu-divider" />
             </>
           ) : null}
+          <div
+            className="flow-page__menu-sync-toggle-row"
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="flow-page__menu-sync-label">Record listening history</span>
+            <PillToggle
+              checked={selectedPlaylist.recordHistory !== false}
+              onChange={(event) => handleUpdateRecordHistory(selectedPlaylist, event.target.checked)}
+              disabled={updatingRecordHistoryId === selectedPlaylist.id}
+              aria-label={`Record listening history ${selectedPlaylist.recordHistory !== false ? "on" : "off"}`}
+            />
+          </div>
+          <div
+            className="flow-page__menu-sync-toggle-row"
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <span className="flow-page__menu-sync-label">Show track availability</span>
+            <PillToggle
+              checked={showTrackAvailability}
+              onChange={(event) => handleUpdateTrackAvailability(selectedPlaylist, event.target.checked)}
+              disabled={updatingAvailabilityPlaylistId !== null}
+              aria-label="Show track availability"
+            />
+          </div>
+          <div className="flow-page__menu-divider" />
           <button
             type="button"
             className="artist-menu-item"
@@ -1771,7 +1884,9 @@ function FlowPage({ mode = "all" }) {
             onReSearchTrack={
               selectedIsFlow
                 ? (track) => handleReSearchTrack(selectedFlow.id, track)
-                : undefined
+                : showTrackAvailability
+                  ? (track) => handleReSearchTrack(selectedPlaylist.id, track, true)
+                  : undefined
             }
             onDeleteTrack={
               selectedIsFlow || !selectedPlaylist
@@ -1797,6 +1912,7 @@ function FlowPage({ mode = "all" }) {
             artworkByAlbumMbid={trackArtworkByAlbumMbid}
             showDuration={!selectedIsFlow}
             hideStatusColumn={!selectedIsFlow}
+            showTrackAvailability={showTrackAvailability}
             hideQualityColumn
           />
         ) : null}

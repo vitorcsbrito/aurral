@@ -51,6 +51,9 @@ playlistManager.navidromeDestination.client = {
   async getPlaylists() {
     return [];
   },
+  async getPlaylistTrackPaths() {
+    return [];
+  },
   async findSong() {
     return { id: "reviewed-song" };
   },
@@ -113,7 +116,8 @@ test("approving a reviewed download commits it inside the managed playlist libra
   await assert.rejects(fs.access(path.join(playlistManager.libraryRoot, "Reviewed.m3u")));
 });
 
-test("approving a reviewed upgrade replaces the source playlist file", async () => {
+test("approving a reviewed upgrade replaces the source playlist file", async (t) => {
+  const scan = t.mock.method(playlistManager, "scheduleScanLibrary", () => {});
   const flow = await flowPlaylistConfig.createFlow({
     name: "Reviewed upgrade flow",
     size: 10,
@@ -160,6 +164,7 @@ test("approving a reviewed upgrade replaces the source playlist file", async () 
   assert.equal(downloadTracker.getJob(sourceJobId)?.finalPath, expectedPath);
   assert.equal(await fs.readFile(expectedPath, "utf8"), "upgrade audio");
   await assert.rejects(fs.access(originalPath));
+  assert.equal(scan.mock.callCount(), 1);
 });
 
 test("reports when an upgrade search is already queued for a track", async () => {

@@ -18,12 +18,25 @@ const {
   discoveryNeedsRefresh,
   bootstrapDiscoveryRefresh,
   enqueueDiscoveryRefresh,
+  enqueueDiscoveryRefreshIfNeeded,
   markDiscoveryRefreshDequeued,
   recoverDeadDiscoveryRefresh,
   scheduleNextDiscoveryRefresh,
 } = refreshScheduler;
 const { getDiscoveryCache } = discoveryIndex;
+const { db } = await importFromRepo("backend/config/database.js");
 const originalLastfmApiKey = process.env.LASTFM_API_KEY;
+
+async function seedLibraryArtist() {
+  await db.run(
+    `INSERT INTO library_artists (identity_key, name, created_at, updated_at)
+     VALUES ('test:seed-artist', 'Seed Artist', 1, 1)`,
+  );
+}
+
+async function clearLibraryArtists() {
+  await db.run("DELETE FROM library_artists");
+}
 
 let heldGlobalRefreshLock = null;
 
@@ -91,11 +104,12 @@ function setDiscoveryCache(overrides = {}) {
   });
 }
 
-test.beforeEach(() => {
+test.beforeEach(async () => {
   clearDiscoveryRefreshJobs();
   markDiscoveryRefreshDequeued();
   setDiscoveryCache();
   releaseHeldGlobalRefreshLock();
+  await clearLibraryArtists();
 });
 
 test.after(async () => {
@@ -106,9 +120,9 @@ test.after(async () => {
   await cleanupIsolatedState(isolatedState);
 });
 
-test("discoveryNeedsRefresh returns true when cache is empty", () => {
+test("discoveryNeedsRefresh returns true when cache is empty", async () => {
   assert.equal(
-    discoveryNeedsRefresh({
+    await discoveryNeedsRefresh({
       recommendations: [],
       topGenres: [],
       lastUpdated: null,
@@ -117,9 +131,9 @@ test("discoveryNeedsRefresh returns true when cache is empty", () => {
   );
 });
 
-test("discoveryNeedsRefresh retries a recent empty cache", () => {
+test("discoveryNeedsRefresh retries a recent empty cache", async () => {
   assert.equal(
-    discoveryNeedsRefresh({
+    await discoveryNeedsRefresh({
       recommendations: [],
       globalTop: [],
       topGenres: [],
@@ -129,9 +143,50 @@ test("discoveryNeedsRefresh retries a recent empty cache", () => {
   );
 });
 
-test("discoveryNeedsRefresh returns false for fresh populated cache", () => {
+test("discoveryNeedsRefresh does not retry missing genres when the library has no artists", async () => {
   assert.equal(
-    discoveryNeedsRefresh({
+    await discoveryNeedsRefresh({
+      recommendations: [],
+      globalTop: [{ id: "trend-1" }],
+      topGenres: [],
+      lastUpdated: new Date().toISOString(),
+    }),
+    false,
+  );
+});
+
+test("discoveryNeedsRefresh retries missing genres when the library has seed artists", async () => {
+  await seedLibraryArtist();
+  assert.equal(
+    await discoveryNeedsRefresh({
+      recommendations: [{ id: "rec-1" }],
+      globalTop: [{ id: "trend-1" }],
+      topGenres: [],
+      lastUpdated: new Date().toISOString(),
+    }),
+    true,
+  );
+});
+
+test("interval check does not queue a refresh after a seedless run left genres empty", async () => {
+  process.env.LASTFM_API_KEY = "test-key";
+  setDiscoveryCache({
+    recommendations: [],
+    globalTop: [{ id: "trend-1" }],
+    topGenres: [],
+    lastUpdated: new Date().toISOString(),
+  });
+
+  const result = await enqueueDiscoveryRefreshIfNeeded({ reason: "interval" });
+
+  assert.equal(result.enqueued, false);
+  assert.equal(result.reason, "fresh");
+  assert.equal(countDiscoveryRefreshJobs(), 0);
+});
+
+test("discoveryNeedsRefresh returns false for fresh populated cache", async () => {
+  assert.equal(
+    await discoveryNeedsRefresh({
       recommendations: [{ id: "rec-1" }],
       topGenres: ["rock"],
       lastUpdated: new Date().toISOString(),

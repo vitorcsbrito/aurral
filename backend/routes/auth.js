@@ -1,10 +1,21 @@
 import express from "express";
 import { userOps } from "../db/helpers/index.js";
-import { createSession, deleteSession, getSessionByToken } from "../config/session-helpers.js";
-import { requireAuth } from "../middleware/requirePermission.js";
+import {
+  createSession,
+  deleteSession,
+  getSessionByToken,
+  touchReauth,
+} from "../config/session-helpers.js";
+import { requireAdmin, requireAuth, requireRecentAuth } from "../middleware/requirePermission.js";
 import { getApiKey, rotateApiKey } from "../middleware/auth.js";
 import { hashPassword, verifyPassword, needsRehash } from "../middleware/passwordHash.js";
 import { clearOidcTransactionCookie, exchangeOidcCallback, startOidcLogin } from "../services/oidcAuth.js";
+import {
+  clearGoogleTransactionCookie,
+  exchangeGoogleCallback,
+  startGoogleAuth,
+} from "../services/googleAuth.js";
+import { startPlexLogin, completePlexLogin } from "../services/plexLoginAuth.js";
 import { logger } from "../services/logger.js";
 
 const router = express.Router();
@@ -28,9 +39,16 @@ router.post("/login", async (req, res) => {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
-    if (needsRehash(user.passwordHash)) {
-      await userOps.updateUser(user.id, { passwordHash: hashPassword(password) });
+    if (user.status !== "active") {
+      return res.status(403).json({ error: "This account has been suspended or disabled" });
     }
+    // A successful password login also proves the account has a usable
+    // password; recordPasswordLogin notes that with the Subsonic credential.
+    await userOps.recordPasswordLogin(user.id, {
+      verifiedHash: user.passwordHash,
+      password,
+      newHash: needsRehash(user.passwordHash) ? hashPassword(password) : null,
+    });
     const session = await createSession(user.id, req.ip || null, req.headers["user-agent"] || null);
     res.json({
       token: session.token,
@@ -85,7 +103,37 @@ router.get("/me", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/api-key", requireAuth, async (req, res, next) => {
+// Confirms the password to re-arm requireRecentAuth() for this session.
+router.post("/reauth", requireAuth, async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(400).json({ error: "Reauthentication requires an active session" });
+    }
+    const user = await userOps.getUserById(req.user.id);
+    if (!user) {
+      return res.status(400).json({ error: "Current password is incorrect" });
+    }
+    if (!user.hasLocalPassword) {
+      return res.status(400).json({
+        error: "no_local_password",
+        message: "This account has no local password. Sign out and back in to refresh your session.",
+      });
+    }
+    const { currentPassword } = req.body || {};
+    if (!verifyPassword(currentPassword || "", user.passwordHash)) {
+      return res.status(400).json({ error: "Current password is incorrect" });
+    }
+    if (!(await touchReauth(token, user.id))) {
+      return res.status(400).json({ error: "Reauthentication requires an active session" });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/api-key", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     res.json({ apiKey: await getApiKey() });
   } catch (error) {
@@ -93,7 +141,7 @@ router.get("/api-key", requireAuth, async (req, res, next) => {
   }
 });
 
-router.post("/api-key/rotate", requireAuth, async (req, res, next) => {
+router.post("/api-key/rotate", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     res.json({ apiKey: await rotateApiKey() });
   } catch (error) {
@@ -119,6 +167,75 @@ router.post("/oidc/exchange", async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message || "OIDC exchange failed" });
+  }
+});
+
+router.get("/google/login", async (req, res) => {
+  try {
+    await startGoogleAuth(req, res, { mode: "login" });
+  } catch (error) {
+    logger.error("auth", "Google login start failed:", { message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Google login failed" });
+    }
+  }
+});
+
+router.get("/google/link", requireAuth, requireRecentAuth(), async (req, res) => {
+  try {
+    await startGoogleAuth(req, res, { mode: "link", linkUserId: req.user.id });
+  } catch (error) {
+    logger.error("auth", "Google link start failed:", { message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Google link failed" });
+    }
+  }
+});
+
+router.post("/google/link/start", requireAuth, requireRecentAuth(), async (req, res) => {
+  try {
+    await startGoogleAuth(req, res, {
+      mode: "link",
+      linkUserId: req.user.id,
+      returnUrl: true,
+    });
+  } catch (error) {
+    logger.error("auth", "Google link start failed:", { message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Google link failed" });
+    }
+  }
+});
+
+router.post("/google/exchange", async (req, res) => {
+  try {
+    const result = await exchangeGoogleCallback(req.body?.code, req);
+    clearGoogleTransactionCookie(req, res);
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || "Google exchange failed" });
+  }
+});
+
+router.post("/plex/login/pin", async (req, res) => {
+  try {
+    await startPlexLogin(req, res);
+  } catch (error) {
+    logger.error("auth", "Plex login PIN generation failed:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to start Plex login", message: error.message });
+    }
+  }
+});
+
+router.post("/plex/login/complete", async (req, res) => {
+  try {
+    await completePlexLogin(req, res);
+  } catch (error) {
+    logger.error("auth", "Plex login completion failed:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Plex login failed", message: error.message });
+    }
   }
 });
 

@@ -285,7 +285,7 @@ test("scanMusicRoot indexes tagged media and ignores Flow output", async () => {
     assert.equal(snapshot.albums.some((album) => album.title === "Playback Roadmap"), true);
     assert.equal(snapshot.tracks.some((track) => track.title === "First Step"), true);
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -317,7 +317,7 @@ test("scanMusicRoot derives stable fallback records when tags are missing", asyn
       available: 1,
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -468,7 +468,7 @@ test("scanMusicRoot applies trusted job metadata when file tags omit identities"
       trackMbid: "33333333-3333-4333-8333-333333333333",
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -506,7 +506,104 @@ test("scanMusicRoot reads Aurral identity markers from portable comments", async
       trackMbid: "33333333-3333-3333-3333-333333333333",
     });
   } finally {
-    if (filePath) deleteIndexedFile(source, filePath);
+    if (filePath) await deleteIndexedFile(source, filePath);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scanMusicRoot reads Aurral identity markers from grouping tags", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "aurral-library-grouping-metadata-"));
+  const source = `test-grouping-metadata-${process.pid}`;
+  let filePath;
+  try {
+    filePath = await createAudioFile(root, "Aurral Artist/Aurral Album/01 Track.m4a");
+    await scanMusicRoot({
+      rootPath: root,
+      source,
+      metadataReader: async () => ({
+        common: {
+          grouping:
+            'AURRAL_IDS={"trackMbid":"33333333-3333-3333-3333-333333333333"}',
+          comment:
+            'AURRAL_IDS={"artistMbid":"11111111-1111-4111-1111-111111111111","albumMbid":"22222222-2222-2222-2222-222222222222"}',
+        },
+        format: {},
+      }),
+    });
+    const indexed = await db.get(
+      `SELECT artist.mbid AS "artistMbid", album.release_group_mbid AS "releaseGroupMbid",
+        track.mbid AS "trackMbid"
+       FROM library_media_files AS media
+       JOIN library_tracks AS track ON track.id = media.track_id
+       JOIN library_album_tracks AS album_track ON album_track.track_id = track.id
+       JOIN library_albums AS album ON album.id = album_track.album_id
+       JOIN library_artists AS artist ON artist.id = album.artist_id
+       WHERE media.source = ? AND media.path = ?`,
+      [source, filePath],
+    );
+
+    assert.deepEqual(indexed, {
+      artistMbid: "11111111-1111-4111-1111-111111111111",
+      releaseGroupMbid: "22222222-2222-2222-2222-222222222222",
+      trackMbid: "33333333-3333-3333-3333-333333333333",
+    });
+  } finally {
+    if (filePath) await deleteIndexedFile(source, filePath);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scanMusicRoot reads Aurral identity markers from native ID3 comments", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "aurral-library-native-comment-metadata-"));
+  const source = `test-native-comment-metadata-${process.pid}`;
+  let filePath;
+
+  try {
+    filePath = await createAudioFile(root, "Aurral Artist/Aurral Album/01 Track.mp3");
+
+    await scanMusicRoot({
+      rootPath: root,
+      source,
+      metadataReader: async () => ({
+        common: {
+          albumartist: "Aurral Artist",
+          artist: "Aurral Artist",
+          album: "Aurral Album",
+          title: "Track",
+          musicbrainz_trackid: "44444444-4444-4444-8444-444444444444",
+        },
+        native: {
+          "ID3v2.4": [
+            {
+              id: "TXXX:comment",
+              value:
+                'AURRAL_IDS={"artistMbid":"11111111-1111-4111-8111-111111111111","albumMbid":"22222222-2222-4222-8222-222222222222","trackMbid":"33333333-3333-4333-8333-333333333333"}',
+            },
+          ],
+        },
+        format: {},
+      }),
+    });
+
+    const indexed = await db.get(
+      `SELECT artist.mbid AS "artistMbid", album.release_group_mbid AS "releaseGroupMbid",
+        track.mbid AS "trackMbid"
+       FROM library_media_files AS media
+       JOIN library_tracks AS track ON track.id = media.track_id
+       JOIN library_album_tracks AS album_track ON album_track.track_id = track.id
+       JOIN library_albums AS album ON album.id = album_track.album_id
+       JOIN library_artists AS artist ON artist.id = album.artist_id
+       WHERE media.source = ? AND media.path = ?`,
+      [source, filePath],
+    );
+
+    assert.deepEqual(indexed, {
+      artistMbid: "11111111-1111-4111-8111-111111111111",
+      releaseGroupMbid: "22222222-2222-4222-8222-222222222222",
+      trackMbid: "33333333-3333-4333-8333-333333333333",
+    });
+  } finally {
+    if (filePath) await deleteIndexedFile(source, filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -686,20 +783,22 @@ test("an unchanged Lidarr rescan does not rewrite library rows", async () => {
   }
 });
 
-test("Lidarr persistence yields between album transactions", async () => {
+test("Lidarr persistence yields between album transactions", async (t) => {
   const artistMbid = "40404040-4040-4040-8040-404040404040";
   const firstAlbumMbid = "50505050-5050-4050-8050-505050505050";
   const secondAlbumMbid = "60606060-6060-4060-8060-606060606060";
-  let scanning = true;
-  const yieldedBetweenAlbums = new Promise((resolve) => {
-    const inspect = async () => {
+  // Checked right after each transaction returns, so the result does not
+  // depend on catching the gap between two commits from a polling loop.
+  let yieldedBetweenAlbums = false;
+  const runTransaction = db.transaction;
+  t.mock.method(db, "transaction", async (fn) => {
+    const result = await runTransaction(fn);
+    if (!db.inTransaction()) {
       const firstExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [firstAlbumMbid]));
       const secondExists = Boolean(await db.get("SELECT 1 FROM library_albums WHERE release_group_mbid = ?", [secondAlbumMbid]));
-      if (firstExists && !secondExists) return resolve(true);
-      if (!scanning) return resolve(false);
-      setImmediate(inspect);
-    };
-    setImmediate(inspect);
+      if (firstExists && !secondExists) yieldedBetweenAlbums = true;
+    }
+    return result;
   });
 
   try {
@@ -717,11 +816,8 @@ test("Lidarr persistence yields between album transactions", async () => {
         getRootFolders: async () => [],
       },
     });
-    scanning = false;
-
-    assert.equal(await yieldedBetweenAlbums, true);
+    assert.equal(yieldedBetweenAlbums, true);
   } finally {
-    scanning = false;
     await db.run("DELETE FROM library_artists WHERE mbid = ?", [artistMbid]);
   }
 });
@@ -1230,7 +1326,7 @@ test("a Lidarr rescan preserves files for an album with a missing artist respons
     assert.equal(result.filesFailed, 1);
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1286,7 +1382,7 @@ test("a Lidarr outage leaves the last indexed library available", async () => {
 
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1321,7 +1417,7 @@ test("an empty Lidarr response leaves the last indexed library available", async
     assert.equal(result.filesIndexed, 0);
     assert.equal(file?.available, 1);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1349,7 +1445,7 @@ test("a Lidarr rescan marks the final removed media file unavailable", async () 
 
     assert.equal(file?.available, 0);
   } finally {
-    if (filePath) deleteIndexedFile("lidarr", filePath);
+    if (filePath) await deleteIndexedFile("lidarr", filePath);
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -102,6 +102,13 @@ server listens:
   and persists through an ordered write-behind queue
   (`flushDownloadTrackerWrites()` awaits it).
 
+One mirror is refreshed instead of loaded: the ids of suspended or disabled
+accounts in `backend/services/weeklyFlow/weeklyFlowOwnerStatus.js`. The
+download worker's dequeue predicate calls `isPlaylistOwnerActiveSync()` for
+every pending job, so `refreshOwnerStatus()` runs once at the start of each
+worker loop tick and after an admin changes an account's status. Async
+callers use `isPlaylistOwnerActive()`, which reads the database.
+
 Every other read goes through `await`. Do not add new mirrors; make the
 caller async instead.
 

@@ -87,7 +87,7 @@ instance API key for WebSocket connections.
 | `GET` | `/api/library/refresh/:jobId` | Read canonical library scan status |
 | `GET` | `/api/library/canonical` | Read a bounded canonical page; provide a supported `kind` and `pageSize` (1-100) |
 | `GET` | `/api/library/favorites` | Read the current user's library favorites |
-| `POST` | `/api/library/favorites` | Add or remove a library favorite |
+| `POST` | `/api/library/favorites` | Add or remove a library favorite; requires a user session |
 | `GET` | `/api/library/playback-queue` | Build a bounded playback queue page; optional `page` and `pageSize` (1-100) |
 | `GET` | `/api/library/stream/:songId` | Stream a library song |
 | `GET` | `/api/library/canonical-stream/:albumId/:trackId` | Stream a canonical library track |
@@ -206,7 +206,7 @@ prefix redirects to it with status `308`.
 | `GET` | `/api/playlists/jobs/:flowId` | List jobs for a flow or static playlist |
 | `POST` | `/api/playlists/research-missing` | Research all missing tracks in accessible operations |
 | `POST` | `/api/playlists/start/:flowId` | Run a flow |
-| `POST` | `/api/playlists/flows` | Create a flow |
+| `POST` | `/api/playlists/flows` | Create a flow; requires a user session |
 | `PUT` | `/api/playlists/flows/:flowId` | Update a flow |
 | `DELETE` | `/api/playlists/flows/:flowId` | Delete a flow |
 | `PUT` | `/api/playlists/flows/:flowId/enabled` | Enable or disable a flow |
@@ -222,6 +222,8 @@ prefix redirects to it with status `308`.
 | `POST` | `/api/playlists/shared-playlists` | Create a shared playlist |
 | `POST` | `/api/playlists/shared-playlists/import` | Import a shared playlist |
 | `PUT` | `/api/playlists/shared-playlists/:playlistId` | Update a shared playlist |
+| `PUT` | `/api/playlists/shared-playlists/:playlistId/record-history` | Enable or disable listening history for a shared playlist |
+| `PUT` | `/api/playlists/shared-playlists/:playlistId/track-availability` | Show or hide track availability for a shared playlist |
 | `DELETE` | `/api/playlists/shared-playlists/:playlistId` | Delete a shared playlist |
 | `POST` | `/api/playlists/shared-playlists/:playlistId/tracks` | Add a shared-playlist track |
 | `DELETE` | `/api/playlists/shared-playlists/:playlistId/tracks/:jobId` | Delete a shared-playlist track |
@@ -333,6 +335,7 @@ Every route in this section requires an administrator.
 | `GET` | `/api/settings/download-clients` | Read download client settings metadata |
 | `POST` | `/api/settings/download-clients/:key/test` | Test a download client |
 | `POST` | `/api/settings/gotify/test` | Test Gotify |
+| `POST` | `/api/settings/webhook/test` | Test one webhook configuration |
 | `POST` | `/api/settings/plex/auth/pin` | Start Plex authentication |
 | `POST` | `/api/settings/plex/auth/check` | Check Plex authentication |
 | `POST` | `/api/settings/plex/resources` | List Plex resources |
@@ -346,19 +349,22 @@ Every route in this section requires an administrator.
 
 ## Scrobbling and play events
 
+The instance API key has no user identity. Account linking and local play-event
+recording require a user's login session.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/scrobbling/status` | Read scrobbling provider status |
-| `GET` | `/api/scrobbling/lastfm/link` | Start or read Last.fm linking |
+| `GET` | `/api/scrobbling/lastfm/link` | Start or read Last.fm linking; requires a user session |
 | `GET` | `/api/scrobbling/lastfm/link/callback` | Complete Last.fm linking |
 | `DELETE` | `/api/scrobbling/lastfm/link` | Unlink Last.fm |
 | `GET` | `/api/scrobbling/listenbrainz/link` | Read ListenBrainz linking |
-| `PUT` | `/api/scrobbling/listenbrainz/link` | Link ListenBrainz |
+| `PUT` | `/api/scrobbling/listenbrainz/link` | Link ListenBrainz; requires a user session |
 | `DELETE` | `/api/scrobbling/listenbrainz/link` | Unlink ListenBrainz |
-| `PUT` | `/api/scrobbling/koito/link` | Configure Koito |
+| `PUT` | `/api/scrobbling/koito/link` | Configure Koito; requires a user session |
 | `DELETE` | `/api/scrobbling/koito/link` | Unlink Koito |
 | `GET` | `/api/play-events` | Read local play history |
-| `POST` | `/api/play-events` | Record a local play event |
+| `POST` | `/api/play-events` | Record a local play event; requires a user session |
 
 ## Onboarding
 

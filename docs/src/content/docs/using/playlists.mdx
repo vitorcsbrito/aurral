@@ -21,6 +21,14 @@ Aurral does not write these files to your main music library.
 
 Flows refresh on a schedule and use your flow settings. Static playlists come from Spotify, Last.fm, ListenBrainz, JSON files, or exported flow tracklists. Synced imports follow provider membership; their removed-track file-retention setting is available in the import flow and playlist menu.
 
+Open any flow or static playlist's **More** menu to set **Record listening
+history**. Turn it off when playback of that playlist in Aurral's built-in
+player should not affect future Discover recommendations or connected
+scrobblers. Plays reported by Subsonic clients are still recorded. The setting
+is independent for each playlist and does not remove plays already recorded.
+
+Turn on **Show track availability** in a static playlist's **More** menu to mark each track as **Available**, **Queued**, **Downloading**, **Needs review**, or **Missing** and show an available/total count in the header. While it is on, a missing track's menu offers **Re-search**. It is off by default and saved per playlist.
+
 Flow names and static playlist names must be unique across both types for the same owner. The check ignores case. Two users can own entries with the same name. Plex playlists use the bare name; Navidrome playlists are named `<username> - <name>`.
 
 If all download sources fail, the track stays in the failed state after an Aurral restart.
@@ -94,7 +102,7 @@ To schedule upgrades, enable **Automatic upgrades** in the quality profile. The 
 
 Upgrade jobs have a lower priority than missing-track downloads. Aurral uses slskd, Usenet, and deemix for upgrades, in the configured source-priority order. It stops after the first source provides a valid, strictly better file. It waits for the next interval before it tries another automatic improvement for that track.
 
-If an upgrade download matches the requested track but has a significant duration mismatch, Aurral retains it under **Activity > Queue** for preview, approval, or denial. Approving it replaces the existing Aurral file.
+If an upgrade download probably matches the requested track but the evidence conflicts, for example a duration or track-number mismatch, Aurral retains it under **Activity > Queue** for preview, approval, or denial. Approving it replaces the existing Aurral file.
 
 yt-dlp can supply an acceptable first file. Aurral does not use yt-dlp for upgrades.
 

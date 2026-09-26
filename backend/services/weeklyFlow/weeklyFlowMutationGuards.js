@@ -1,6 +1,7 @@
 import { downloadTracker } from "./weeklyFlowDownloadTracker.js";
 import { weeklyFlowWorker } from "./weeklyFlowWorker.js";
 import { withHonkerLock } from "../honkerDb.js";
+import { logger } from "../logger.js";
 
 const normalizePlaylistTypes = (playlistTypes) => [
   ...new Set(
@@ -28,28 +29,50 @@ async function withPlaylistLocks(playlistTypes, operation) {
 
 export async function beginPlaylistMutation(playlistTypes, { clearPending = true } = {}) {
   const types = normalizePlaylistTypes(playlistTypes);
-  for (const playlistType of types) {
-    weeklyFlowWorker.blockPlaylist(playlistType);
-    weeklyFlowWorker.clearIncompleteRetry(playlistType);
-    if (clearPending) {
-      downloadTracker.clearPendingByPlaylistType(playlistType);
-    }
-  }
+  // Only playlists this call blocked are rolled back if setup fails partway.
+  const blocked = [];
   try {
+    for (const playlistType of types) {
+      weeklyFlowWorker.blockPlaylist(playlistType);
+      blocked.push(playlistType);
+      weeklyFlowWorker.clearIncompleteRetry(playlistType);
+      if (clearPending) {
+        downloadTracker.clearPendingByPlaylistType(playlistType);
+      }
+    }
     await Promise.all(
       types.map((playlistType) => weeklyFlowWorker.waitForPlaylistIdle(playlistType)),
     );
   } catch (error) {
-    for (const playlistType of types) {
-      weeklyFlowWorker.unblockPlaylist(playlistType);
+    for (const playlistType of blocked) {
+      try {
+        weeklyFlowWorker.unblockPlaylist(playlistType);
+      } catch (unblockError) {
+        logger.warn("playlists", "Could not unblock playlist after mutation setup failed", {
+          playlistId: playlistType,
+          reason: unblockError?.message || String(unblockError),
+        });
+      }
     }
     throw error;
   }
+  // Release every playlist and prune even if one unblock fails, then report
+  // the first failure.
   return () => {
+    let firstError = null;
     for (const playlistType of types) {
-      weeklyFlowWorker.unblockPlaylist(playlistType);
+      try {
+        weeklyFlowWorker.unblockPlaylist(playlistType);
+      } catch (error) {
+        firstError ??= error;
+      }
     }
-    weeklyFlowWorker.pruneOrphanedJobState();
+    try {
+      weeklyFlowWorker.pruneOrphanedJobState();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError) throw firstError;
   };
 }
 

@@ -1,4 +1,8 @@
-import { requireAuth, requirePermission } from "../../../middleware/requirePermission.js";
+import {
+  requireAuth,
+  requirePermission,
+  requireUserAccount,
+} from "../../../middleware/requirePermission.js";
 import { handleDiscoverAdoptError } from "./utils.js";
 
 export function registerAdopt(router) {
@@ -6,6 +10,7 @@ export function registerAdopt(router) {
     "/playlists/adopt",
     requireAuth,
     requirePermission("accessFlow"),
+    requireUserAccount,
     async (req, res) => {
       try {
         const presetId = String(req.body?.presetId || "").trim();
@@ -31,6 +36,7 @@ export function registerAdopt(router) {
     "/playlists/adopt-playlist",
     requireAuth,
     requirePermission("accessFlow"),
+    requireUserAccount,
     async (req, res) => {
       try {
         const presetId = String(req.body?.presetId || "").trim();

@@ -107,3 +107,14 @@ test("reuses a cached news response without rebuilding matches", async () => {
 
   assert.strictEqual(second, first);
 });
+
+test("disabling one news feed keeps the other feeds", async () => {
+  const before = config.getNewsSettings().feeds;
+  const target = before.find((feed) => feed.enabled !== false);
+  const result = await newsService.disableNewsFeed(target.url, "");
+  const after = config.getNewsSettings().feeds;
+  assert.equal(after.length, before.length);
+  assert.equal(after.find((feed) => feed.url === target.url).enabled, false);
+  assert.ok(after.every((feed) => typeof feed.url === "string" && feed.url));
+  assert.equal(result.feeds.find((feed) => feed.url === target.url).enabled, false);
+});

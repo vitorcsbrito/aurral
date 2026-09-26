@@ -18,6 +18,8 @@ import {
   getLocalNetworkBypassStatus,
 } from "../middleware/auth.js";
 import { getOidcBootstrapInfo } from "../services/oidcAuth.js";
+import { isGoogleLoginEnabled } from "../services/googleAuth.js";
+import { isPlexLoginEnabled } from "./users/plexLinkHandlers.js";
 import { lidarrClient } from "../services/lidarrClient.js";
 import {
   getDiscoveryCache,
@@ -35,6 +37,7 @@ import { noCache } from "../middleware/cache.js";
 import { requireAuth } from "../middleware/requirePermission.js";
 import { getImageProxyCacheSizeBytes } from "../services/imageProxyService.js";
 import { getDownloadSourceStatus } from "../services/downloadSourceService.js";
+import { getMatcherRuntimeStatus } from "../services/trackMatching/index.js";
 import {
   DISCOVERY_PROVIDER_LASTFM,
   DISCOVERY_PROVIDER_LISTENBRAINZ_FALLBACK,
@@ -236,6 +239,17 @@ async function buildSystemPayload(settings) {
   };
 }
 
+function serializeBootstrapMatcherStatus(status, authenticated) {
+  if (authenticated) return status;
+  return {
+    available: Boolean(status.available),
+    checked: Boolean(status.checked),
+    error: status.error
+      ? { code: status.error.code || "matcher_error" }
+      : null,
+  };
+}
+
 async function buildBootstrapPayload(req) {
   lidarrClient.updateConfig();
   const settings = dbOps.getSettings();
@@ -251,10 +265,17 @@ async function buildBootstrapPayload(req) {
     proxyAuthEnabled: isProxyAuthEnabled(),
     oidcEnabled: oidcInfo.oidcEnabled,
     oidcLogoutUrl: oidcInfo.oidcLogoutUrl,
+    googleLoginEnabled: isGoogleLoginEnabled(),
+    plexLoginEnabled: isPlexLoginEnabled(),
+    ssoOnly: settings?.security?.ssoOnly === true,
     onboardingRequired: !onboardingDone,
     dateTimeFormat: settings.dateTimeFormat,
     timestamp: new Date().toISOString(),
     appVersion: APP_VERSION,
+    matcher: serializeBootstrapMatcherStatus(
+      getMatcherRuntimeStatus(),
+      Boolean(currentUser),
+    ),
   };
 
   if (currentUser) {

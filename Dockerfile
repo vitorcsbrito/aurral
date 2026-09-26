@@ -38,6 +38,25 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     node -e "require('sharp')" && \
     node --input-type=module -e "import honker from '@russellthehippo/honker-node'; honker.open('/tmp/honker-smoke.db'); console.log('honker ok')"
 
+# Bundled beets matcher. Aurral owns this venv; users never install or run
+# beets themselves and no extra service or port is involved.
+FROM node-base AS matcher-deps
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/matcher/requirements.txt /tmp/aurral-matcher-requirements.txt
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+# The app user cannot write __pycache__ inside this root-owned venv, so
+# compile once here; unchecked-hash .pyc files stay valid after COPY --from.
+RUN python3 -m venv /opt/aurral-matcher && \
+    /opt/aurral-matcher/bin/pip install --no-compile -r /tmp/aurral-matcher-requirements.txt && \
+    /opt/aurral-matcher/bin/python -m compileall -q --invalidation-mode unchecked-hash /opt/aurral-matcher/lib && \
+    /opt/aurral-matcher/bin/python -c "import beets; assert beets.__version__ == '2.14.1'"
+
 FROM node-base AS runtime
 
 WORKDIR /app
@@ -57,7 +76,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /app/backend/data /config \
     && chown -R nodejs:nodejs /app/backend/data /config
 
-ENV LD_PRELOAD=libjemalloc.so.2
+ENV LD_PRELOAD=libjemalloc.so.2 \
+    MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000
 
 ADD --chmod=755 --checksum=sha256:1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6 \
     https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp \
@@ -68,6 +88,7 @@ COPY package*.json ./
 COPY backend/package*.json ./backend/
 COPY frontend/package*.json ./frontend/
 COPY --from=backend-deps /app/node_modules ./node_modules
+COPY --from=matcher-deps /opt/aurral-matcher /opt/aurral-matcher
 
 COPY backend/ ./backend/
 COPY lib/ ./lib/
