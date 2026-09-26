@@ -202,6 +202,7 @@ for (const service of ["jellyfin", "navidrome"]) {
     const Destination = module[service === "jellyfin" ? "JellyfinPlaybackDestination" : "NavidromePlaybackDestination"];
     const { syncPathMappings } = await import("../../backend/services/pathMappings.js");
     syncPathMappings([{ source: service, remote: "/server-music", local: root }]);
+    await makeFile("_flows/flow/saved.flac");
     await store.setPointer("flow", "owner", { playlistId: "outgoing", serverUrl: "http://server" });
     await store.setPointer("other", "owner", { playlistId: "keep", serverUrl: "http://server" });
     const destination = new Destination(root, { client: {
@@ -216,6 +217,18 @@ for (const service of ["jellyfin", "navidrome"]) {
     });
   });
 }
+
+test("navidrome reports unknown usage when no playlist path exists here", async () => {
+  const { NavidromePlaybackDestination } = await import("../../backend/services/playback/navidromePlaybackDestination.js");
+  const destination = new NavidromePlaybackDestination(root, { client: {
+    async getPlaylistTrackPaths() {
+      return ["/unmapped-music/Artist/Album/track.flac"];
+    },
+  } });
+  const result = await destination.getReferencedPaths();
+  assert.equal(result.ok, false);
+  assert.match(result.error.message, /path mapping/);
+});
 
 test("Plex checks global and linked accounts and maps its downloads path", async (t) => {
   const { userOps } = await import("../../backend/db/helpers/index.js");

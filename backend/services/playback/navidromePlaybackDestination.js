@@ -22,7 +22,6 @@ import {
 const ARTWORK_FILE_EXTENSIONS = [".webp", ".jpg", ".png"];
 const ARTWORK_SUPPRESS_SUFFIX = ".no-artwork";
 const PLAYLIST_FILE_EXTENSIONS = [".m3u", ".nsp"];
-const SONG_INDEX_REFRESH_INTERVAL_MS = 5000;
 const SONG_LOOKUP_BATCH_SIZE = 5;
 
 export const navidromeSettings = Object.freeze({
@@ -107,8 +106,23 @@ export class NavidromePlaybackDestination {
         if (pointer.playlistId != null) excluded.add(String(pointer.playlistId));
       }
     }
-    const paths = await this.client.getPlaylistTrackPaths(excluded);
-    return { ok: true, paths: paths.map((file) => resolveLocalPath(file, getPathMappings("navidrome"))) };
+    const paths = (await this.client.getPlaylistTrackPaths(excluded))
+      .map((file) => resolveLocalPath(file, getPathMappings("navidrome")));
+    // If no playlist path exists here, Aurral cannot see Navidrome's files
+    // (usually a missing path mapping): the list would protect nothing, so
+    // report usage as unknown and let cleanup keep the files.
+    if (paths.length > 0) {
+      const found = await Promise.all(paths.map((file) => fs.access(file).then(() => true, () => false)));
+      if (!found.some(Boolean)) {
+        return {
+          ok: false,
+          error: {
+            message: "No Navidrome playlist path exists on this server; check the Navidrome path mapping",
+          },
+        };
+      }
+    }
+    return { ok: true, paths };
   }
 
   _sanitize(value) {
@@ -453,16 +467,6 @@ export class NavidromePlaybackDestination {
       pointer = { ...pointer, title: current };
       await navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
     }
-    // Refresh the song index for newly indexed tracks (#774), but only once
-    // per burst: a pass publishing every playlist would otherwise download
-    // the whole Navidrome library once per playlist.
-    if (
-      typeof this.client?.invalidateIndexedSongsCache === "function" &&
-      Date.now() - (this._songIndexRefreshedAt || 0) >= SONG_INDEX_REFRESH_INTERVAL_MS
-    ) {
-      this.client.invalidateIndexedSongsCache();
-      this._songIndexRefreshedAt = Date.now();
-    }
     const songs = [];
     for (let index = 0; index < snapshot.tracks.length; index += SONG_LOOKUP_BATCH_SIZE) {
       const batch = snapshot.tracks.slice(index, index + SONG_LOOKUP_BATCH_SIZE);
@@ -627,6 +631,7 @@ export class NavidromePlaybackDestination {
     if (!this.isConfigured()) return playbackOperationSuccess();
     try {
       await this.client.scanLibrary();
+      this._refreshSongIndex();
       this._scheduleCatchup();
       return playbackOperationSuccess();
     } catch (error) {
@@ -638,6 +643,15 @@ export class NavidromePlaybackDestination {
     }
   }
 
+  // Newly indexed tracks (#774) are picked up after a scan and before each
+  // catch-up pass. Publishing itself reuses the cached index (30 s TTL), so a
+  // pass over every playlist does not download the whole library each time.
+  _refreshSongIndex() {
+    if (typeof this.client?.invalidateIndexedSongsCache === "function") {
+      this.client.invalidateIndexedSongsCache();
+    }
+  }
+
   _scheduleCatchup(delaysMs = [30000, 90000, 180000]) {
     if (this._catchupRunning || !this._pendingSnapshots.size) return;
     this._catchupRunning = true;
@@ -646,6 +660,7 @@ export class NavidromePlaybackDestination {
         for (const delayMs of delaysMs) {
           await wait(delayMs, undefined, { ref: false });
           if (!this.isConfigured() || !this._pendingSnapshots.size) break;
+          this._refreshSongIndex();
           for (const snapshot of [...this._pendingSnapshots.values()]) {
             const key = `${snapshot.entityId}:${this._targetKey(snapshot.ownerUserId)}`;
             if (this._pendingSnapshots.get(key) !== snapshot) continue;
