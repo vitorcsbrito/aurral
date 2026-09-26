@@ -22,6 +22,7 @@ import {
 const ARTWORK_FILE_EXTENSIONS = [".webp", ".jpg", ".png"];
 const ARTWORK_SUPPRESS_SUFFIX = ".no-artwork";
 const PLAYLIST_FILE_EXTENSIONS = [".m3u", ".nsp"];
+const SONG_INDEX_REFRESH_INTERVAL_MS = 5000;
 const SONG_LOOKUP_BATCH_SIZE = 5;
 
 export const navidromeSettings = Object.freeze({
@@ -452,8 +453,15 @@ export class NavidromePlaybackDestination {
       pointer = { ...pointer, title: current };
       await navidromePlaylistPointerStore.setPointer(snapshot.entityId, targetKey, pointer);
     }
-    if (typeof this.client?.invalidateIndexedSongsCache === "function") {
+    // Refresh the song index for newly indexed tracks (#774), but only once
+    // per burst: a pass publishing every playlist would otherwise download
+    // the whole Navidrome library once per playlist.
+    if (
+      typeof this.client?.invalidateIndexedSongsCache === "function" &&
+      Date.now() - (this._songIndexRefreshedAt || 0) >= SONG_INDEX_REFRESH_INTERVAL_MS
+    ) {
       this.client.invalidateIndexedSongsCache();
+      this._songIndexRefreshedAt = Date.now();
     }
     const songs = [];
     for (let index = 0; index < snapshot.tracks.length; index += SONG_LOOKUP_BATCH_SIZE) {

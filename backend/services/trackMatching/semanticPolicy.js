@@ -219,11 +219,18 @@ export function checkVariantCompatibility(request, candidate) {
   let candidateText = [candidate?.title, candidate?.filename]
     .filter(Boolean)
     .join(" ");
-  // Words of the requested title itself ("Live Forever", "Live and Let Die")
-  // are not version evidence, so they are removed before the text is read.
-  const requestedTitle = getCoreTitle(request?.trackName);
-  if (requestedTitle) {
-    const escaped = requestedTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Words of the requested title and artist ("Live Forever", "Acoustic
+  // Alchemy") are not version evidence, so they are removed before the text
+  // is read.
+  const ownWords = [
+    getCoreTitle(request?.trackName),
+    request?.artistName,
+    ...(Array.isArray(request?.artistAliases) ? request.artistAliases : []),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  for (const words of ownWords) {
+    const escaped = words.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     candidateText = candidateText.replace(
       new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu"),
       " ",

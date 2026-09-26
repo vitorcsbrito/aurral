@@ -99,6 +99,13 @@ test("the requested title's own words are not version evidence", () => {
     checkVariantCompatibility({ trackName: "Wonderwall" }, { title: "Oasis - Wonderwall - Live" }).compatible,
     false,
   );
+  assert.equal(
+    checkVariantCompatibility(
+      { trackName: "Mr. Chow", artistName: "Acoustic Alchemy" },
+      { filename: "Acoustic Alchemy - Mr. Chow.flac" },
+    ).compatible,
+    true,
+  );
 });
 
 test("detectNoise flags downloader junk", () => {

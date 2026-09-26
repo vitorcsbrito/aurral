@@ -205,4 +205,10 @@ test("a forwarded loopback address does not count as a local request", () => {
   // A local reverse proxy forwarding an internet client.
   assert.equal(auth.isRequestFromTrustedLocalSubnet(request("127.0.0.1", "203.0.113.9")), false);
   assert.equal(auth.isRequestFromTrustedLocalSubnet(request("127.0.0.1")), true);
+  // TRUST_PROXY=false: Express reports the proxy and ignores the header.
+  const untrustedForward = {
+    ...request("127.0.0.1"),
+    headers: { "x-forwarded-for": "203.0.113.9", forwarded: 'for="[2001:db8::1]"' },
+  };
+  assert.equal(auth.isRequestFromTrustedLocalSubnet(untrustedForward), false);
 });

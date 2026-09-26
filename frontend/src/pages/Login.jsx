@@ -80,6 +80,8 @@ const Login = () => {
       let result = null;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
+        // The user closed the Plex window: stop waiting without an error.
+        if (popup?.closed) return;
         try {
           const res = await completePlexLogin();
           if (res.pending) continue;

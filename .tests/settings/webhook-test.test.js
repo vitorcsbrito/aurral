@@ -191,10 +191,21 @@ test("webhook test route returns receiver failures as useful JSON", async () => 
     const response = makeResponse();
     await route.handler({ body: { url, body: "", headers: [] } }, response);
 
-    assert.equal(response.statusCode, 503);
+    assert.equal(response.statusCode, 502);
     assert.deepEqual(response.payload, {
       error: "Webhook test failed",
       message: "Request failed with status code 503",
+      upstreamStatus: 503,
     });
+  });
+});
+
+test("a receiver's 401 does not become Aurral's own 401", async () => {
+  const route = getWebhookTestRoute();
+  await withReceiver(401, async ({ url }) => {
+    const response = makeResponse();
+    await route.handler({ body: { url, body: "", headers: [] } }, response);
+    assert.equal(response.statusCode, 502);
+    assert.equal(response.payload.upstreamStatus, 401);
   });
 });

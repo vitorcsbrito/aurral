@@ -181,9 +181,11 @@ export function registerDownloadClients(router) {
         error.response?.data?.description ||
         error.response?.data?.error ||
         error.message;
+      // The receiver's status goes in the body: a 401 from Aurral itself
+      // would read as an expired session.
       return res
-        .status(status && status >= 400 ? status : 500)
-        .json({ error: "Webhook test failed", message: msg });
+        .status(status ? 502 : 500)
+        .json({ error: "Webhook test failed", message: msg, upstreamStatus: status ?? null });
     }
   });
 }

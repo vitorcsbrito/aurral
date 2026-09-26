@@ -85,10 +85,16 @@ export function AdminPlexLinkField({ user, onChanged, showSuccess, showError }) 
         if (!confirmed) return;
         const forceUnlink = () => adminUnlinkPlex(user.id, { force: true });
         try {
-          await forceUnlink();
+          try {
+            await forceUnlink();
+          } catch (forceError) {
+            if (!isReauthRequiredError(forceError)) throw forceError;
+            if (!(await promptReauth())) return;
+            await forceUnlink();
+          }
         } catch (forceError) {
-          if (!isReauthRequiredError(forceError) || !(await promptReauth())) throw forceError;
-          await forceUnlink();
+          showError?.(forceError.response?.data?.message || "Failed to unlink Plex");
+          return;
         }
         showSuccess?.(
           `Forcibly unlinked ${user.username}'s final sign-in method. The account can no longer sign in.`,

@@ -1055,7 +1055,7 @@ function FlowPage({ mode = "all" }) {
       queryClient.setQueryData(queryKeys.playlistStatus, (current) => current ? ({
         ...current,
         sharedPlaylists: current.sharedPlaylists.map((entry) => entry.id === playlist.id
-          ? { ...entry, showTrackAvailability: result.showTrackAvailability }
+          ? { ...entry, showTrackAvailability: result?.showTrackAvailability ?? enabled }
           : entry),
       }) : current);
       if (enabled) {
@@ -1088,7 +1088,7 @@ function FlowPage({ mode = "all" }) {
           ...current,
           sharedPlaylists: current.sharedPlaylists.map((playlist) =>
             playlist.id === entry.id
-              ? { ...playlist, recordHistory: result.recordHistory }
+              ? { ...playlist, recordHistory: result?.recordHistory ?? enabled }
               : playlist,
           ),
         }) : current);

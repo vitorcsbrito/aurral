@@ -69,6 +69,9 @@ export async function runMatcherOperation(operation, payload = {}, options = {})
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,
   });
+  // Listen for exit right away: a fast process can close before both output
+  // streams have been read, and a later listener would never fire.
+  const exitPromise = waitForExit(child);
   let spawnError = null;
   child.on("error", (error) => {
     spawnError = error;
@@ -103,7 +106,7 @@ export async function runMatcherOperation(operation, payload = {}, options = {})
         ]);
         stdoutText = stdout;
         stderrText = stderr;
-        return { exit: await waitForExit(child), deadlineExceeded: false };
+        return { exit: await exitPromise, deadlineExceeded: false };
       })(),
       new Promise((resolve) => {
         deadlineTimer = setTimeout(

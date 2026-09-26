@@ -67,11 +67,18 @@ export function ConnectedAccountsSection({ showSuccess, showError, className = "
     }
   };
 
+  // Ask for the password only when the server wants a fresh sign-in, so a
+  // recent SSO login (or an account without a local password) can link.
   const handleConnectGoogle = async () => {
-    const shouldProceed = await promptReauth();
-    if (!shouldProceed) return;
     try {
-      const result = await startGoogleLink();
+      let result;
+      try {
+        result = await startGoogleLink();
+      } catch (err) {
+        if (!isReauthRequiredError(err)) throw err;
+        if (!(await promptReauth())) return;
+        result = await startGoogleLink();
+      }
       if (!result?.authUrl) throw new Error("Google did not return an authorization URL");
       window.location.assign(result.authUrl);
     } catch (err) {

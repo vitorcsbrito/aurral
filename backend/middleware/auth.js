@@ -368,8 +368,20 @@ export async function getSoleAdminUser() {
 // Every address involved must be local: the peer and any forwarded client.
 // Accepting any one of them let a remote client claim a local address in
 // X-Forwarded-For, and let a local reverse proxy vouch for internet traffic.
+// Raw X-Forwarded-For / Forwarded entries, whether or not Express trusts
+// them (with TRUST_PROXY=false it ignores them and reports the proxy).
+function getForwardedHeaderIps(req) {
+  if (!req?.headers) return [];
+  const forwardedFor = String(getHeaderValue(req, "x-forwarded-for") || "")
+    .split(",")
+    .map((entry) => entry.trim());
+  const forwarded = [...String(getHeaderValue(req, "forwarded") || "").matchAll(/for=("?)\[?([^\]";,]+)\]?\1/gi)]
+    .map((match) => match[2]);
+  return [...forwardedFor, ...forwarded].filter(Boolean).map((ip) => normalizeIp(ip) || ip);
+}
+
 export function isRequestFromTrustedLocalSubnet(req) {
-  const requestIps = getRequestIps(req);
+  const requestIps = [...new Set([...getRequestIps(req), ...getForwardedHeaderIps(req)])];
   if (requestIps.length === 0) return false;
   const subnet = inferTrustedLocalSubnet();
   const isLocal = (ip) => {
@@ -566,11 +578,18 @@ export async function resolveSubsonicTokenUser(username, token, salt) {
   const user = await userOps.getUserByUsername(normalizedUsername);
   if (!user) return null;
 
-  let password = await userOps.getSubsonicPasswordById(user.id);
-  if (
-    !password &&
-    safeCompare(normalizedUsername, String(getAuthUser()).trim().toLowerCase())
-  ) {
+  // A stored credential is proven by the token itself, so skip the slow
+  // password hash and the login bookkeeping: clients send a token with every
+  // stream and cover request.
+  const storedPassword = await userOps.getSubsonicPasswordById(user.id);
+  if (storedPassword) {
+    if (user.status !== "active") return null;
+    return safeCompare(createSubsonicToken(storedPassword, salt), token)
+      ? toResolvedUser(user)
+      : null;
+  }
+  let password = null;
+  if (safeCompare(normalizedUsername, String(getAuthUser()).trim().toLowerCase())) {
     password = getAuthPassword().find((candidate) =>
       safeCompare(createSubsonicToken(candidate, salt), token),
     );

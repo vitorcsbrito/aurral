@@ -340,6 +340,8 @@ router.patch("/:id", requireAuth, async (req, res) => {
       const updated = await userOps.updateUser(id, updates);
       if (updates.passwordHash) {
         await deleteSessionsByUserId(id);
+        websocketService.disconnectUser(id);
+        revokeStreamTokensForUser(id);
       }
       return res.json(updated);
     }
@@ -648,6 +650,8 @@ router.post("/me/password", requireAuth, requireRecentAuth(), async (req, res) =
       subsonicPassword: newPassword,
     });
     await deleteSessionsByUserId(req.user.id);
+    websocketService.disconnectUser(req.user.id);
+    revokeStreamTokensForUser(req.user.id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: "Failed to change password", message: e.message });

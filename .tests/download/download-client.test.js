@@ -297,10 +297,11 @@ test("webhook test route reports receiver failures", async () => {
     const response = makeResponse();
     await route.handler({ body: { url, body: "", headers: [] } }, response);
 
-    assert.equal(response.statusCode, 500);
+    assert.equal(response.statusCode, 502);
     assert.deepEqual(response.payload, {
       error: "Webhook test failed",
       message: "Request failed with status code 500",
+      upstreamStatus: 500,
     });
   });
 });

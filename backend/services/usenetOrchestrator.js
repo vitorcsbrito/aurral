@@ -120,16 +120,7 @@ function uniqueResolvedPaths(values, source) {
   return out;
 }
 
-export async function collectDownloadedAudioFiles(historyItem) {
-  const clientKey = getUsenetClientKey();
-  const roots = uniqueResolvedPaths([
-    historyItem?.FinalDir,
-    historyItem?.DestDir,
-    historyItem?.storage,
-    historyItem?.path,
-    historyItem?.folder,
-    historyItem?.dir,
-  ], clientKey);
+async function collectAudioFilesFromRoots(roots) {
   const files = [];
   for (const root of roots) {
     const stat = await fs.stat(root).catch(() => null);
@@ -141,6 +132,43 @@ export async function collectDownloadedAudioFiles(historyItem) {
       files.push(...(await findAudioFilesRecursive(root)));
     }
   }
+  return files;
+}
+
+// When the history paths hold nothing Aurral can read (for example a path
+// only the client's container sees), look for the job's own folder under the
+// configured completed-download directories. Never the whole directory: every
+// file found is matched, and other downloads live there too.
+async function collectFromConfiguredDirectories(historyItem, clientKey) {
+  const names = [historyItem?.Name, historyItem?.NZBName, historyItem?.name, historyItem?.nzb_name]
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value !== "." && value !== ".." && !/[\\/]/.test(value));
+  if (names.length === 0) return [];
+  const directories = await getUsenetClient()
+    .getDownloadDirectories()
+    .catch(() => ({}));
+  const bases = [directories?.completedPath, directories?.destDir]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const roots = uniqueResolvedPaths(
+    bases.flatMap((base) => names.map((name) => path.join(base, name))),
+    clientKey,
+  );
+  return collectAudioFilesFromRoots(roots);
+}
+
+export async function collectDownloadedAudioFiles(historyItem) {
+  const clientKey = getUsenetClientKey();
+  const roots = uniqueResolvedPaths([
+    historyItem?.FinalDir,
+    historyItem?.DestDir,
+    historyItem?.storage,
+    historyItem?.path,
+    historyItem?.folder,
+    historyItem?.dir,
+  ], clientKey);
+  let files = await collectAudioFilesFromRoots(roots);
+  if (files.length === 0) files = await collectFromConfiguredDirectories(historyItem, clientKey);
   return uniqueResolvedPaths(files, clientKey);
 }
 

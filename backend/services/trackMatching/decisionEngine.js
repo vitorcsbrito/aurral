@@ -316,7 +316,13 @@ export async function evaluateTrackCandidates({
   });
 
   const scored = evaluations
-    .filter((evaluation) => evaluation.pending !== true && Number.isFinite(evaluation.distance))
+    // A rejected candidate can neither be the best match nor its competitor.
+    .filter(
+      (evaluation) =>
+        evaluation.pending !== true &&
+        evaluation.decision !== "reject" &&
+        Number.isFinite(evaluation.distance),
+    )
     .sort((left, right) => left.distance - right.distance);
   const proposal = proposalRecommendation(
     scored.map((evaluation) => evaluation.distance),
@@ -347,7 +353,7 @@ export async function evaluateTrackCandidates({
     runnerUp &&
     best.decision === "accept" &&
     gap != null &&
-    gap > 0 &&
+    gap >= 0 &&
     gap < ACCEPT_GAP_THRESHOLD &&
     runnerUp.distance <= COMPETITIVE_RUNNER_UP_DISTANCE;
   if (isNearTie) {
