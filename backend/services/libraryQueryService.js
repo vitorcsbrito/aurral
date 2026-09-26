@@ -11,6 +11,10 @@ import { getLibrarySearchMatch } from "./librarySearchIndex.js";
 const SOURCES = new Set(["aurral", "lidarr"]);
 const libraryCache = new Map();
 let artistKeysCache = null;
+// Bumped on every invalidation of the library caches. A read that started
+// before one must not store its result: it may predate the write that caused
+// the invalidation.
+let artistKeysGeneration = 0;
 const PAGE_KINDS = new Set(["artists", "albums", "tracks", "genres"]);
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 100;
@@ -302,6 +306,7 @@ const canonicalArtistKeyRow = (row) => {
 // The returned array and its entries are shared; treat them as read-only.
 export async function getCanonicalArtistKeys() {
   if (artistKeysCache) return artistKeysCache;
+  const generation = artistKeysGeneration;
   const rows = await db.all(
     `SELECT
        id,
@@ -316,8 +321,9 @@ export async function getCanonicalArtistKeys() {
      FROM library_artists
      ORDER BY lower(sort_name), lower(name), id`,
   );
-  artistKeysCache = rows.map(canonicalArtistKeyRow);
-  return artistKeysCache;
+  const keys = rows.map(canonicalArtistKeyRow);
+  if (generation === artistKeysGeneration) artistKeysCache = keys;
+  return keys;
 }
 
 export async function getCanonicalArtistKeyProjection() {
@@ -937,6 +943,7 @@ export async function getCanonicalLibrary({ source = null, availableOnly = false
     const cached = libraryCache.get(cacheKey);
     if (cached) return cached;
   }
+  const generation = artistKeysGeneration;
   const conditions = [];
   const parameters = [];
 
@@ -981,7 +988,7 @@ export async function getCanonicalLibrary({ source = null, availableOnly = false
     parameters,
   );
   const library = buildLibraryFromRows(rows);
-  if (!favoriteTargets) libraryCache.set(cacheKey, library);
+  if (!favoriteTargets && generation === artistKeysGeneration) libraryCache.set(cacheKey, library);
   return library;
 }
 
@@ -2197,6 +2204,7 @@ export async function rebuildCanonicalGenreStats() {
 export function invalidateCanonicalLibraryCache({ persistedGenres = true } = {}) {
   libraryCache.clear();
   artistKeysCache = null;
+  artistKeysGeneration += 1;
   if (persistedGenres) scheduleLibraryGenreRefresh();
   else clearLibraryGenreMemoryCache();
 }

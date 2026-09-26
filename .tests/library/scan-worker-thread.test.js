@@ -118,3 +118,19 @@ test("a timeout beyond the timer range is capped instead of firing at once", asy
     else process.env.AURRAL_LIBRARY_SCAN_TIMEOUT_MS = previous;
   }
 });
+
+test("a read that overlaps an invalidation does not refill the artist cache", async () => {
+  await resetDatabase();
+  queryService.invalidateCanonicalLibraryCache();
+  const inFlight = queryService.getCanonicalArtistKeys();
+  // A write lands and invalidates while the read above is still running.
+  queryService.invalidateCanonicalLibraryCache();
+  await inFlight;
+  const now = Date.now();
+  await db.run(
+    "INSERT INTO library_artists (identity_key, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+    ["artist:cache-race", "Cache Race Artist", now, now],
+  );
+  const keys = await queryService.getCanonicalArtistKeys();
+  assert.ok(keys.some((artist) => artist.name === "Cache Race Artist"));
+});
