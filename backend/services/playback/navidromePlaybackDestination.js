@@ -108,21 +108,39 @@ export class NavidromePlaybackDestination {
     }
     const paths = (await this.client.getPlaylistTrackPaths(excluded))
       .map((file) => resolveLocalPath(file, getPathMappings("navidrome")));
-    // If no playlist path exists here, Aurral cannot see Navidrome's files
-    // (usually a missing path mapping): the list would protect nothing, so
-    // report usage as unknown and let cleanup keep the files.
-    if (paths.length > 0) {
-      const found = await Promise.all(paths.map((file) => fs.access(file).then(() => true, () => false)));
-      if (!found.some(Boolean)) {
+    // A path Aurral cannot see is usually a deleted file or one outside its
+    // folders, which cleanup never touches. It matters when it names one of
+    // Aurral's own files under a prefix without a path mapping: then the list
+    // would miss it, so usage is reported as unknown and cleanup keeps files.
+    for (const file of paths) {
+      if (await this._pathExists(file)) continue;
+      if (await this._namesUnmappedAurralFile(file)) {
         return {
           ok: false,
           error: {
-            message: "No Navidrome playlist path exists on this server; check the Navidrome path mapping",
+            message: `Navidrome playlist path ${file} is not visible here; check the Navidrome path mapping`,
           },
         };
       }
     }
     return { ok: true, paths };
+  }
+
+  _pathExists(file) {
+    return fs.access(file).then(() => true, () => false);
+  }
+
+  // True when some tail of an unreadable path ("/server-music/_flows/x/a.flac"
+  // -> "_flows/x/a.flac") exists under Aurral's download root.
+  async _namesUnmappedAurralFile(file) {
+    const root = path.resolve(this.weeklyFlowRoot);
+    const resolved = path.resolve(file);
+    if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return false;
+    const segments = String(file).split(/[\\/]+/).filter(Boolean);
+    for (let index = 1; index < segments.length; index += 1) {
+      if (await this._pathExists(path.join(root, ...segments.slice(index)))) return true;
+    }
+    return false;
   }
 
   _sanitize(value) {

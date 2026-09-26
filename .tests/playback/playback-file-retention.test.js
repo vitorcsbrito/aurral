@@ -218,16 +218,27 @@ for (const service of ["jellyfin", "navidrome"]) {
   });
 }
 
-test("navidrome reports unknown usage when no playlist path exists here", async () => {
+test("navidrome reports unknown usage for an unmapped path to an Aurral file", async () => {
+  const saved = await makeFile("_flows/flow/saved.flac");
   const { NavidromePlaybackDestination } = await import("../../backend/services/playback/navidromePlaybackDestination.js");
   const destination = new NavidromePlaybackDestination(root, { client: {
     async getPlaylistTrackPaths() {
-      return ["/unmapped-music/Artist/Album/track.flac"];
+      return [saved, "/unmapped-music/_flows/flow/saved.flac"];
     },
   } });
   const result = await destination.getReferencedPaths();
   assert.equal(result.ok, false);
   assert.match(result.error.message, /path mapping/);
+});
+
+test("navidrome ignores deleted files and paths outside Aurral's folders", async () => {
+  const { NavidromePlaybackDestination } = await import("../../backend/services/playback/navidromePlaybackDestination.js");
+  const destination = new NavidromePlaybackDestination(root, { client: {
+    async getPlaylistTrackPaths() {
+      return [path.join(root, "_flows/gone/deleted.flac"), "/music/Other Artist/Album/track.flac"];
+    },
+  } });
+  assert.equal((await destination.getReferencedPaths()).ok, true);
 });
 
 test("Plex checks global and linked accounts and maps its downloads path", async (t) => {
